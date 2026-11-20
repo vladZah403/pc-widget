@@ -197,6 +197,10 @@ def ellipsize(text, font, max_w):
     return text + "…"
 
 
+def fmt_wh(wh):
+    return f"{wh:.1f}".replace(".", ",")
+
+
 def fmt_left(seconds):
     """Battery time left: '2 ч 15 мин', '45 мин'."""
     minutes = int(seconds) // 60
@@ -265,7 +269,8 @@ CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
-            "disk_io": "Чтение и запись диска", "uptime": "Время без перезагрузки"}
+            "disk_io": "Чтение и запись диска", "battery": "Износ батареи",
+            "uptime": "Время без перезагрузки"}
 
 
 def load_config():
@@ -814,6 +819,8 @@ def _classify_hardware(node):
         return "cpu"
     if any(k in img for k in ("nvidia", "ati", "amd", "gpu")):
         return "gpu"
+    if "battery" in img:
+        return "battery"
     if any(k in img for k in ("hdd", "ssd", "nvme")):
         return "storage"
     if any(k in text for k in ("geforce", "radeon", "graphics", "gpu")):
@@ -862,13 +869,15 @@ def read_lhm(tree):
                 hw["clocks"].append((low, value))
             elif group == "Powers":
                 hw["powers"].append((low, value))
+            elif group in ("Energy", "Levels"):
+                hw["energy"].append((low, value))
             return
         if text in SENSOR_GROUPS:
             for kid in kids:
                 walk(kid, hw, text)
             return
         new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
-                  "clocks": [], "powers": [], "integrated": False}
+                  "clocks": [], "powers": [], "energy": [], "integrated": False}
         hardware.append(new_hw)
         for kid in kids:
             walk(kid, new_hw, None)
@@ -900,6 +909,8 @@ def read_lhm(tree):
             for hw in hardware if any(k == "storage" for _, _, k in hw["temps"])]
     ssd = max((t for t in ssds if t is not None), default=None)
 
+    battery = read_battery(next((hw for hw in hardware if hw["kind"] == "battery"), None))
+
     cpu_clock = cpu_power = None
     cpu_hw = next((hw for hw in hardware if hw["kind"] == "cpu"), None)
     if cpu_hw:
@@ -908,7 +919,26 @@ def read_lhm(tree):
         power = _pick(cpu_hw["powers"], POWER_PREFS)
         cpu_power = power if power and 0 < power < 1000 else None
     return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
-            "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power}
+            "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power,
+            **battery}
+
+
+def read_battery(hw):
+    """Battery wear from the sensors (works without admin rights):
+    battery_design / battery_full in Wh, battery_wear in %, battery_rate in W."""
+    out = {"battery_design": None, "battery_full": None, "battery_wear": None,
+           "battery_rate": None}
+    if hw is None:
+        return out
+    values = dict(hw["energy"])
+    design, full = values.get("designed capacity"), values.get("fully-charged capacity")
+    if design and full and design > 0 and full > 0:
+        out["battery_design"], out["battery_full"] = design / 1000, full / 1000  # mWh -> Wh
+        out["battery_wear"] = max(0.0, (1 - full / design) * 100)
+    rate = dict(hw["powers"]).get("charge/discharge rate")
+    if rate:
+        out["battery_rate"] = abs(rate)
+    return out
 
 
 def extract_temps(tree):
@@ -918,7 +948,9 @@ def extract_temps(tree):
 
 
 EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None,
-                 "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None}
+                 "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None,
+                 "battery_design": None, "battery_full": None, "battery_wear": None,
+                 "battery_rate": None}
 
 
 def is_admin():
@@ -942,9 +974,10 @@ class NativeSensors:
     read_lhm() handles both."""
 
     ICONS = {"Cpu": "cpu", "GpuNvidia": "nvidia", "GpuAmd": "ati", "GpuIntel": "intel",
-             "Storage": "hdd"}
+             "Storage": "hdd", "Battery": "battery"}
     GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %"),
-              "Clock": ("Clocks", " MHz"), "Power": ("Powers", " W")}
+              "Clock": ("Clocks", " MHz"), "Power": ("Powers", " W"),
+              "Energy": ("Energy", " mWh"), "Level": ("Levels", " %")}
 
     def __init__(self, path):
         from pythonnet import load
@@ -958,6 +991,7 @@ class NativeSensors:
         self.computer.IsCpuEnabled = True
         self.computer.IsGpuEnabled = True
         self.computer.IsStorageEnabled = True
+        self.computer.IsBatteryEnabled = True  # wear and power draw, no admin rights needed
         self.computer.Open()
 
     def _node(self, hw):
@@ -1429,6 +1463,8 @@ class Renderer:
                              self._draw_disk(d, texts, y, disk, scale)))
         if "temps" not in hidden:
             secs.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
+        if "battery" not in hidden and data.get("battery_wear") is not None:
+            secs.append((38, self._draw_battery))
         lower = []
         if "net" not in hidden:
             lower.append((22, self._draw_net))
@@ -1641,6 +1677,22 @@ class Renderer:
             hint = ellipsize(data.get("sensor_hint") or "Нет данных о температуре", self.f_small,
                              self.px(Wl - 2 * P))
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
+
+    def _draw_battery(self, d, texts, y, data, scale):
+        """Wear (how much capacity is lost since new) and, on battery, the power draw."""
+        P, Wl = self.PAD, self.WIDTH
+        wear = data["battery_wear"]
+        batt = data.get("battery")
+        rate = data.get("battery_rate")
+        if batt is not None and not batt[1] and rate:
+            info = f"расход {rate:.1f} Вт   ".replace(".", ",")
+        else:
+            info = f"{fmt_wh(data['battery_full'])} из {fmt_wh(data['battery_design'])} Вт·ч   "
+        texts.append((P, y + 14, "Батарея", self.f_label, TEXT, "ls"))
+        texts.append(("rich", Wl - P, y + 14, [
+            (info, self.f_small, DIM), ("износ ", self.f_small, DIM),
+            (f"{wear:.0f}%", self.f_value, scale(min(1.0, wear / 40)))]))
+        self._segment_meter(d, P, y + 22, Wl - P, wear, scale)
 
     def _draw_divider(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
@@ -2724,6 +2776,10 @@ class Widget:
             "temp_ssd": sensors["ssd"],
             "cpu_clock": sensors.get("cpu_clock"),
             "cpu_power": sensors.get("cpu_power"),
+            "battery_wear": sensors.get("battery_wear"),
+            "battery_design": sensors.get("battery_design"),
+            "battery_full": sensors.get("battery_full"),
+            "battery_rate": sensors.get("battery_rate"),
             "lhm_online": self.lhm.online,
             "sensor_hint": self.lhm.hint(),
             "ping": self.ping.ms,
