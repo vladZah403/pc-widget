@@ -1011,12 +1011,12 @@ class LhmReader(threading.Thread):
         if any(s[k] is not None for k in ("cpu", "gpu", "ssd")):
             return None
         if self.native_ok and not self.admin:
-            return "Температуры: меню → «Права администратора»"
+            return "Температуры включаются в меню (ПКМ)"
         if self.native_ok:
-            return "Нет доступа к датчикам: нужен драйвер PawnIO"
+            return "Нет доступа к датчикам: нужен PawnIO"
         if self.online:
             return "Запусти LibreHardwareMonitor от админа"
-        return "Запусти LibreHardwareMonitor с веб-сервером"
+        return "Нужен LibreHardwareMonitor с веб-сервером"
 
     def run(self):
         native = None
@@ -1539,7 +1539,8 @@ class Renderer:
                           chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
             texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
         else:
-            hint = data.get("sensor_hint") or "Нет данных о температуре"
+            hint = ellipsize(data.get("sensor_hint") or "Нет данных о температуре", self.f_small,
+                             self.px(Wl - 2 * P))
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
 
     def _draw_divider(self, d, texts, y, data, scale):
