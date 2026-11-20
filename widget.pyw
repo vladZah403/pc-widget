@@ -1611,6 +1611,10 @@ class Widget:
         root.attributes("-topmost", bool(self.cfg["topmost"]))
         root.attributes("-alpha", float(self.cfg["alpha"]))
 
+        icon = os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "app.png")
+        if os.path.exists(icon):
+            self._icon = tk.PhotoImage(file=icon)
+            root.iconphoto(True, self._icon)
         self.renderer = Renderer(root.winfo_fpixels("1i") / 96)
         self.view = tk.Label(root, bg=KEY_HEX, bd=0, highlightthickness=0)
         self.view.pack()
@@ -2127,7 +2131,27 @@ def release_instance():
         ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
+def write_diagnostics():
+    """`PC-Monitor.exe --diag`: write what the sensors give into pc-monitor-diag.txt."""
+    lines = [f"admin: {is_admin()}", f"frozen: {getattr(sys, 'frozen', False)}",
+             f"lhm dir: {lhm_dir()}"]
+    try:
+        native = NativeSensors(lhm_dir())
+        lines.append(f"native: {read_lhm(native.tree())}")
+    except Exception as exc:
+        lines.append(f"native failed: {exc!r}")
+    try:
+        lines.append(f"web server: {_fetch_web()}")
+    except (OSError, ValueError) as exc:
+        lines.append(f"web server: not available ({exc.__class__.__name__})")
+    with open(os.path.join(APP_DIR, "pc-monitor-diag.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 if __name__ == "__main__":
+    if "--diag" in sys.argv:
+        write_diagnostics()
+        sys.exit(0)
     if not already_running():
         wants_admin = load_config().get("run_as_admin") and lhm_dir() and not is_admin()
         if wants_admin and "--no-elevate" not in sys.argv:
