@@ -2,8 +2,11 @@
 
 Shows CPU load (number + 60-second histogram), RAM, disk space and I/O,
 network speed, battery, uptime and CPU/GPU temperatures. Temperatures come
-from LibreHardwareMonitor's Remote Web Server (http://localhost:8085),
+from the bundled LibreHardwareMonitorLib (needs admin rights) or, as a
+fallback, from LibreHardwareMonitor's Remote Web Server on this computer,
 because Windows does not expose real sensor temperatures to normal programs.
+
+Settings and the log live in %APPDATA%\\PC-Monitor.
 
 The whole widget is drawn with Pillow (supersampled for smooth edges) and
 shown in a borderless tkinter window with transparent rounded corners.
@@ -15,6 +18,8 @@ Controls: drag with the left mouse button, right click for the menu.
 
 import ctypes
 import json
+import logging
+import logging.handlers
 import os
 import re
 import socket
@@ -28,13 +33,59 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-# next to the .exe when frozen (PyInstaller unpacks the code into a temp folder)
+APP_VERSION = "1.1"
+
+# folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
            else os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(APP_DIR, "widget_config.json")
 FONT_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
-LHM_URL = "http://localhost:8085/data.json"
+
+def _data_dir():
+    """%APPDATA%\\PC-Monitor: writable wherever the program itself is installed."""
+    path = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "PC-Monitor")
+    try:
+        os.makedirs(path, exist_ok=True)
+        return path
+    except OSError:
+        return APP_DIR
+
+
+DATA_DIR = _data_dir()
+CONFIG_PATH = os.path.join(DATA_DIR, "widget_config.json")
+OLD_CONFIG_PATH = os.path.join(APP_DIR, "widget_config.json")  # before 1.1
+LOG_PATH = os.path.join(DATA_DIR, "pc-monitor.log")
+
+log = logging.getLogger("pcmonitor")
+_last_error = {}
+
+
+def setup_logging():
+    """Errors go to pc-monitor.log (max ~2 x 256 KB) instead of vanishing."""
+    try:
+        handler = logging.handlers.RotatingFileHandler(
+            LOG_PATH, maxBytes=256 * 1024, backupCount=1, encoding="utf-8", delay=True)
+    except OSError:
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(process)d] %(message)s"))
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    sys.excepthook = lambda *exc: log.critical("uncaught error", exc_info=exc)
+    threading.excepthook = lambda a: log.error(
+        "thread %s crashed", a.thread.name if a.thread else "?",
+        exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
+
+def log_error(where):
+    """Call from an except block. Logs the traceback at most once a minute per
+    place, so a fault that repeats every second does not flood the log."""
+    now = time.monotonic()
+    if now - _last_error.get(where, -1e9) >= 60:
+        _last_error[where] = now
+        log.exception("%s failed", where)
+
+
+LHM_URL = "http://127.0.0.1:8085/data.json"  # this computer only
 LHM_POLL_S = 3
 UPDATE_MS = 1000
 HISTORY_LEN = 60
@@ -60,9 +111,22 @@ THEMES = {
     "ice": ("Лёд", ["#4f6a8f", "#6f9fd8", "#a9cdf5", "#eef6ff"]),
 }
 
+def _windows_build():
+    try:
+        return sys.getwindowsversion().build
+    except AttributeError:  # not Windows
+        return 0
+
+
+# Windows 11 has a new taskbar where the task buttons can't be narrowed, so the
+# mini panel may cover icons there: it starts switched off (can be enabled in the menu)
+IS_WIN11 = _windows_build() >= 22000
+
+# run_as_admin is off by default: the widget asks for admin rights only when the
+# user switches on temperatures in the menu (least privilege)
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
-                  "pinned": True, "taskbar": True, "alerts": True, "compact": False,
-                  "run_as_admin": True}
+                  "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
+                  "run_as_admin": False}
 
 # alerts: (switch on at, switch off below) — hysteresis so a value hovering
 # around the limit doesn't spam; each alert at most once per ALERT_COOLDOWN_S
@@ -139,24 +203,63 @@ def fmt_uptime(seconds):
     return f"{hours} ч {minutes} мин"
 
 
-def load_config():
+def sanitize_config(raw):
+    """Only known keys with values of the right type: the file is user-writable
+    and the widget may run as admin, so nothing in it is trusted."""
     cfg = dict(DEFAULT_CONFIG)
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg.update(json.load(f))
-    except (OSError, ValueError):
-        pass
-    if cfg.get("theme") not in THEMES:
-        cfg["theme"] = DEFAULT_CONFIG["theme"]
+    if not isinstance(raw, dict):
+        return cfg
+    for key, default in DEFAULT_CONFIG.items():
+        if key not in raw:
+            continue
+        v = raw[key]
+        if key in ("x", "y"):
+            if isinstance(v, int) and not isinstance(v, bool) and abs(v) < 100_000:
+                cfg[key] = v
+        elif key == "alpha":
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cfg[key] = min(1.0, max(0.3, float(v)))
+        elif key == "theme":
+            if v in THEMES:
+                cfg[key] = v
+        elif isinstance(default, bool):
+            if isinstance(v, bool):
+                cfg[key] = v
+        elif key in CONFIG_CHOICES:
+            if v in CONFIG_CHOICES[key]:
+                cfg[key] = v
+        elif key == "hidden":
+            if isinstance(v, list):
+                cfg[key] = [s for s in v if s in SECTIONS]
     return cfg
 
 
+CONFIG_CHOICES = {}  # key -> allowed values (filled in below, next to the features)
+SECTIONS = {}        # optional widget sections: key -> menu title
+
+
+def load_config():
+    for path in (CONFIG_PATH, OLD_CONFIG_PATH):  # the old place is read once, to migrate
+        try:
+            with open(path, encoding="utf-8") as f:
+                return sanitize_config(json.load(f))
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            log.warning("bad config %s, using defaults", path, exc_info=True)
+            break
+    return dict(DEFAULT_CONFIG)
+
+
 def save_config(cfg):
+    """Write to a temp file and swap it in, so a crash never leaves half a file."""
+    tmp = CONFIG_PATH + ".tmp"
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+        os.replace(tmp, CONFIG_PATH)
     except OSError:
-        pass
+        log_error("saving config")
 
 
 # ---------- pinning to the desktop (Win32) ----------
@@ -695,6 +798,7 @@ class LhmReader(threading.Thread):
                 native = NativeSensors(path)
                 self.native_ok = True
             except Exception:  # no .NET / pythonnet / broken DLLs: fall back to the web server
+                log.exception("built-in sensor library failed to load")
                 native = None
         while True:
             found, source = None, None
@@ -702,6 +806,7 @@ class LhmReader(threading.Thread):
                 try:
                     found, source = read_lhm(native.tree()), "native"
                 except Exception:
+                    log_error("reading built-in sensors")
                     found = None
             if found is None or found["cpu"] is None:
                 try:
@@ -1604,6 +1709,7 @@ class Widget:
 
         self.cfg = load_config()
         self.root = root = tk.Tk()
+        root.report_callback_exception = lambda *exc: log.error("Tk callback failed", exc_info=exc)
         root.title("PC Monitor")
         root.overrideredirect(True)
         root.configure(bg=KEY_HEX)
@@ -1675,7 +1781,7 @@ class Widget:
             elif is_admin() and admin_task_enabled():
                 set_admin_task(True)
         except OSError:
-            pass
+            log.exception("updating autostart failed")
 
     # --- show / hide ---
     def hide_widget(self):
@@ -1722,7 +1828,7 @@ class Widget:
                 if is_admin() and not enable:
                     set_admin_task(False)
         except OSError:
-            pass
+            log.exception("changing autostart failed")
         self.autostart_var.set(autostart_enabled() or admin_task_enabled())
 
     def _toggle_admin(self):
@@ -1755,7 +1861,7 @@ class Widget:
             try:
                 self.taskbar.layout()
             except Exception:  # explorer restarting etc. — try again next tick
-                pass
+                log_error("taskbar panel")
         self.root.after(500, self._taskbar_tick)
 
     def _toggle_taskbar(self):
@@ -1866,7 +1972,7 @@ class Widget:
             try:
                 self.taskbar.restore()
             except Exception:
-                pass
+                log.exception("restoring the taskbar failed")
             self.taskbar = None
         self.root.destroy()
 
@@ -2019,7 +2125,7 @@ class Widget:
         try:
             self._refresh()
         except Exception:  # a single bad reading must not kill the widget
-            pass
+            log_error("refresh")
         self.root.after(UPDATE_MS, self.update)
 
     def _collect(self):
@@ -2144,11 +2250,12 @@ def write_diagnostics():
         lines.append(f"web server: {_fetch_web()}")
     except (OSError, ValueError) as exc:
         lines.append(f"web server: not available ({exc.__class__.__name__})")
-    with open(os.path.join(APP_DIR, "pc-monitor-diag.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(DATA_DIR, "pc-monitor-diag.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
+    setup_logging()
     if "--diag" in sys.argv:
         write_diagnostics()
         sys.exit(0)
@@ -2160,4 +2267,6 @@ if __name__ == "__main__":
                 sys.exit(0)
             if already_running():  # lost a race while UAC was open
                 sys.exit(0)
+        log.info("start %s: admin=%s frozen=%s dir=%s", APP_VERSION, is_admin(),
+                 getattr(sys, "frozen", False), APP_DIR)
         Widget().run()
