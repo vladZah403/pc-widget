@@ -55,7 +55,8 @@ THEMES = {
     "ice": ("Лёд", ["#4f6a8f", "#6f9fd8", "#a9cdf5", "#eef6ff"]),
 }
 
-DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat"}
+DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
+                  "pinned": True}
 
 
 # ---------- helpers ----------
@@ -122,6 +123,67 @@ def save_config(cfg):
             json.dump(cfg, f, indent=2)
     except OSError:
         pass
+
+
+# ---------- pinning to the desktop (Win32) ----------
+# A window owned by the desktop icon view (SHELLDLL_DefView) lives in the
+# desktop layer: other windows cover it, and Win+D (which raises the desktop)
+# brings it along instead of hiding it.
+
+GWLP_HWNDPARENT = -8
+GW_OWNER = 4
+HWND_BOTTOM = 1
+SWP_FLAGS = 0x1 | 0x2 | 0x10  # NOSIZE | NOMOVE | NOACTIVATE
+
+try:
+    from ctypes import wintypes as _wt
+    _user32 = ctypes.WinDLL("user32")
+    _user32.FindWindowW.argtypes = [_wt.LPCWSTR, _wt.LPCWSTR]
+    _user32.FindWindowW.restype = _wt.HWND
+    _user32.FindWindowExW.argtypes = [_wt.HWND, _wt.HWND, _wt.LPCWSTR, _wt.LPCWSTR]
+    _user32.FindWindowExW.restype = _wt.HWND
+    _user32.SetWindowLongPtrW.argtypes = [_wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    _user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    _user32.GetWindow.argtypes = [_wt.HWND, _wt.UINT]
+    _user32.GetWindow.restype = _wt.HWND
+    _user32.IsWindow.argtypes = [_wt.HWND]
+    _user32.SetWindowPos.argtypes = [_wt.HWND, _wt.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, _wt.UINT]
+except (AttributeError, OSError):  # not Windows
+    _user32 = None
+
+
+def find_desktop_view():
+    """HWND of the desktop icon view, or None."""
+    if _user32 is None:
+        return None
+    progman = _user32.FindWindowW("Progman", None)
+    view = _user32.FindWindowExW(progman, None, "SHELLDLL_DefView", None)
+    worker = None
+    while not view:  # with a wallpaper slideshow the view lives in a WorkerW
+        worker = _user32.FindWindowExW(None, worker, "WorkerW", None)
+        if not worker:
+            return None
+        view = _user32.FindWindowExW(worker, None, "SHELLDLL_DefView", None)
+    return view
+
+
+def set_owner(hwnd, owner):
+    if _user32 is not None:
+        _user32.SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner or 0)
+
+
+def owner_alive(hwnd):
+    if _user32 is None:
+        return False
+    owner = _user32.GetWindow(hwnd, GW_OWNER)
+    return bool(owner) and bool(_user32.IsWindow(owner))
+
+
+def send_to_back(hwnd):
+    """Bottom of the z-order; an owned window still stays above its owner."""
+    if _user32 is not None:
+        _user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_FLAGS)
 
 
 def virtual_screen(root):
@@ -504,6 +566,7 @@ class Widget:
         self.close_hover = False
         self.close_pressed = False
         self._drag = (0, 0)
+        self.hwnd = None
 
         self._build_menu()
         self.view.bind("<ButtonPress-1>", self._press)
@@ -528,13 +591,42 @@ class Widget:
 
         self.update()
         self._place()
+        root.update_idletasks()
+        self.hwnd = int(root.wm_frame(), 16)
+        self._apply_pin()
+
+    # --- pinning ---
+    def _apply_pin(self):
+        pinned = bool(self.cfg["pinned"])
+        if pinned:
+            self.root.attributes("-topmost", False)
+            set_owner(self.hwnd, find_desktop_view())
+            send_to_back(self.hwnd)
+        else:
+            set_owner(self.hwnd, None)
+            self.root.attributes("-topmost", bool(self.cfg["topmost"]))
+        self.menu.entryconfigure(self.topmost_index,
+                                 state="disabled" if pinned else "normal")
+
+    def _toggle_pin(self):
+        self.cfg["pinned"] = self.pinned_var.get()
+        save_config(self.cfg)
+        self._apply_pin()
+
+    def _back_if_pinned(self):
+        if self.cfg["pinned"]:
+            send_to_back(self.hwnd)
 
     # --- menu ---
     def _build_menu(self):
+        self.pinned_var = tk.BooleanVar(value=bool(self.cfg["pinned"]))
         self.topmost_var = tk.BooleanVar(value=bool(self.cfg["topmost"]))
         self.alpha_var = tk.DoubleVar(value=float(self.cfg["alpha"]))
         self.theme_var = tk.StringVar(value=self.cfg["theme"])
         menu = tk.Menu(self.root, tearoff=0)
+        menu.add_checkbutton(label="Закрепить на рабочем столе", variable=self.pinned_var,
+                             command=self._toggle_pin)
+        menu.add_separator()
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
             theme_menu.add_radiobutton(label=title, value=key, variable=self.theme_var,
@@ -547,6 +639,7 @@ class Widget:
         menu.add_cascade(label="Непрозрачность", menu=alpha_menu)
         menu.add_checkbutton(label="Поверх всех окон", variable=self.topmost_var,
                              command=self._toggle_topmost)
+        self.topmost_index = menu.index("end")
         menu.add_command(label="В правый верхний угол", command=self._reset_position)
         menu.add_separator()
         menu.add_command(label="Закрыть", command=self.quit)
@@ -557,6 +650,7 @@ class Widget:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.menu.grab_release()
+        self._back_if_pinned()
 
     def _set_theme(self):
         self.cfg["theme"] = self.theme_var.get()
@@ -602,7 +696,7 @@ class Widget:
         self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
 
     def _drag_move(self, event):
-        if self.close_pressed:
+        if self.close_pressed or self.cfg["pinned"]:
             return
         dx, dy = self._drag
         self.root.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
@@ -612,6 +706,9 @@ class Widget:
             self.close_pressed = False
             if self._in_close(event):
                 self.quit()
+            return
+        if self.cfg["pinned"]:
+            self._back_if_pinned()
             return
         self._save_position()
 
@@ -686,6 +783,9 @@ class Widget:
     def _refresh(self):
         self.data = self._collect()
         self._draw()
+        # explorer.exe restarted -> the desktop view changed, re-attach
+        if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
+            self._apply_pin()
 
     def _draw(self):
         if self.data is None:
