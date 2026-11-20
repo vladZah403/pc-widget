@@ -330,6 +330,14 @@ def _parse_num(text):
     return float(m.group().replace(",", ".")) if m else None
 
 
+SENSOR_GROUPS = {"Temperatures", "Load", "Clocks", "Powers", "Voltages", "Data", "SmallData",
+                 "Fans", "Controls", "Throughput", "Levels", "Factors", "Currents", "Energy",
+                 "Noise"}
+TEMP_SKIP = ("distance", "warning", "critical", "limit")  # thresholds, not readings
+STORAGE_PREFS = ("composite temperature", "temperature", "drive temperature")
+INTEGRATED_GPU = re.compile(r"radeon\(tm\) graphics|radeon graphics|vega \d|uhd|iris|intel", re.I)
+
+
 def _classify_hardware(node):
     img = (node.get("ImageURL") or "").lower()
     text = (node.get("Text") or "").lower()
@@ -337,6 +345,8 @@ def _classify_hardware(node):
         return "cpu"
     if any(k in img for k in ("nvidia", "ati", "amd", "gpu")):
         return "gpu"
+    if any(k in img for k in ("hdd", "ssd", "nvme")):
+        return "storage"
     if any(k in text for k in ("geforce", "radeon", "graphics", "gpu")):
         return "gpu"
     return None
@@ -348,6 +358,8 @@ def _sensor_kind(sensor_id, hw_kind):
         return "cpu"
     if "/gpu" in sid:
         return "gpu"
+    if any(k in sid for k in ("/nvme/", "/hdd/", "/ssd/", "/ata/")):
+        return "storage"
     return hw_kind
 
 
@@ -359,28 +371,73 @@ def _pick(sensors, prefs):
     return max((v for _, v in sensors), default=None)
 
 
-def extract_temps(tree):
-    """Return (cpu_temp, gpu_temp) in °C from LHM data.json, None if missing."""
-    found = {"cpu": [], "gpu": []}
+def read_lhm(tree):
+    """Summarise LHM data.json: {"cpu", "gpu", "gpu_shared", "gpu_load", "gpu_name", "ssd"}.
+    gpu_shared = integrated graphics without its own sensor (shares the CPU die)."""
+    hardware = []
 
-    def walk(node, hw_kind, in_temps):
-        children = node.get("Children") or []
+    def walk(node, hw, group):
+        kids = node.get("Children") or []
         text = (node.get("Text") or "").strip()
-        if not children:
-            if not in_temps or "distance" in text.lower():
-                return
+        if not kids:
             value = _parse_num(node.get("Value"))
-            kind = _sensor_kind(node.get("SensorId"), hw_kind)
-            if kind in found and value is not None and 0 < value < 150:
-                found[kind].append((text.lower(), value))
+            if hw is None or group is None or value is None:
+                return
+            low = text.lower()
+            if group == "Temperatures":
+                if 0 < value < 150 and not any(w in low for w in TEMP_SKIP):
+                    hw["temps"].append((low, value, _sensor_kind(node.get("SensorId"), hw["kind"])))
+            elif group == "Load":
+                hw["loads"].append((low, value))
             return
-        is_group = text.lower() == "temperatures"
-        kind = hw_kind if is_group else (_classify_hardware(node) or hw_kind)
-        for child in children:
-            walk(child, kind, in_temps or is_group)
+        if text in SENSOR_GROUPS:
+            for kid in kids:
+                walk(kid, hw, text)
+            return
+        new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
+                  "integrated": False}
+        hardware.append(new_hw)
+        for kid in kids:
+            walk(kid, new_hw, None)
+            sid = (kid.get("SensorId") or "").lower()
+            if "integrated" in sid:
+                new_hw["integrated"] = True
 
-    walk(tree, None, False)
-    return _pick(found["cpu"], CPU_PREFS), _pick(found["gpu"], GPU_PREFS)
+    walk(tree, None, None)
+    temps = [(name, v, kind) for hw in hardware for name, v, kind in hw["temps"]]
+    cpu = _pick([(n, v) for n, v, k in temps if k == "cpu"], CPU_PREFS)
+
+    gpus = [hw for hw in hardware if hw["kind"] == "gpu"]
+    primary = next((g for g in gpus if any(k == "gpu" for _, _, k in g["temps"])),
+                   gpus[0] if gpus else None)
+    gpu = gpu_load = gpu_name = None
+    gpu_shared = False
+    if primary:
+        gpu = _pick([(n, v) for n, v, k in primary["temps"] if k == "gpu"], GPU_PREFS)
+        loads = dict(primary["loads"])
+        main = [loads[k] for k in ("gpu core", "d3d 3d") if k in loads]
+        gpu_load = max(main) if main else max(
+            (v for n, v in primary["loads"] if n.startswith("gpu")), default=None)
+        gpu_name = re.sub(r"\((tm|r)\)", "", primary["name"], flags=re.I)
+        gpu_name = re.sub(r"\s+", " ", gpu_name).strip()
+        integrated = primary["integrated"] or bool(INTEGRATED_GPU.search(primary["name"]))
+        gpu_shared = gpu is None and integrated and cpu is not None
+
+    ssds = [_pick([(n, v) for n, v, k in hw["temps"] if k == "storage"], STORAGE_PREFS)
+            for hw in hardware if any(k == "storage" for _, _, k in hw["temps"])]
+    ssd = max((t for t in ssds if t is not None), default=None)
+    return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
+            "gpu_name": gpu_name, "ssd": ssd}
+
+
+def extract_temps(tree):
+    """(cpu_temp, gpu_temp) — kept for older callers/tests."""
+    r = read_lhm(tree)
+    return r["cpu"], r["gpu"]
+
+
+EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None,
+                 "gpu_name": None, "ssd": None}
 
 
 class LhmReader(threading.Thread):
@@ -388,19 +445,26 @@ class LhmReader(threading.Thread):
 
     def __init__(self):
         super().__init__(daemon=True)
-        self.cpu = None
-        self.gpu = None
+        self.sensors = dict(EMPTY_SENSORS)
         self.online = False
+
+    @property
+    def cpu(self):
+        return self.sensors["cpu"]
+
+    @property
+    def gpu(self):
+        return self.sensors["gpu"]
 
     def run(self):
         while True:
             try:
                 with urllib.request.urlopen(LHM_URL, timeout=1) as resp:
                     tree = json.loads(resp.read().decode("utf-8"))
-                self.cpu, self.gpu = extract_temps(tree)
+                self.sensors = read_lhm(tree)
                 self.online = True
             except (OSError, ValueError):
-                self.cpu = self.gpu = None
+                self.sensors = dict(EMPTY_SENSORS)
                 self.online = False
             time.sleep(LHM_POLL_S)
 
@@ -657,6 +721,13 @@ class Renderer:
     def _t(self, d, x, y, text, font, fill, anchor="ls"):
         d.text((self.px(x), self.px(y)), text, font=font, fill=fill, anchor=anchor)
 
+    def _rich(self, d, x, y, parts, align):
+        total = sum(font.getlength(text) for text, font, _ in parts)
+        x = self.px(x) - (total if align == "right" else total / 2 if align == "center" else 0)
+        for text, font, color in parts:
+            d.text((x, self.px(y)), text, font=font, fill=color, anchor="ls")
+            x += font.getlength(text)
+
     def _rich_right(self, d, x_right, y, parts):
         """Draw [(text, font, colour), ...] right-aligned on baseline y."""
         x = self.px(x_right)
@@ -669,12 +740,16 @@ class Renderer:
         h = 128  # header + hero
         if data.get("procs") is not None:
             h += 120
-        h += 38 * (1 + len(data["disks"]))  # memory + disks
+        h += 38 * (2 + len(data["disks"]))  # memory + graphics + disks
         h += 40  # temperature
-        if not data["lhm_online"] or (data["temp_cpu"] is None and data["temp_gpu"] is None):
-            h += 16
+        h += 20 if self._temps_online(data) else 16  # values row / hint
         h += 16 + 22 + 22 + 22 + 30  # divider, net, ping, disk io, footer
         return self.px(h)
+
+    @staticmethod
+    def _temps_online(data):
+        return data["lhm_online"] and any(
+            data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False):
         scale = Scale(THEMES[theme][1])
@@ -746,6 +821,20 @@ class Renderer:
         self._segment_meter(d, P, y + 22, Wl - P, data["ram_pct"], scale)
         y += 38
 
+        # graphics (load comes from LibreHardwareMonitor)
+        load, gname = data.get("gpu_load"), data.get("gpu_name")
+        texts.append((P, y + 14, "Видеокарта", self.f_label, TEXT, "ls"))
+        if load is not None:
+            value = f"{load:.0f}%"
+            room = (self.px(Wl - P) - self.px(P) - self.f_label.getlength("Видеокарта")
+                    - self.f_value.getlength(value) - self.px(24))
+            parts = ([(ellipsize(gname, self.f_small, room) + "   ", self.f_small, DIM)] if gname else [])
+            texts.append(("rich", Wl - P, y + 14, parts + [(value, self.f_value, TEXT)]))
+        else:
+            texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
+        self._segment_meter(d, P, y + 22, Wl - P, load or 0, scale)
+        y += 38
+
         # disks
         for name, used, total, pct in data["disks"]:
             texts.append((P, y + 14, f"Диск {name}", self.f_label, TEXT, "ls"))
@@ -756,25 +845,28 @@ class Renderer:
             y += 38
 
         # temperature
-        cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
-        online = data["lhm_online"] and (cpu_t is not None or gpu_t is not None)
+        cpu_t, gpu_t, ssd_t = data["temp_cpu"], data["temp_gpu"], data.get("temp_ssd")
+        shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
+        online = self._temps_online(data)
         texts.append((P, y + 14, "Температура", self.f_label, TEXT, "ls"))
-        if online:
-            parts = []
-            if gpu_t is not None:
-                parts += [("GPU ", self.f_small, DIM),
-                          (f"{gpu_t:.0f}°", self.f_value, scale((gpu_t - 30) / 70))]
-            if cpu_t is not None:
-                if parts:
-                    parts.append(("    ", self.f_small, DIM))
-                parts += [("CPU ", self.f_small, DIM),
-                          (f"{cpu_t:.0f}°", self.f_value, scale((cpu_t - 30) / 70))]
-            texts.append(("rich", Wl - P, y + 14, parts))
-        else:
+        if not online:
             texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
         self._temp_strip(d, P, y + 26, Wl - P, cpu_t, gpu_t, scale, online)
         y += 40
-        if not online:
+        if online:
+            def chip(name, t, approx=False):
+                head = [(f"{name} ", self.f_small, DIM)]
+                if t is None:
+                    return head + [("—", self.f_value, FAINT)]
+                color = scale((t - 30) / 70)
+                return (head + ([("≈", self.f_sym, color)] if approx else [])
+                        + [(f"{t:.0f}°", self.f_value, color)])
+            texts.append(("rich_left", P, y + 8, chip("CPU", cpu_t)))
+            texts.append(("rich_center", Wl / 2, y + 8,
+                          chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
+            texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
+            y += 20
+        else:
             hint = ("Запусти LibreHardwareMonitor с веб-сервером" if not data["lhm_online"]
                     else "Запусти LibreHardwareMonitor от админа")
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
@@ -818,6 +910,8 @@ class Renderer:
         for item in texts:
             if item[0] == "rich":
                 self._rich_right(td, item[1], item[2], item[3])
+            elif item[0] in ("rich_left", "rich_center"):
+                self._rich(td, item[1], item[2], item[3], item[0][5:])
             else:
                 x, ty, text, font, fill, anchor = item
                 self._t(td, x, ty, text, font, fill, anchor)
@@ -848,7 +942,8 @@ class TaskbarPanel:
         speed_w = max(f.getlength("1023 КБ/с"), f.getlength("99,9 МБ/с"))
         self.col_a = max(f.getlength("CPU "), f.getlength("RAM ")) + fv.getlength("100%")
         self.col_b = fs.getlength("↓ ") + speed_w
-        self.col_c = max(f.getlength("CPU "), f.getlength("GPU ")) + fv.getlength("100°")
+        self.col_c = (max(f.getlength("CPU "), f.getlength("GPU ")) + fs.getlength("≈")
+                      + fv.getlength("100°"))
         self.col_d = max(f.getlength("пинг"), fv.getlength("999 мс"))
         self.col_gap = px(14)
 
@@ -915,10 +1010,16 @@ class TaskbarPanel:
         d.text((x_d + self.col_d, rows[1]), value, font=fv, fill=color, anchor="rm")
 
         if temps:
-            for y, name, t in ((rows[0], "CPU", data["temp_cpu"]), (rows[1], "GPU", data["temp_gpu"])):
+            cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
+            shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
+            for y, name, t, approx in ((rows[0], "CPU", cpu_t, False),
+                                       (rows[1], "GPU", cpu_t if shared else gpu_t, shared)):
                 d.text((x_c, y), name, font=f, fill=label_c, anchor="lm")
                 value, color = ("—", label_c) if t is None else (f"{t:.0f}°", tone((t - 30) / 70))
-                d.text((x_c + self.col_c, y), value, font=fv, fill=color, anchor="rm")
+                right = x_c + self.col_c
+                d.text((right, y), value, font=fv, fill=color, anchor="rm")
+                if approx:
+                    d.text((right - fv.getlength(value), y), "≈", font=fs, fill=color, anchor="rm")
 
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
@@ -1421,6 +1522,7 @@ class Widget:
         self.last_net = net
 
         batt = psutil.sensors_battery()
+        sensors = self.lhm.sensors  # one consistent snapshot from the reader thread
         return {
             "cpu": cpu,
             "cpu_hist": list(self.cpu_hist),
@@ -1434,8 +1536,12 @@ class Widget:
             "net_up": max(up, 0.0),
             "battery": (batt.percent, bool(batt.power_plugged)) if batt else None,
             "uptime": time.time() - psutil.boot_time(),
-            "temp_cpu": self.lhm.cpu,
-            "temp_gpu": self.lhm.gpu,
+            "temp_cpu": sensors["cpu"],
+            "temp_gpu": sensors["gpu"],
+            "gpu_shared": sensors["gpu_shared"],
+            "gpu_load": sensors["gpu_load"],
+            "gpu_name": sensors["gpu_name"],
+            "temp_ssd": sensors["ssd"],
             "lhm_online": self.lhm.online,
             "ping": self.ping.ms,
             "ping_ready": self.ping.ready,
