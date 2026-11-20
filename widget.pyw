@@ -401,21 +401,151 @@ RUN_NAME = "PCMonitorWidget"
 
 
 def autostart_command():
-    if getattr(sys, "frozen", False):  # built .exe
-        return f'"{sys.executable}"'
-    exe = sys.executable
-    windowless = os.path.join(os.path.dirname(exe), "pythonw.exe")
-    if os.path.exists(windowless):
-        exe = windowless
-    return f'"{exe}" "{os.path.abspath(__file__)}"'
+    exe, args = launch_target()
+    return f'"{exe}" {args}'.strip()
 
 
 TASK_NAME = "PCMonitorWidget"
 
 
+def _system32():
+    """System folder from the kernel, not from an environment variable."""
+    buf = ctypes.create_unicode_buffer(260)
+    try:
+        if ctypes.windll.kernel32.GetSystemDirectoryW(buf, 260):
+            return buf.value
+    except (AttributeError, OSError):
+        pass
+    return r"C:\Windows\System32"
+
+
+def _program_files():
+    """Program Files from the shell (FOLDERID_ProgramFiles): %ProgramFiles% could be faked."""
+    try:
+        from ctypes import wintypes as wt
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("a", wt.DWORD), ("b", wt.WORD), ("c", wt.WORD), ("d", ctypes.c_ubyte * 8)]
+
+        guid, out = GUID(), ctypes.c_wchar_p()
+        ctypes.oledll.ole32.CLSIDFromString("{905E63B6-C1BF-494E-B29C-65B732D3D21A}",
+                                            ctypes.byref(guid))
+        ctypes.oledll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(out))
+        try:
+            return out.value
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except (AttributeError, OSError):
+        return r"C:\Program Files"
+
+
+# full path: a bare "schtasks" would also be looked up in the current folder
+SCHTASKS = os.path.join(_system32(), "schtasks.exe")
+
+
+# ---------- protected copy for admin mode ----------
+# Whatever runs with admin rights must not be replaceable without them, or any
+# program running as the user could swap a file (the .exe, a DLL) and get admin
+# rights at the next start. So in admin mode the built program runs from a copy
+# in Program Files, and only that copy may autostart elevated (scheduled task,
+# no UAC prompt). The script version can't be protected like that — Python and
+# its packages live in user-writable folders — so it never gets the task.
+
+INSTALL_DIR = os.path.join(_program_files(), "PC-Monitor")
+EXE_NAME = "PC-Monitor.exe"
+
+
+def is_frozen():
+    return bool(getattr(sys, "frozen", False))
+
+
+def _same_path(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def running_installed():
+    """True when this is the protected copy in Program Files."""
+    return is_frozen() and _same_path(APP_DIR, INSTALL_DIR)
+
+
+def installed_exe():
+    path = os.path.join(INSTALL_DIR, EXE_NAME)
+    return path if os.path.isfile(path) else None
+
+
+def build_fingerprint(folder, exe):
+    """Hash of the .exe (it carries the code) plus names and sizes of _internal files."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(exe, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    internal = os.path.join(folder, "_internal")
+    for root, dirs, files in os.walk(internal):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            h.update(f"{os.path.relpath(path, internal)}:{os.path.getsize(path)}\n".encode())
+    return h.hexdigest()
+
+
+def installed_is_current():
+    """The Program Files copy is this very build."""
+    exe = installed_exe()
+    if not exe or not is_frozen():
+        return False
+    if running_installed():
+        return True
+    try:
+        return build_fingerprint(INSTALL_DIR, exe) == build_fingerprint(APP_DIR, sys.executable)
+    except OSError:
+        return False
+
+
+def install_copy():
+    """Copy this build (the .exe and _internal) to Program Files. Needs admin rights."""
+    import shutil
+    src_internal = os.path.join(APP_DIR, "_internal")
+    if not is_frozen() or running_installed() or not os.path.isdir(src_internal):
+        return False
+    new, old = INSTALL_DIR + ".new", INSTALL_DIR + ".old"
+    try:
+        for path in (new, old):
+            shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(new)
+        shutil.copy2(sys.executable, os.path.join(new, EXE_NAME))
+        shutil.copytree(src_internal, os.path.join(new, "_internal"))
+        if os.path.exists(INSTALL_DIR):
+            os.rename(INSTALL_DIR, old)
+        os.rename(new, INSTALL_DIR)
+    except OSError:
+        log.exception("installing to %s failed", INSTALL_DIR)
+        shutil.rmtree(new, ignore_errors=True)
+        if not os.path.exists(INSTALL_DIR) and os.path.exists(old):
+            os.rename(old, INSTALL_DIR)  # put the previous copy back
+        return False
+    shutil.rmtree(old, ignore_errors=True)
+    log.info("installed %s to %s", APP_VERSION, INSTALL_DIR)
+    return True
+
+
+def start_installed():
+    """Start the Program Files copy (it inherits our admin rights)."""
+    import subprocess
+    exe = installed_exe()
+    if not exe:
+        return False
+    try:
+        subprocess.Popen([exe], cwd=INSTALL_DIR, close_fds=True)
+        return True
+    except OSError:
+        log.exception("starting %s failed", exe)
+        return False
+
+
 def launch_target():
     """(program, arguments) that start this widget."""
-    if getattr(sys, "frozen", False):
+    if is_frozen():
         return sys.executable, ""
     exe = sys.executable
     windowless = os.path.join(os.path.dirname(exe), "pythonw.exe")
@@ -424,20 +554,30 @@ def launch_target():
     return exe, f'"{os.path.abspath(__file__)}"'
 
 
+def elevation_target():
+    """What to start with admin rights: the protected copy when it is this build."""
+    if is_frozen() and not running_installed() and installed_is_current():
+        return installed_exe(), ""
+    return launch_target()
+
+
 def relaunch_as_admin():
     """Ask UAC to restart us elevated. True if the elevated copy was started."""
-    exe, args = launch_target()
+    exe, args = elevation_target()
     try:
-        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, APP_DIR, 1)
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, os.path.dirname(exe), 1)
     except (AttributeError, OSError):
         return False
     return rc > 32  # <= 32: error, e.g. the user pressed "No"
 
 
-def _schtasks(*args):
+def _schtasks(*args, output=False):
     import subprocess
-    return subprocess.run(["schtasks", *args], capture_output=True,
-                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
+    r = subprocess.run([SCHTASKS, *args], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if output:
+        return r.stdout if r.returncode == 0 else None
+    return r.returncode == 0
 
 
 def task_xml():
@@ -468,18 +608,63 @@ def admin_task_enabled():
     return _schtasks("/Query", "/TN", TASK_NAME)
 
 
+def admin_task_command():
+    """Program the elevated autostart task starts, or None when there is no task."""
+    raw = _schtasks("/Query", "/TN", TASK_NAME, "/XML", output=True)
+    if raw is None:
+        return None
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = raw.decode("utf-16")
+    else:
+        text = raw.decode("mbcs", "replace")
+    m = re.search(r"<Command>(.*?)</Command>", text, re.S)
+    if not m:
+        return ""
+    from xml.sax.saxutils import unescape
+    return unescape(m.group(1)).strip().strip('"')
+
+
+def task_allowed():
+    """Only the protected Program Files copy may autostart with admin rights."""
+    return running_installed()
+
+
 def set_admin_task(enable):
     """Needs admin rights (we have them when this is called)."""
     if not enable:
         return _schtasks("/Delete", "/TN", TASK_NAME, "/F") or not admin_task_enabled()
-    import tempfile
-    fd, path = tempfile.mkstemp(suffix=".xml")
+    if not task_allowed():
+        return False
+    # the XML goes into the protected program folder, not %TEMP%: there another
+    # program could swap it between our write and schtasks reading it
+    path = os.path.join(INSTALL_DIR, "autostart-task.xml")
     try:
-        with os.fdopen(fd, "w", encoding="utf-16") as f:
+        with open(path, "w", encoding="utf-16") as f:
             f.write(task_xml())
         return _schtasks("/Create", "/TN", TASK_NAME, "/XML", path, "/F")
     finally:
-        os.remove(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def check_autostart():
+    """At start: keep the Run entry pointing at this program, and drop an elevated
+    task that would start something an ordinary program could replace."""
+    if autostart_enabled():
+        set_autostart(True)
+    if not is_admin():
+        return
+    cmd = admin_task_command()
+    if cmd is None:
+        return
+    installed = installed_exe()
+    if installed and cmd and _same_path(cmd, installed):
+        return  # the protected copy's task
+    log.warning("removing the elevated autostart task for %r (not a protected copy)", cmd)
+    if set_admin_task(False):
+        set_autostart(True)  # keep starting with Windows, just without silent admin rights
 
 
 def autostart_enabled(name=RUN_NAME):
@@ -784,7 +969,7 @@ class LhmReader(threading.Thread):
         if any(s[k] is not None for k in ("cpu", "gpu", "ssd")):
             return None
         if self.native_ok and not self.admin:
-            return "Для температур запусти от администратора"
+            return "Температуры: меню → «Права администратора»"
         if self.native_ok:
             return "Нет доступа к датчикам: нужен драйвер PawnIO"
         if self.online:
@@ -1782,13 +1967,10 @@ class Widget:
         self.hotkey = HotkeyListener()
         self.hotkey.start()
         self._poll_hotkey()
-        try:  # keep autostart pointing at the current location
-            if autostart_enabled():
-                set_autostart(True)
-            elif is_admin() and admin_task_enabled():
-                set_admin_task(True)
+        try:
+            check_autostart()
         except OSError:
-            log.exception("updating autostart failed")
+            log.exception("checking autostart failed")
 
     # --- show / hide ---
     def hide_widget(self):
@@ -1826,13 +2008,13 @@ class Widget:
     def _toggle_autostart(self):
         """Elevated + wants admin: a scheduled task (no UAC at logon); otherwise the Run key."""
         enable = self.autostart_var.get()
-        use_task = enable and is_admin() and self.cfg["run_as_admin"]
+        use_task = enable and is_admin() and self.cfg["run_as_admin"] and task_allowed()
         try:
             if use_task and set_admin_task(True):
                 set_autostart(False)
             else:
                 set_autostart(enable)
-                if is_admin() and not enable:
+                if is_admin():
                     set_admin_task(False)
         except OSError:
             log.exception("changing autostart failed")
@@ -1841,15 +2023,20 @@ class Widget:
     def _toggle_admin(self):
         self.cfg["run_as_admin"] = self.admin_var.get()
         save_config(self.cfg)
-        if self.cfg["run_as_admin"] and not is_admin():
+        if self.cfg["run_as_admin"] and (not is_admin() or (is_frozen() and not running_installed())):
             self.quit_for_elevation()
         elif self.autostart_var.get():
             self._toggle_autostart()  # switch autostart between task and Run key
 
     def quit_for_elevation(self):
-        """Restart elevated; if UAC is refused, keep running as we are."""
+        """Restart elevated (from the protected copy); if UAC is refused, keep running as we are."""
         release_instance()
-        if relaunch_as_admin():
+        if is_admin():  # already elevated, but from a folder anyone can write to
+            if install_copy() and start_installed():
+                self.quit()
+            else:
+                already_running()
+        elif relaunch_as_admin():
             self.quit()
         else:
             already_running()  # take the single-instance lock back
@@ -2297,13 +2484,22 @@ if __name__ == "__main__":
         write_diagnostics()
         sys.exit(0)
     if not already_running():
-        wants_admin = load_config().get("run_as_admin") and lhm_dir() and not is_admin()
-        if wants_admin and "--no-elevate" not in sys.argv:
+        wants_admin = (load_config()["run_as_admin"] and lhm_dir()
+                       and "--no-elevate" not in sys.argv)
+        if wants_admin and not is_admin():
             release_instance()  # let the elevated copy take over the single-instance lock
             if relaunch_as_admin():
                 sys.exit(0)
             if already_running():  # lost a race while UAC was open
                 sys.exit(0)
+        elif wants_admin and is_frozen() and not running_installed():
+            # elevated, but from a folder anyone can write to (e.g. Downloads):
+            # copy this build to Program Files and carry on from there
+            if install_copy():
+                release_instance()
+                if start_installed():
+                    sys.exit(0)
+                already_running()
         log.info("start %s: admin=%s frozen=%s dir=%s", APP_VERSION, is_admin(),
                  getattr(sys, "frozen", False), APP_DIR)
         Widget().run()
