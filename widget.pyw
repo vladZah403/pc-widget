@@ -1665,6 +1665,13 @@ class TaskbarPanel:
         if not bar or not notify:
             self._hide()
             return
+        nl, _, nr, _ = window_rect(notify)
+        if nr - nl <= 0:  # tray area without a size (newer Windows 11 taskbar): nowhere to dock
+            if not getattr(self, "_warned_tray", False):
+                self._warned_tray = True
+                log.warning("taskbar tray area has no size; mini panel hidden")
+            self._hide()
+            return
         bl, bt, br, bb = window_rect(bar)
         h = bb - bt
         screen_h = ctypes.windll.user32.GetSystemMetrics(1)
