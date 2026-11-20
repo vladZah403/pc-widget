@@ -20,6 +20,7 @@ import ctypes
 import json
 import logging
 import logging.handlers
+import math
 import os
 import re
 import socket
@@ -90,6 +91,8 @@ LHM_POLL_S = 3
 UPDATE_MS = 1000
 HISTORY_LEN = 60
 SS = 3  # supersampling factor for shapes
+HERO_H = 128  # header + CPU block, logical px
+NET_GRAPH_FLOOR = 64 * 1024  # the network graph's scale never goes below 64 KB/s
 
 # window colour that becomes fully transparent (rounded corners)
 KEY = (1, 2, 3)
@@ -126,14 +129,13 @@ IS_WIN11 = _windows_build() >= 22000
 # user switches on temperatures in the menu (least privilege)
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
                   "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
-                  "run_as_admin": False}
+                  "run_as_admin": False, "hidden": [],
+                  "alert_temp": 90, "alert_ram": 90, "alert_battery": 15}
 
-# alerts: (switch on at, switch off below) — hysteresis so a value hovering
-# around the limit doesn't spam; each alert at most once per ALERT_COOLDOWN_S
-ALERT_CPU_TEMP = (90, 85)
-ALERT_GPU_TEMP = (87, 82)
-ALERT_RAM = (90, 85)
-ALERT_BATTERY = (15, 20)
+# alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
+# (above it for the battery), so a value hovering around the limit doesn't spam;
+# each alert at most once per ALERT_COOLDOWN_S. GPU limit = CPU limit - 3.
+ALERT_HYST = 5
 ALERT_COOLDOWN_S = 600
 CLOSE_CONFIRM_MS = 3000
 
@@ -194,6 +196,24 @@ def ellipsize(text, font, max_w):
     return text + "…"
 
 
+def fmt_left(seconds):
+    """Battery time left: '2 ч 15 мин', '45 мин'."""
+    minutes = int(seconds) // 60
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} ч {minutes} мин" if hours else f"{minutes} мин"
+
+
+def cpu_extra_text(data):
+    """'3,2 ГГц · 12 Вт' from the sensors, or '' when they don't give it."""
+    parts = []
+    clock, power = data.get("cpu_clock"), data.get("cpu_power")
+    if clock:
+        parts.append(f"{clock:.1f} ГГц".replace(".", ","))
+    if power:
+        parts.append(f"{power:.0f} Вт" if power >= 10 else f"{power:.1f} Вт".replace(".", ","))
+    return "  ·  ".join(parts)
+
+
 def fmt_uptime(seconds):
     seconds = int(seconds)
     days, rest = divmod(seconds, 86400)
@@ -207,7 +227,7 @@ def fmt_uptime(seconds):
 def sanitize_config(raw):
     """Only known keys with values of the right type: the file is user-writable
     and the widget may run as admin, so nothing in it is trusted."""
-    cfg = dict(DEFAULT_CONFIG)
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))  # fresh copy: no shared lists
     if not isinstance(raw, dict):
         return cfg
     for key, default in DEFAULT_CONFIG.items():
@@ -235,8 +255,13 @@ def sanitize_config(raw):
     return cfg
 
 
-CONFIG_CHOICES = {}  # key -> allowed values (filled in below, next to the features)
-SECTIONS = {}        # optional widget sections: key -> menu title
+# key -> allowed values
+CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
+                  "alert_battery": (10, 15, 20, 30)}
+# sections that can be hidden from the menu: key -> menu title
+SECTIONS = {"ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
+            "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
+            "disk_io": "Чтение и запись диска", "uptime": "Время без перезагрузки"}
 
 
 def load_config():
@@ -249,7 +274,7 @@ def load_config():
         except (OSError, ValueError):
             log.warning("bad config %s, using defaults", path, exc_info=True)
             break
-    return dict(DEFAULT_CONFIG)
+    return sanitize_config({})
 
 
 def save_config(cfg):
@@ -758,6 +783,7 @@ def load_symbol_font(size):
 
 _NUM_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
 CPU_PREFS = ("cpu package", "core (tctl/tdie)", "core average", "cpu die", "cpu")
+POWER_PREFS = ("package", "cpu package")
 GPU_PREFS = ("gpu core", "gpu hot spot", "gpu")
 
 
@@ -825,13 +851,17 @@ def read_lhm(tree):
                     hw["temps"].append((low, value, _sensor_kind(node.get("SensorId"), hw["kind"])))
             elif group == "Load":
                 hw["loads"].append((low, value))
+            elif group == "Clocks":
+                hw["clocks"].append((low, value))
+            elif group == "Powers":
+                hw["powers"].append((low, value))
             return
         if text in SENSOR_GROUPS:
             for kid in kids:
                 walk(kid, hw, text)
             return
         new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
-                  "integrated": False}
+                  "clocks": [], "powers": [], "integrated": False}
         hardware.append(new_hw)
         for kid in kids:
             walk(kid, new_hw, None)
@@ -862,8 +892,16 @@ def read_lhm(tree):
     ssds = [_pick([(n, v) for n, v, k in hw["temps"] if k == "storage"], STORAGE_PREFS)
             for hw in hardware if any(k == "storage" for _, _, k in hw["temps"])]
     ssd = max((t for t in ssds if t is not None), default=None)
+
+    cpu_clock = cpu_power = None
+    cpu_hw = next((hw for hw in hardware if hw["kind"] == "cpu"), None)
+    if cpu_hw:
+        cores = [v for n, v in cpu_hw["clocks"] if n.startswith("core #") and v > 100]
+        cpu_clock = sum(cores) / len(cores) / 1000 if cores else None  # MHz -> GHz
+        power = _pick(cpu_hw["powers"], POWER_PREFS)
+        cpu_power = power if power and 0 < power < 1000 else None
     return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
-            "gpu_name": gpu_name, "ssd": ssd}
+            "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power}
 
 
 def extract_temps(tree):
@@ -873,7 +911,7 @@ def extract_temps(tree):
 
 
 EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None,
-                 "gpu_name": None, "ssd": None}
+                 "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None}
 
 
 def is_admin():
@@ -898,7 +936,8 @@ class NativeSensors:
 
     ICONS = {"Cpu": "cpu", "GpuNvidia": "nvidia", "GpuAmd": "ati", "GpuIntel": "intel",
              "Storage": "hdd"}
-    GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %")}
+    GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %"),
+              "Clock": ("Clocks", " MHz"), "Power": ("Powers", " W")}
 
     def __init__(self, path):
         from pythonnet import load
@@ -1283,17 +1322,42 @@ class Renderer:
             d.text((x, self.px(y)), text, font=font, fill=color, anchor="ls")
 
     # --- layout ---
-    def layout_height(self, data, compact=False):
+    # The body under the CPU block is a list of sections (height, draw function):
+    # the same list gives the window height and draws it, so they always agree.
+
+    def _sections(self, data, hidden):
+        secs = []
+        if data.get("procs") is not None:
+            secs.append((120, self._draw_procs))
+        if "ram" not in hidden:
+            secs.append((38, self._draw_ram))
+        if "gpu" not in hidden:
+            secs.append((38, self._draw_gpu))
+        if "disks" not in hidden:
+            for disk in data["disks"]:
+                secs.append((38, lambda d, texts, y, data, scale, disk=disk:
+                             self._draw_disk(d, texts, y, disk, scale)))
+        if "temps" not in hidden:
+            secs.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
+        lower = []
+        if "net" not in hidden:
+            lower.append((22, self._draw_net))
+            if "net_graph" not in hidden:
+                lower.append((26, self._draw_net_graph))
+        if "ping" not in hidden:
+            lower.append((22, self._draw_ping))
+        if "disk_io" not in hidden:
+            lower.append((22, self._draw_disk_io))
+        if lower and secs:
+            secs.append((16, self._draw_divider))
+        secs += lower
+        secs.append((30, self._draw_footer) if "uptime" not in hidden else (10, None))
+        return secs
+
+    def layout_height(self, data, compact=False, hidden=()):
         if compact:
             return self.px(178)
-        h = 128  # header + hero
-        if data.get("procs") is not None:
-            h += 120
-        h += 38 * (2 + len(data["disks"]))  # memory + graphics + disks
-        h += 40  # temperature
-        h += 20 if self._temps_online(data) else 16  # values row / hint
-        h += 16 + 22 + 22 + 22 + 30  # divider, net, ping, disk io, footer
-        return self.px(h)
+        return self.px(HERO_H + sum(h for h, _ in self._sections(data, hidden)))
 
     def _compact_rows(self, texts, data, scale, y):
         """Two lines of short readings under the CPU block (compact mode)."""
@@ -1331,12 +1395,12 @@ class Renderer:
             data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
-               compact=False, close_armed=False):
+               compact=False, close_armed=False, hidden=()):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
-        H = self.layout_height(data, compact)
         if compact:
             data = dict(data, procs=None)
+        H = self.layout_height(data, compact, hidden)
         card = self._card(H)
 
         layer = Image.new("RGBA", (self.W * SS, H * SS), (0, 0, 0, 0))
@@ -1362,10 +1426,13 @@ class Renderer:
             pct, plugged = batt
             bx = Wl - P - 50 - 19
             self._battery_icon(d, bx, 23.5, pct, plugged, scale)
-            texts.append(("rich", bx - 6, 28, [(f"{pct:.0f}%", self.f_small, DIM)]
+            left = data.get("battery_left")
+            texts.append(("rich", bx - 6, 28,
+                          ([(f"{fmt_left(left)}   ", self.f_small, FAINT)] if left else [])
+                          + [(f"{pct:.0f}%", self.f_small, DIM)]
                           + ([(" ⚡", self.f_sym, DIM)] if plugged else [])))
 
-        # hero: CPU number + histogram
+        # hero: CPU number + histogram (+ clock and power when the sensors give them)
         cpu = data["cpu"]
         hero_base = 92
         num = f"{cpu:.0f}"
@@ -1375,43 +1442,56 @@ class Renderer:
         procs = data.get("procs")
         texts.append((P, hero_base + 18, "Процессор", self.f_small, DIM, "ls"))
         hx0 = P + 82
-        self._histogram(d, hx0, 50, Wl - P, 108, data["cpu_hist"], scale)
+        self._histogram(d, hx0, 50, Wl - P, 100, data["cpu_hist"], scale)
+        extra = cpu_extra_text(data)
+        if extra:
+            texts.append(("rich", Wl - P, hero_base + 18, [(extra, self.f_small, DIM)]))
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
-            self._compact_rows(texts, data, scale, 128)
+            self._compact_rows(texts, data, scale, HERO_H)
             return self._compose(card, layer, texts)
         chev_x = P + self.f_small.getlength("Процессор ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
-        y = 128
-        if procs is not None:
-            y0, y1 = y - 4, y + 108
-            self._rrect(d, P - 6, y0, Wl - P + 6, y1, 8, (34, 40, 52))
-            col_mem, col_cpu = Wl - P, Wl - P - 58
-            texts.append((P, y0 + 17, "Программа", self.f_small, FAINT, "ls"))
-            texts.append(("rich", col_cpu, y0 + 17, [("CPU", self.f_small, FAINT)]))
-            texts.append(("rich", col_mem, y0 + 17, [("Память", self.f_small, FAINT)]))
-            name_w = self.px(col_cpu - 42 - P)
-            for i, (name, cpu_p, mem) in enumerate(procs):
-                by = y0 + 36 + i * 17
-                texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
-                cpu_txt = f"{cpu_p:.1f}".replace(".", ",") if cpu_p < 10 else f"{cpu_p:.0f}"
-                texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
-                                                     scale(min(1.0, cpu_p / 50)))]))
-                texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
-            if not procs:
-                texts.append((P, y0 + 36, "собираю данные…", self.f_small, FAINT, "ls"))
-            y += 120
-        # memory
+        y = HERO_H
+        for h, draw in self._sections(data, hidden):
+            if draw is not None:
+                draw(d, texts, y, data, scale)
+            y += h
+        return self._compose(card, layer, texts)
+
+    # --- sections: draw(d, texts, y, data, scale) ---
+    def _draw_procs(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
+        procs = data["procs"]
+        y0, y1 = y - 4, y + 108
+        self._rrect(d, P - 6, y0, Wl - P + 6, y1, 8, (34, 40, 52))
+        col_mem, col_cpu = Wl - P, Wl - P - 58
+        texts.append((P, y0 + 17, "Программа", self.f_small, FAINT, "ls"))
+        texts.append(("rich", col_cpu, y0 + 17, [("CPU", self.f_small, FAINT)]))
+        texts.append(("rich", col_mem, y0 + 17, [("Память", self.f_small, FAINT)]))
+        name_w = self.px(col_cpu - 42 - P)
+        for i, (name, cpu_p, mem) in enumerate(procs):
+            by = y0 + 36 + i * 17
+            texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
+            cpu_txt = f"{cpu_p:.1f}".replace(".", ",") if cpu_p < 10 else f"{cpu_p:.0f}"
+            texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
+                                                 scale(min(1.0, cpu_p / 50)))]))
+            texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
+        if not procs:
+            texts.append((P, y0 + 36, "собираю данные…", self.f_small, FAINT, "ls"))
+
+    def _draw_ram(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         texts.append((P, y + 14, "Память", self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 14, [
             (f"{fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ   ", self.f_small, DIM),
             (f"{data['ram_pct']:.0f}%", self.f_value, TEXT)]))
         self._segment_meter(d, P, y + 22, Wl - P, data["ram_pct"], scale)
-        y += 38
 
-        # graphics (load comes from LibreHardwareMonitor)
+    def _draw_gpu(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         load, gname = data.get("gpu_load"), data.get("gpu_name")
         texts.append((P, y + 14, "Видеокарта", self.f_label, TEXT, "ls"))
         if load is not None:
@@ -1423,18 +1503,18 @@ class Renderer:
         else:
             texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
         self._segment_meter(d, P, y + 22, Wl - P, load or 0, scale)
-        y += 38
 
-        # disks
-        for name, used, total, pct in data["disks"]:
-            texts.append((P, y + 14, f"Диск {name}", self.f_label, TEXT, "ls"))
-            texts.append(("rich", Wl - P, y + 14, [
-                (f"{fmt_gb(used)} из {fmt_gb(total)} ГБ   ", self.f_small, DIM),
-                (f"{pct:.0f}%", self.f_value, TEXT)]))
-            self._segment_meter(d, P, y + 22, Wl - P, pct, scale)
-            y += 38
+    def _draw_disk(self, d, texts, y, disk, scale):
+        P, Wl = self.PAD, self.WIDTH
+        name, used, total, pct = disk
+        texts.append((P, y + 14, f"Диск {name}", self.f_label, TEXT, "ls"))
+        texts.append(("rich", Wl - P, y + 14, [
+            (f"{fmt_gb(used)} из {fmt_gb(total)} ГБ   ", self.f_small, DIM),
+            (f"{pct:.0f}%", self.f_value, TEXT)]))
+        self._segment_meter(d, P, y + 22, Wl - P, pct, scale)
 
-        # temperature
+    def _draw_temps(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         cpu_t, gpu_t, ssd_t = data["temp_cpu"], data["temp_gpu"], data.get("temp_ssd")
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         online = self._temps_online(data)
@@ -1455,23 +1535,45 @@ class Renderer:
             texts.append(("rich_center", Wl / 2, y + 8,
                           chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
             texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
-            y += 20
         else:
             hint = data.get("sensor_hint") or "Нет данных о температуре"
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
-            y += 16
 
-        # divider
+    def _draw_divider(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         d.rectangle(self._ss(P, y + 6, Wl - P, y + 6 + 1 / self.s), fill=TRACK)
-        y += 16
 
-        # network & disk activity
+    def _draw_net(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         down_c, up_c = scale(0.0), scale(0.75)
         texts.append((P, y + 12, "Сеть", self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 12, [
             ("↓ ", self.f_sym, down_c), (fmt_speed(data["net_down"]), self.f_small, TEXT),
             ("     ↑ ", self.f_sym, up_c), (fmt_speed(data["net_up"]), self.f_small, TEXT)]))
-        y += 22
+
+    def _draw_net_graph(self, d, texts, y, data, scale):
+        """Last minute of traffic: download bars up from the line, upload bars down.
+        Square-root scale, so a small upload is still visible next to a big download."""
+        P, Wl = self.PAD, self.WIDTH
+        down_c, up_c = scale(0.0), scale(0.75)
+        hist = data.get("net_hist") or []
+        top, mid, bottom = y + 1, y + 13, y + 21
+        peak = max([max(a, b) for a, b in hist] + [NET_GRAPH_FLOOR])
+        pitch = (Wl - 2 * P) / HISTORY_LEN
+        bar_w = pitch * 0.62
+        offset = HISTORY_LEN - len(hist)
+        d.rectangle(self._ss(P, mid - 0.4, Wl - P, mid + 0.4), fill=HIST_TRACK)
+        for i, (down, up) in enumerate(hist):
+            bx = P + (i + offset) * pitch
+            hd = (mid - top) * math.sqrt(max(0.0, down) / peak)
+            hu = (bottom - mid) * math.sqrt(max(0.0, up) / peak)
+            if hd >= 0.5:
+                d.rectangle(self._ss(bx, mid - hd, bx + bar_w, mid - 0.4), fill=down_c)
+            if hu >= 0.5:
+                d.rectangle(self._ss(bx, mid + 0.4, bx + bar_w, mid + hu), fill=up_c)
+
+    def _draw_ping(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         texts.append((P, y + 12, "Пинг", self.f_label, TEXT, "ls"))
         ping = data.get("ping")
         if not data.get("ping_ready"):
@@ -1482,18 +1584,17 @@ class Renderer:
             parts = [(f"до {PING_HOST}   ", self.f_small, FAINT),
                      (f"{ping} мс", self.f_value, ping_color(scale, ping))]
         texts.append(("rich", Wl - P, y + 12, parts))
-        y += 22
+
+    def _draw_disk_io(self, d, texts, y, data, scale):
+        P, Wl = self.PAD, self.WIDTH
         texts.append((P, y + 12, "Диск", self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 12, [
             ("чтение ", self.f_small, DIM), (fmt_speed(data["io_read"]), self.f_small, TEXT),
             ("   запись ", self.f_small, DIM), (fmt_speed(data["io_write"]), self.f_small, TEXT)]))
-        y += 22
 
-        # footer
-        texts.append((P, y + 18, f"Без перезагрузки {fmt_uptime(data['uptime'])}",
+    def _draw_footer(self, d, texts, y, data, scale):
+        texts.append((self.PAD, y + 18, f"Без перезагрузки {fmt_uptime(data['uptime'])}",
                       self.f_small, FAINT, "ls"))
-
-        return self._compose(card, layer, texts)
 
     def _compose(self, card, layer, texts):
         img = card.convert("RGBA")
@@ -1863,6 +1964,13 @@ class InfoCard(PopupCard):
         ping, ready = data.get("ping"), data.get("ping_ready")
         ping_text = "…" if not ready else "нет ответа" if ping is None else f"{ping} мс"
         rows.append(("Пинг", [(ping_text, fv, ping_color(scale, ping) if ready else FAINT)]))
+        batt = data.get("battery")
+        if batt is not None:
+            level, plugged = batt
+            left = data.get("battery_left")
+            rows.append(("Батарея", ([(f"{fmt_left(left)}   ", f, DIM)] if left else [])
+                         + [(f"{level:.0f}%", fv, scale(1 - level / 100) if not plugged else scale(0))]
+                         + ([(" ⚡", fs, DIM)] if plugged else [])))
         top = top_processes(1)
         if top:
             name, cpu_p, _ = top[0]
@@ -1946,6 +2054,7 @@ class Widget:
         self.last_disk = psutil.disk_io_counters()
         self.last_t = time.monotonic()
         self.cpu_hist = []
+        self.net_hist = []  # (down, up) bytes/s for the network graph
         self.partitions = scan_partitions()
         self.partitions_t = time.monotonic()
         self.data = None
@@ -2111,9 +2220,6 @@ class Widget:
         self.procs_var = tk.BooleanVar(value=False)
         menu.add_checkbutton(label="Список процессов", variable=self.procs_var,
                              command=lambda: self._set_procs(self.procs_var.get()))
-        self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
-        menu.add_checkbutton(label="Предупреждения", variable=self.alerts_var,
-                             command=self._toggle_alerts)
         self.compact_var = tk.BooleanVar(value=bool(self.cfg["compact"]))
         menu.add_checkbutton(label="Компактный режим", variable=self.compact_var,
                              command=self._toggle_compact)
@@ -2125,6 +2231,29 @@ class Widget:
             menu.add_checkbutton(label="Права администратора (температуры)",
                                  variable=self.admin_var, command=self._toggle_admin)
         menu.add_separator()
+        show_menu = tk.Menu(menu, tearoff=0)
+        self.section_vars = {}
+        for key, title in SECTIONS.items():
+            var = self.section_vars[key] = tk.BooleanVar(value=key not in self.cfg["hidden"])
+            show_menu.add_checkbutton(label=title, variable=var,
+                                      command=lambda k=key: self._toggle_section(k))
+        menu.add_cascade(label="Показывать", menu=show_menu)
+        alerts_menu = tk.Menu(menu, tearoff=0)
+        self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
+        alerts_menu.add_checkbutton(label="Показывать предупреждения", variable=self.alerts_var,
+                                    command=self._toggle_alerts)
+        alerts_menu.add_separator()
+        self.limit_vars = {}
+        for key, title, unit in (("alert_temp", "Перегрев CPU от", "°"),
+                                 ("alert_ram", "Память занята от", "%"),
+                                 ("alert_battery", "Батарея ниже", "%")):
+            sub = tk.Menu(alerts_menu, tearoff=0)
+            var = self.limit_vars[key] = tk.IntVar(value=self.cfg[key])
+            for value in CONFIG_CHOICES[key]:
+                sub.add_radiobutton(label=f"{value}{unit}", value=value, variable=var,
+                                    command=lambda k=key: self._set_limit(k))
+            alerts_menu.add_cascade(label=title, menu=sub)
+        menu.add_cascade(label="Предупреждения", menu=alerts_menu)
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
             theme_menu.add_radiobutton(label=title, value=key, variable=self.theme_var,
@@ -2273,6 +2402,22 @@ class Widget:
         self.cfg["alerts"] = self.alerts_var.get()
         save_config(self.cfg)
 
+    def _set_limit(self, key):
+        self.cfg[key] = self.limit_vars[key].get()
+        self.alert_state.pop({"alert_temp": "cpu_temp", "alert_ram": "ram",
+                              "alert_battery": "battery"}[key], None)  # re-arm
+        if key == "alert_temp":
+            self.alert_state.pop("gpu_temp", None)
+        save_config(self.cfg)
+
+    def _toggle_section(self, key):
+        hidden = [k for k in self.cfg["hidden"] if k != key]
+        if not self.section_vars[key].get():
+            hidden.append(key)
+        self.cfg["hidden"] = hidden
+        save_config(self.cfg)
+        self._draw()
+
     def _alert(self, key, active, cleared, hold_s, title, body, color):
         """Fire a toast when `active` has held for hold_s; re-arm once `cleared`."""
         now = time.monotonic()
@@ -2293,15 +2438,16 @@ class Widget:
             return
         scale = Scale(THEMES[self.cfg["theme"]][1])
         hot = scale(1.0)
+        limit = self.cfg["alert_temp"]
         t = data["temp_cpu"]
         if t is not None:
-            self._alert("cpu_temp", t >= ALERT_CPU_TEMP[0], t < ALERT_CPU_TEMP[1], 5,
+            self._alert("cpu_temp", t >= limit, t < limit - ALERT_HYST, 5,
                         "Процессор перегревается",
                         f"CPU {t:.0f}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.",
                         hot)
         t = data["temp_gpu"]
         if t is not None:
-            self._alert("gpu_temp", t >= ALERT_GPU_TEMP[0], t < ALERT_GPU_TEMP[1], 5,
+            self._alert("gpu_temp", t >= limit - 3, t < limit - 3 - ALERT_HYST, 5,
                         "Видеокарта перегревается",
                         f"GPU {t:.0f}°. Понизь настройки графики или ограничь FPS.", hot)
         pct = data["ram_pct"]
@@ -2311,14 +2457,19 @@ class Widget:
             return (f"Занято {pct:.0f}% ({fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ). "
                     f"Больше всех: {name} — {fmt_mem(mem)}.")
 
-        self._alert("ram", pct >= ALERT_RAM[0], pct < ALERT_RAM[1], 10,
+        ram_limit = self.cfg["alert_ram"]
+        self._alert("ram", pct >= ram_limit, pct < ram_limit - ALERT_HYST, 10,
                     "Память почти закончилась", ram_body, hot)
         batt = data["battery"]
         if batt is not None:
             level, plugged = batt
-            self._alert("battery", not plugged and level <= ALERT_BATTERY[0],
-                        plugged or level > ALERT_BATTERY[1], 0,
-                        "Батарея садится", f"Осталось {level:.0f}%. Подключи зарядку.",
+            low = self.cfg["alert_battery"]
+            left = data.get("battery_left")
+            self._alert("battery", not plugged and level <= low,
+                        plugged or level > low + ALERT_HYST, 0,
+                        "Батарея садится",
+                        f"Осталось {level:.0f}%" + (f", примерно на {fmt_left(left)}" if left else "")
+                        + ". Подключи зарядку.",
                         scale(0.75))
 
     def _leave(self, event):
@@ -2374,11 +2525,17 @@ class Widget:
         self.last_disk = disk
 
         net = psutil.net_io_counters()
-        down = (net.bytes_recv - self.last_net.bytes_recv) / dt
-        up = (net.bytes_sent - self.last_net.bytes_sent) / dt
+        down = max((net.bytes_recv - self.last_net.bytes_recv) / dt, 0.0)
+        up = max((net.bytes_sent - self.last_net.bytes_sent) / dt, 0.0)
         self.last_net = net
+        self.net_hist = (self.net_hist + [(down, up)])[-HISTORY_LEN:]
 
         batt = psutil.sensors_battery()
+        left = None
+        if batt is not None and not batt.power_plugged:
+            secs = batt.secsleft  # Windows' estimate; unknown right after unplugging
+            if isinstance(secs, int) and 0 < secs < 48 * 3600:
+                left = secs
         sensors = self.lhm.sensors  # one consistent snapshot from the reader thread
         return {
             "cpu": cpu,
@@ -2389,9 +2546,11 @@ class Widget:
             "disks": disks,
             "io_read": max(io_r, 0.0),
             "io_write": max(io_w, 0.0),
-            "net_down": max(down, 0.0),
-            "net_up": max(up, 0.0),
+            "net_down": down,
+            "net_up": up,
+            "net_hist": list(self.net_hist),
             "battery": (batt.percent, bool(batt.power_plugged)) if batt else None,
+            "battery_left": left,
             "uptime": time.time() - psutil.boot_time(),
             "temp_cpu": sensors["cpu"],
             "temp_gpu": sensors["gpu"],
@@ -2399,6 +2558,8 @@ class Widget:
             "gpu_load": sensors["gpu_load"],
             "gpu_name": sensors["gpu_name"],
             "temp_ssd": sensors["ssd"],
+            "cpu_clock": sensors.get("cpu_clock"),
+            "cpu_power": sensors.get("cpu_power"),
             "lhm_online": self.lhm.online,
             "sensor_hint": self.lhm.hint(),
             "ping": self.ping.ms,
@@ -2423,7 +2584,8 @@ class Widget:
         img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
                                    bool(self.cfg["pinned"]), self.pin_hover,
                                    compact=bool(self.cfg["compact"]),
-                                   close_armed=self.close_armed)
+                                   close_armed=self.close_armed,
+                                   hidden=tuple(self.cfg["hidden"]))
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         if img.height != self.height:
