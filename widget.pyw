@@ -674,22 +674,25 @@ def set_admin_task(enable):
             pass
 
 
-def check_autostart():
-    """At start: keep the Run entry pointing at this program, and drop an elevated
-    task that would start something an ordinary program could replace."""
+def check_autostart(prefer_task=False):
+    """At start: keep the Run entry pointing at this program, drop an elevated task
+    that would start something an ordinary program could replace, and (admin mode,
+    protected copy) move autostart to the task, so logon shows no UAC prompt."""
     if autostart_enabled():
         set_autostart(True)
     if not is_admin():
         return
     cmd = admin_task_command()
-    if cmd is None:
-        return
     installed = installed_exe()
-    if installed and cmd and _same_path(cmd, installed):
-        return  # the protected copy's task
-    log.warning("removing the elevated autostart task for %r (not a protected copy)", cmd)
-    if set_admin_task(False):
-        set_autostart(True)  # keep starting with Windows, just without silent admin rights
+    if cmd is not None and not (installed and cmd and _same_path(cmd, installed)):
+        log.warning("removing the elevated autostart task for %r (not a protected copy)", cmd)
+        if set_admin_task(False):
+            set_autostart(True)  # keep starting with Windows, just without silent admin rights
+            cmd = None
+    if prefer_task and cmd is None and running_installed() and autostart_enabled():
+        if set_admin_task(True):
+            set_autostart(False)
+            log.info("autostart moved to the elevated task of the protected copy")
 
 
 def autostart_enabled(name=RUN_NAME):
@@ -2084,7 +2087,7 @@ class Widget:
         self.hotkey.start()
         self._poll_hotkey()
         try:
-            check_autostart()
+            check_autostart(prefer_task=bool(self.cfg["run_as_admin"]))
         except OSError:
             log.exception("checking autostart failed")
 
