@@ -135,6 +135,7 @@ ALERT_GPU_TEMP = (87, 82)
 ALERT_RAM = (90, 85)
 ALERT_BATTERY = (15, 20)
 ALERT_COOLDOWN_S = 600
+CLOSE_CONFIRM_MS = 3000
 
 
 # ---------- helpers ----------
@@ -1145,7 +1146,7 @@ class Renderer:
             data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
-               compact=False):
+               compact=False, close_armed=False):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
         H = self.layout_height(data, compact)
@@ -1157,9 +1158,13 @@ class Renderer:
         d = ImageDraw.Draw(layer)
         texts = []  # deferred text: (x, y, text, font, fill, anchor)
 
-        # header
-        texts.append((P, 28, "Система", self.f_title, TEXT, "ls"))
-        self._close_icon(d, Wl - P - 4, 23, CLOSE_HOVER if close_hover else DIM)
+        # header; after one click on the cross it asks for a second one
+        if close_armed:
+            texts.append((P, 28, "Нажми ещё раз — закрыть", self.f_value, CLOSE_HOVER, "ls"))
+            self._rrect(d, Wl - P - 13, 14, Wl - P + 5, 32, 5, lerp(CARD, CLOSE_HOVER, 0.25))
+        else:
+            texts.append((P, 28, "Система", self.f_title, TEXT, "ls"))
+        self._close_icon(d, Wl - P - 4, 23, CLOSE_HOVER if close_hover or close_armed else DIM)
         self.close_box = (self.px(Wl - P - 14), self.px(11), self.px(Wl - P + 6), self.px(35))
         pin_x = Wl - P - 28
         pin_color = scale(0.0) if pinned else (TEXT if pin_hover else FAINT)
@@ -1168,7 +1173,7 @@ class Renderer:
         self._pin_icon(d, pin_x, 23, pin_color)
         self.pin_box = (self.px(pin_x - 10), self.px(11), self.px(pin_x + 9), self.px(35))
         batt = data["battery"]
-        if batt is not None:
+        if batt is not None and not close_armed:
             pct, plugged = batt
             bx = Wl - P - 50 - 19
             self._battery_icon(d, bx, 23.5, pct, plugged, scale)
@@ -1728,6 +1733,8 @@ class Widget:
         self.height = None
         self.close_hover = False
         self.close_pressed = False
+        self.close_armed = False  # first click on the cross only asks for a second one
+        self.close_job = None
         self.pin_hover = False
         self.pin_pressed = False
         self._drag = (0, 0)
@@ -1747,8 +1754,8 @@ class Widget:
         self.last_disk = psutil.disk_io_counters()
         self.last_t = time.monotonic()
         self.cpu_hist = []
-        self.partitions = [p.mountpoint for p in psutil.disk_partitions(all=False)
-                           if p.fstype and "cdrom" not in p.opts]
+        self.partitions = scan_partitions()
+        self.partitions_t = time.monotonic()
         self.data = None
 
         self.lhm = LhmReader()
@@ -1993,6 +2000,17 @@ class Widget:
         self._place()
         self._save_position()
 
+    def _arm_close(self, armed):
+        """The cross closes on a second click within CLOSE_CONFIRM_MS, so a slip
+        of the mouse next to the pin does not quit the program."""
+        if self.close_job is not None:
+            self.root.after_cancel(self.close_job)
+            self.close_job = None
+        self.close_armed = armed
+        if armed:
+            self.close_job = self.root.after(CLOSE_CONFIRM_MS, lambda: self._arm_close(False))
+        self._draw()
+
     def _in_close(self, event):
         x0, y0, x1, y1 = self.renderer.close_box
         return x0 <= event.x <= x1 and y0 <= event.y <= y1
@@ -2018,7 +2036,10 @@ class Widget:
         if self.close_pressed:
             self.close_pressed = False
             if self._in_close(event):
-                self.quit()
+                if self.close_armed:
+                    self.quit()
+                else:
+                    self._arm_close(True)
             return
         if self.pin_pressed:
             self.pin_pressed = False
@@ -2137,6 +2158,12 @@ class Widget:
         self.cpu_hist = (self.cpu_hist + [cpu])[-HISTORY_LEN:]
         mem = psutil.virtual_memory()
 
+        if now - self.partitions_t >= PARTITIONS_RESCAN_S:  # flash drive plugged in / out
+            self.partitions_t = now
+            try:
+                self.partitions = scan_partitions()
+            except OSError:
+                log_error("listing disks")
         disks = []
         for mount in self.partitions:
             try:
@@ -2201,7 +2228,8 @@ class Widget:
             return
         img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
                                    bool(self.cfg["pinned"]), self.pin_hover,
-                                   compact=bool(self.cfg["compact"]))
+                                   compact=bool(self.cfg["compact"]),
+                                   close_armed=self.close_armed)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         if img.height != self.height:
@@ -2214,6 +2242,15 @@ class Widget:
         finally:
             if getattr(self, "taskbar", None) is not None:
                 self.taskbar.restore()
+
+
+PARTITIONS_RESCAN_S = 5
+
+
+def scan_partitions():
+    """Mount points of local drives with a file system (USB sticks too, no CD drives)."""
+    return [p.mountpoint for p in psutil.disk_partitions(all=False)
+            if p.fstype and "cdrom" not in p.opts]
 
 
 def already_running():
