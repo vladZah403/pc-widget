@@ -19,6 +19,7 @@ import os
 import re
 import socket
 import struct
+import sys
 import threading
 import time
 import tkinter as tk
@@ -58,7 +59,7 @@ THEMES = {
 }
 
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
-                  "pinned": True, "taskbar": True, "alerts": True}
+                  "pinned": True, "taskbar": True, "alerts": True, "compact": False}
 
 # alerts: (switch on at, switch off below) — hysteresis so a value hovering
 # around the limit doesn't spam; each alert at most once per ALERT_COOLDOWN_S
@@ -284,6 +285,77 @@ def taskbar_uses_light_theme():
             return winreg.QueryValueEx(key, "SystemUsesLightTheme")[0] == 1
     except OSError:
         return False
+
+
+# ---------- autostart & hotkey ----------
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "PCMonitorWidget"
+
+
+def autostart_command():
+    if getattr(sys, "frozen", False):  # built .exe
+        return f'"{sys.executable}"'
+    exe = sys.executable
+    windowless = os.path.join(os.path.dirname(exe), "pythonw.exe")
+    if os.path.exists(windowless):
+        exe = windowless
+    return f'"{exe}" "{os.path.abspath(__file__)}"'
+
+
+def autostart_enabled(name=RUN_NAME):
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            winreg.QueryValueEx(key, name)
+            return True
+    except OSError:
+        return False
+
+
+def set_autostart(enable, name=RUN_NAME):
+    """Per-user Run key: no admin rights needed."""
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        if enable:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+
+
+HOTKEY_TEXT = "Ctrl+Alt+W"
+MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
+VK_W = 0x57
+
+
+class HotkeyListener(threading.Thread):
+    """Global hotkey via RegisterHotKey; needs its own Win32 message loop."""
+
+    def __init__(self, mods=MOD_CONTROL | MOD_ALT, vk=VK_W):
+        super().__init__(daemon=True)
+        self.mods, self.vk = mods, vk
+        self.pressed = threading.Event()
+        self.ok = None  # False if another program already owns the combination
+
+    def run(self):
+        try:
+            from ctypes import wintypes as wt
+            u = ctypes.WinDLL("user32")
+            u.RegisterHotKey.argtypes = [wt.HWND, ctypes.c_int, wt.UINT, wt.UINT]
+            u.GetMessageW.argtypes = [ctypes.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT]
+            if not u.RegisterHotKey(None, 1, self.mods | MOD_NOREPEAT, self.vk):
+                self.ok = False
+                return
+            self.ok = True
+            msg = wt.MSG()
+            while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                if msg.message == 0x0312:  # WM_HOTKEY
+                    self.pressed.set()
+        except (AttributeError, OSError):
+            self.ok = False
 
 
 def virtual_screen(root):
@@ -573,6 +645,11 @@ class ProcessSampler:
     def top(self, limit=5, key="cpu"):
         """[(name, cpu_percent_of_whole_pc, ram_bytes)], same-name processes summed."""
         now = time.monotonic()
+        if self.prev_t and now - self.prev_t < 0.8 and getattr(self, "groups", None):
+            groups = self.groups  # sampled moments ago: reuse instead of a noisy tiny delta
+            idx = 0 if key == "cpu" else 1
+            rows = sorted(groups.items(), key=lambda kv: (kv[1][idx], kv[1][1 - idx]), reverse=True)
+            return [(name, cpu, mem) for name, (cpu, mem) in rows[:limit]]
         dt = (now - self.prev_t) if self.prev_t else None
         groups, current = {}, {}
         for pid, name, cpu_time, mem, created in self._snapshot():
@@ -586,7 +663,7 @@ class ProcessSampler:
             g = groups.setdefault(name.removesuffix(".exe") or "?", [0.0, 0])
             g[0] += cpu
             g[1] += mem
-        self.prev, self.prev_t = current, now
+        self.prev, self.prev_t, self.groups = current, now, groups
         idx = 0 if key == "cpu" else 1
         rows = sorted(groups.items(), key=lambda kv: (kv[1][idx], kv[1][1 - idx]), reverse=True)
         return [(name, cpu, mem) for name, (cpu, mem) in rows[:limit]]
@@ -736,7 +813,9 @@ class Renderer:
             d.text((x, self.px(y)), text, font=font, fill=color, anchor="ls")
 
     # --- layout ---
-    def layout_height(self, data):
+    def layout_height(self, data, compact=False):
+        if compact:
+            return self.px(178)
         h = 128  # header + hero
         if data.get("procs") is not None:
             h += 120
@@ -746,15 +825,48 @@ class Renderer:
         h += 16 + 22 + 22 + 22 + 30  # divider, net, ping, disk io, footer
         return self.px(h)
 
+    def _compact_rows(self, texts, data, scale, y):
+        """Two lines of short readings under the CPU block (compact mode)."""
+        P, Wl = self.PAD, self.WIDTH
+
+        def chip(name, value, color, approx=False):
+            head = [(f"{name} ", self.f_small, DIM)]
+            if value is None:
+                return head + [("—", self.f_value, FAINT)]
+            return head + ([("≈", self.f_sym, color)] if approx else []) + [(value, self.f_value, color)]
+
+        load = data.get("gpu_load")
+        disk_pct = data["disks"][0][3] if data["disks"] else None
+        row1 = [chip("Память", f"{data['ram_pct']:.0f}%", scale(data["ram_pct"] / 100)),
+                chip("Видео", None if load is None else f"{load:.0f}%",
+                     scale((load or 0) / 100)),
+                chip("Диск", None if disk_pct is None else f"{disk_pct:.0f}%",
+                     scale((disk_pct or 0) / 100))]
+        cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
+        shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
+        g = cpu_t if shared else gpu_t
+        ping, ready = data.get("ping"), data.get("ping_ready")
+        row2 = [chip("CPU", None if cpu_t is None else f"{cpu_t:.0f}°", scale(((cpu_t or 30) - 30) / 70)),
+                chip("GPU", None if g is None else f"{g:.0f}°", scale(((g or 30) - 30) / 70), shared),
+                chip("Пинг", None if not ready else ("нет" if ping is None else f"{ping} мс"),
+                     ping_color(scale, ping))]
+        for row, by in ((row1, y + 14), (row2, y + 34)):
+            texts.append(("rich_left", P, by, row[0]))
+            texts.append(("rich_center", Wl / 2, by, row[1]))
+            texts.append(("rich", Wl - P, by, row[2]))
+
     @staticmethod
     def _temps_online(data):
         return data["lhm_online"] and any(
             data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
-    def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False):
+    def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
+               compact=False):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
-        H = self.layout_height(data)
+        H = self.layout_height(data, compact)
+        if compact:
+            data = dict(data, procs=None)
         card = self._card(H)
 
         layer = Image.new("RGBA", (self.W * SS, H * SS), (0, 0, 0, 0))
@@ -788,10 +900,14 @@ class Renderer:
         texts.append((P + num_w + 2, hero_base, "%", self.f_hero_unit, DIM, "ls"))
         procs = data.get("procs")
         texts.append((P, hero_base + 18, "Процессор", self.f_small, DIM, "ls"))
-        chev_x = P + self.f_small.getlength("Процессор ") / self.s
-        texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         hx0 = P + 82
         self._histogram(d, hx0, 50, Wl - P, 108, data["cpu_hist"], scale)
+        if compact:
+            self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
+            self._compact_rows(texts, data, scale, 128)
+            return self._compose(card, layer, texts)
+        chev_x = P + self.f_small.getlength("Процессор ") / self.s
+        texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
         y = 128
@@ -904,6 +1020,9 @@ class Renderer:
         texts.append((P, y + 18, f"Без перезагрузки {fmt_uptime(data['uptime'])}",
                       self.f_small, FAINT, "ls"))
 
+        return self._compose(card, layer, texts)
+
+    def _compose(self, card, layer, texts):
         img = card.convert("RGBA")
         img.alpha_composite(layer.reduce(SS))
         td = ImageDraw.Draw(img)
@@ -924,7 +1043,7 @@ class TaskbarPanel:
     """Two-line readout on the Windows taskbar, just left of the tray icons."""
 
     # hidden = parked off-screen; Win32 ShowWindow would desync Tk's geometry
-    OFFSCREEN = "1x1+-32000+-32000"
+    OFFSCREEN = "1x1+-9000+-9000"  # not -32000: Windows treats that as "minimized"
 
     def __init__(self, widget):
         self.widget = widget
@@ -955,6 +1074,12 @@ class TaskbarPanel:
         self.view = tk.Label(top, bg=key_hex, bd=0, highlightthickness=0)
         self.view.pack()
         self.view.bind("<Button-3>", widget._show_menu)
+        self.view.bind("<Enter>", self._enter)
+        self.view.bind("<Leave>", self._leave)
+        self.view.bind("<ButtonRelease-1>", lambda e: widget.toggle_widget())
+        self.view.configure(cursor="hand2")
+        self.hover = False
+        self.hover_job = None
         top.geometry(self.OFFSCREEN)
         top.update_idletasks()
         self.hwnd = int(top.wm_frame(), 16)
@@ -1026,6 +1151,28 @@ class TaskbarPanel:
         if img.size != self.size:
             self.size = img.size
             self.layout()
+        info = getattr(self.widget, "info", None)
+        if self.hover and info is not None and info.visible:
+            self._show_info()  # keep the details live while hovering
+
+    # --- hover details ---
+    def _enter(self, event):
+        self.hover = True
+        if self.hover_job is None:
+            self.hover_job = self.top.after(350, self._show_info)
+
+    def _leave(self, event):
+        self.hover = False
+        if self.hover_job is not None:
+            self.top.after_cancel(self.hover_job)
+            self.hover_job = None
+        self.widget.info.hide()
+
+    def _show_info(self):
+        self.hover_job = None
+        if self.hover and self.shown and self.widget.data:
+            self.widget.info.show_above(window_rect(self.hwnd), self.widget.data,
+                                        self.widget.cfg["theme"])
 
     # --- placement ---
     def _hide(self):
@@ -1088,20 +1235,30 @@ def work_area():
     return r.left, r.top, r.right, r.bottom
 
 
-class Toast:
-    """Our own notification card in the bottom-right corner, in the widget's style.
-    Click to dismiss; disappears by itself after a few seconds."""
+def card_image(px, W, H, accent=None):
+    """Rounded dark card with keyed-out (transparent) corners, supersampled."""
+    S = SS
+    big = Image.new("RGB", (W * S, H * S), KEY)
+    d = ImageDraw.Draw(big)
+    r = px(12) * S
+    d.rounded_rectangle((0, 0, W * S - 1, H * S - 1), radius=r, fill=BORDER)
+    bw = max(1, px(1)) * S
+    d.rounded_rectangle((bw, bw, W * S - 1 - bw, H * S - 1 - bw), radius=r - bw, fill=CARD)
+    if accent is not None:
+        d.rounded_rectangle((px(14) * S, px(16) * S, px(18) * S, H * S - px(16) * S),
+                            radius=px(2) * S, fill=accent)
+    return big.reduce(S)
 
-    OFFSCREEN = "1x1+-32000+-32000"
-    WIDTH = 300
-    SHOW_MS = 9000
+
+class PopupCard:
+    """Borderless topmost card. Hidden = parked off-screen, so showing it
+    never activates the window or steals focus from the game/app in front."""
+
+    OFFSCREEN = "1x1+-9000+-9000"  # not -32000: Windows treats that as "minimized"
 
     def __init__(self, widget):
         self.widget = widget
         self.px = widget.renderer.px
-        self.s = widget.renderer.s
-        self.f_title = load_font(self.px(14), "SemiBold")
-        self.f_body = load_font(self.px(12))
         self.top = top = tk.Toplevel(widget.root)
         top.overrideredirect(True)
         top.configure(bg=KEY_HEX)
@@ -1109,9 +1266,42 @@ class Toast:
         top.attributes("-topmost", True)
         self.view = tk.Label(top, bg=KEY_HEX, bd=0, highlightthickness=0, cursor="hand2")
         self.view.pack()
-        self.view.bind("<ButtonRelease-1>", lambda e: self.hide())
         top.geometry(self.OFFSCREEN)
+        top.update_idletasks()  # map it now, parked off-screen
         self.photo = None
+        self.visible = False
+
+    def _show_image(self, img, x, y):
+        self.photo = ImageTk.PhotoImage(img)
+        self.view.configure(image=self.photo)
+        geom = f"{img.width}x{img.height}+{x}+{y}"
+        self.top.geometry(geom)
+        self.top.lift()
+        self.visible = True
+        # Tk sometimes drops the position of a move made right after the window
+        # was mapped (the size still applies) — check once and re-apply
+        self.top.after(80, lambda: self._ensure(geom))
+
+    def _ensure(self, geom):
+        if self.visible and self.top.wm_geometry() != geom:
+            self.top.geometry(geom)
+
+    def hide(self):
+        self.top.geometry(self.OFFSCREEN)
+        self.visible = False
+
+
+class Toast(PopupCard):
+    """Alert card in the bottom-right corner. Click to dismiss."""
+
+    WIDTH = 300
+    SHOW_MS = 9000
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        self.f_title = load_font(self.px(14), "SemiBold")
+        self.f_body = load_font(self.px(12))
+        self.view.bind("<ButtonRelease-1>", lambda e: self.hide())
         self.job = None
 
     def _wrap(self, text, max_w):
@@ -1126,19 +1316,10 @@ class Toast:
         return lines + ([line] if line else [])
 
     def render(self, title, body, color):
-        px, S = self.px, SS
+        px = self.px
         W = px(self.WIDTH)
         lines = self._wrap(body, W - px(46))
-        H = px(46 + 17 * len(lines))
-        big = Image.new("RGB", (W * S, H * S), KEY)
-        d = ImageDraw.Draw(big)
-        r = px(12) * S
-        d.rounded_rectangle((0, 0, W * S - 1, H * S - 1), radius=r, fill=BORDER)
-        bw = max(1, px(1)) * S
-        d.rounded_rectangle((bw, bw, W * S - 1 - bw, H * S - 1 - bw), radius=r - bw, fill=CARD)
-        d.rounded_rectangle((px(14) * S, px(16) * S, px(18) * S, H * S - px(16) * S),
-                            radius=px(2) * S, fill=color)
-        img = big.reduce(S)
+        img = card_image(px, W, px(46 + 17 * len(lines)), accent=color)
         td = ImageDraw.Draw(img)
         td.text((px(30), px(29)), title, font=self.f_title, fill=TEXT, anchor="ls")
         for i, line in enumerate(lines):
@@ -1147,20 +1328,88 @@ class Toast:
 
     def show(self, title, body, color):
         img = self.render(title, body, color)
-        self.photo = ImageTk.PhotoImage(img)
-        self.view.configure(image=self.photo)
         _, _, right, bottom = work_area()
-        x = right - img.width - self.px(14)
-        y = bottom - img.height - self.px(14)
-        self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
-        self.top.lift()
+        self._show_image(img, right - img.width - self.px(14), bottom - img.height - self.px(14))
         if self.job:
             self.top.after_cancel(self.job)
         self.job = self.top.after(self.SHOW_MS, self.hide)
 
     def hide(self):
         self.job = None
-        self.top.geometry(self.OFFSCREEN)
+        super().hide()
+
+
+class InfoCard(PopupCard):
+    """Details that pop up above the taskbar panel while the mouse is over it."""
+
+    WIDTH = 252
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        px = self.px
+        self.f_title = load_font(px(13), "SemiBold")
+        self.f = load_font(px(12))
+        self.fv = load_font(px(12), "SemiBold")
+        self.fs = load_symbol_font(px(12))
+        self.f_small = load_font(px(11))
+        self.view.bind("<ButtonRelease-1>", lambda e: widget.show_widget())
+
+    def render(self, data, theme):
+        px, f, fv, fs = self.px, self.f, self.fv, self.fs
+        scale = Scale(THEMES[theme][1])
+
+        def temp(t, approx=False):
+            if t is None:
+                return []
+            c = scale((t - 30) / 70)
+            return [("   ", f, DIM)] + ([("≈", fs, c)] if approx else []) + [(f"{t:.0f}°", fv, c)]
+
+        cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
+        shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
+        rows = [("Процессор", [(f"{data['cpu']:.0f}%", fv, scale(data["cpu"] / 100))] + temp(cpu_t)),
+                ("Память", [(f"{fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ   ", f, DIM),
+                            (f"{data['ram_pct']:.0f}%", fv, scale(data["ram_pct"] / 100))])]
+        if data.get("gpu_load") is not None:
+            rows.append(("Видеокарта",
+                         [(f"{data['gpu_load']:.0f}%", fv, scale(data["gpu_load"] / 100))]
+                         + temp(cpu_t if shared else gpu_t, approx=shared)))
+        for name, _, _, pct in data["disks"][:1]:
+            rows.append((f"Диск {name}", [(f"{pct:.0f}%", fv, TEXT)] + temp(data.get("temp_ssd"))))
+        rows.append(("Сеть", [("↓ ", fs, scale(0.0)), (fmt_speed(data["net_down"]), f, TEXT),
+                              ("   ↑ ", fs, scale(0.75)), (fmt_speed(data["net_up"]), f, TEXT)]))
+        ping, ready = data.get("ping"), data.get("ping_ready")
+        ping_text = "…" if not ready else "нет ответа" if ping is None else f"{ping} мс"
+        rows.append(("Пинг", [(ping_text, fv, ping_color(scale, ping) if ready else FAINT)]))
+        top = top_processes(1)
+        if top:
+            name, cpu_p, _ = top[0]
+            rows.append(("Больше всех", [(ellipsize(name, f, px(110)) + "  ", f, TEXT),
+                                         (f"{cpu_p:.0f}%", fv, scale(min(1.0, cpu_p / 50)))]))
+
+        W = px(self.WIDTH)
+        H = px(40 + 20 * len(rows) + 22)
+        img = card_image(px, W, H)
+        d = ImageDraw.Draw(img)
+        d.text((px(16), px(26)), "Система", font=self.f_title, fill=TEXT, anchor="ls")
+        d.text((W - px(16), px(26)), f"без перезагрузки {fmt_uptime(data['uptime'])}",
+               font=self.f_small, fill=FAINT, anchor="rs")
+        for i, (label, parts) in enumerate(rows):
+            y = px(50 + 20 * i)
+            d.text((px(16), y), label, font=f, fill=DIM, anchor="ls")
+            x = W - px(16) - sum(font.getlength(t) for t, font, _ in parts)
+            for t, font, color in parts:
+                d.text((x, y), t, font=font, fill=color, anchor="ls")
+                x += font.getlength(t)
+        d.text((px(16), H - px(14)), "Нажми, чтобы открыть виджет", font=self.f_small,
+               fill=FAINT, anchor="ls")
+        return img
+
+    def show_above(self, rect, data, theme):
+        img = self.render(data, theme)
+        left, top, right, _ = rect
+        screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+        x = max(0, min(right - img.width, screen_w - img.width - self.px(8)))
+        self._show_image(img, x, top - img.height - self.px(8))
 
 
 # ---------- window ----------
@@ -1229,6 +1478,61 @@ class Widget:
         self.taskbar = TaskbarPanel(self) if _user32 is not None else None
         self._taskbar_tick()
         self.toast = Toast(self) if _user32 is not None else None
+        self.info = InfoCard(self) if _user32 is not None else None
+        self.visible = True
+
+        self.hotkey = HotkeyListener()
+        self.hotkey.start()
+        self._poll_hotkey()
+        if self.autostart_var.get():
+            try:
+                set_autostart(True)  # refresh the path in case the folder moved
+            except OSError:
+                pass
+
+    # --- show / hide ---
+    def hide_widget(self):
+        self.root.withdraw()
+        self.visible = False
+
+    def show_widget(self):
+        """Bring the widget up, in front of other windows, until something else is clicked."""
+        if not self.visible:
+            self.root.deiconify()
+            self.visible = True
+            self.root.update_idletasks()
+            if self.cfg["pinned"]:
+                set_owner(self.hwnd, find_desktop_view())
+        self.root.lift()
+        try:
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+
+    def toggle_widget(self):
+        in_front = (self.visible and _user32 is not None
+                    and _user32.GetForegroundWindow() == self.hwnd)
+        if in_front:
+            self.hide_widget()
+        else:
+            self.show_widget()
+
+    def _poll_hotkey(self):
+        if self.hotkey.pressed.is_set():
+            self.hotkey.pressed.clear()
+            self.toggle_widget()
+        self.root.after(120, self._poll_hotkey)
+
+    def _toggle_autostart(self):
+        try:
+            set_autostart(self.autostart_var.get())
+        except OSError:
+            self.autostart_var.set(autostart_enabled())
+
+    def _toggle_compact(self):
+        self.cfg["compact"] = self.compact_var.get()
+        save_config(self.cfg)
+        self._draw()
 
     # --- taskbar panel ---
     def _taskbar_tick(self):
@@ -1288,6 +1592,12 @@ class Widget:
         self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
         menu.add_checkbutton(label="Предупреждения", variable=self.alerts_var,
                              command=self._toggle_alerts)
+        self.compact_var = tk.BooleanVar(value=bool(self.cfg["compact"]))
+        menu.add_checkbutton(label="Компактный режим", variable=self.compact_var,
+                             command=self._toggle_compact)
+        self.autostart_var = tk.BooleanVar(value=autostart_enabled())
+        menu.add_checkbutton(label="Запускать вместе с Windows", variable=self.autostart_var,
+                             command=self._toggle_autostart)
         menu.add_separator()
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
@@ -1304,6 +1614,7 @@ class Widget:
         self.topmost_index = menu.index("end")
         menu.add_command(label="В правый верхний угол", command=self._reset_position)
         menu.add_separator()
+        menu.add_command(label=f"Скрыть  ({HOTKEY_TEXT} — показать)", command=self.hide_widget)
         menu.add_command(label="Закрыть", command=self.quit)
         self.menu = menu
 
@@ -1563,7 +1874,8 @@ class Widget:
         if self.data is None:
             return
         img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
-                                   bool(self.cfg["pinned"]), self.pin_hover)
+                                   bool(self.cfg["pinned"]), self.pin_hover,
+                                   compact=bool(self.cfg["compact"]))
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         if img.height != self.height:
