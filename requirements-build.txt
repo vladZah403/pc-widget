@@ -1,0 +1,5 @@
+# Exact versions for building PC-Monitor.zip (the ones the release was tested with).
+psutil==7.2.2
+pillow==12.3.0
+pythonnet==3.2.1
+pyinstaller==6.22.3

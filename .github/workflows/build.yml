@@ -1,0 +1,87 @@
+# Builds PC-Monitor.zip on GitHub's Windows machines.
+# - every push to main: build + quick start check, zip kept as a run artifact
+# - a pushed tag v*: the same, then a GitHub Release with the zip attached
+#   (notes from docs/releases/<tag>.md, or generated from commits if it's missing)
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write  # only to create the release
+
+env:
+  LHM_VERSION: "0.9.6"
+  # checksum of LibreHardwareMonitor.zip from that release: a changed file stops the build
+  LHM_SHA256: "086D9F1B5A99E643EDC2CFAAAC16051685B551E4C5AC0B32A57C58C0E529C001"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check that the tag matches APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import os, re, sys
+          have = re.search(r'APP_VERSION = "(.+?)"', open("widget.pyw", encoding="utf-8").read()).group(1)
+          want = os.environ["GITHUB_REF_NAME"][1:]
+          sys.exit(0 if have == want else f"APP_VERSION is {have}, but the tag is v{want}")
+          EOF
+
+      - name: Install Python packages
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Get LibreHardwareMonitorLib
+        shell: pwsh
+        run: |
+          $url = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v$env:LHM_VERSION/LibreHardwareMonitor.zip"
+          Invoke-WebRequest $url -OutFile lhm-release.zip
+          $hash = (Get-FileHash lhm-release.zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:LHM_SHA256) { throw "LibreHardwareMonitor.zip checksum mismatch: $hash" }
+          Expand-Archive lhm-release.zip -DestinationPath lhm-release
+          New-Item -ItemType Directory lhm | Out-Null
+          foreach ($dll in Get-Content lhm-files.txt) {
+            Copy-Item (Join-Path lhm-release $dll) lhm -ErrorAction Stop
+          }
+
+      - name: Build
+        shell: cmd
+        run: build_exe.bat
+
+      - name: Check that the build starts
+        shell: pwsh
+        run: |
+          Start-Process dist\PC-Monitor\PC-Monitor.exe -ArgumentList "--diag" -Wait
+          $diag = Get-Content "$env:APPDATA\PC-Monitor\pc-monitor-diag.txt" -Raw
+          Write-Output $diag
+          if ($diag -notmatch "frozen: True") { throw "the built program did not start" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PC-Monitor
+          path: dist/PC-Monitor.zip
+          retention-days: 14
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          notes="docs/releases/$tag.md"
+          if [ -f "$notes" ]; then
+            gh release create "$tag" dist/PC-Monitor.zip --title "PC Monitor ${tag#v}" --notes-file "$notes"
+          else
+            gh release create "$tag" dist/PC-Monitor.zip --title "PC Monitor ${tag#v}" --generate-notes
+          fi

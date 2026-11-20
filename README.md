@@ -73,8 +73,19 @@ python -m pip install -r requirements.txt
 ```
 
 Запуск — двойной клик по `start.bat` (или по `widget.pyw`). Сборка
-`PC-Monitor.zip` — `build_exe.bat` (нужен `pip install pyinstaller` и DLL
-LibreHardwareMonitor в папке `lhm/`, см. ниже).
+`PC-Monitor.zip` — `build_exe.bat` (нужны пакеты из `requirements-build.txt`
+и DLL LibreHardwareMonitor из `lhm-files.txt` в папке `lhm/`, см. ниже).
+
+### Выпуск версии
+Сборкой занимается GitHub Actions (`.github/workflows/build.yml`): на каждый
+пуш в `main` он собирает `PC-Monitor.zip` на Windows и проверяет, что программа
+запускается (zip — в артефактах запуска). LibreHardwareMonitorLib берётся из
+официального релиза с проверкой SHA-256.
+
+Чтобы выпустить версию: поднять `APP_VERSION` в `widget.pyw`, написать
+описание в `docs/releases/vX.Y.md`, затем
+`git tag -a vX.Y -m "PC Monitor X.Y"` и `git push origin vX.Y` — Actions
+сам создаст Release с zip.
 
 ## Температура и права администратора
 Настоящие температуры процессора Windows обычным программам не отдаёт —
