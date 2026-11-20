@@ -28,7 +28,9 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# next to the .exe when frozen (PyInstaller unpacks the code into a temp folder)
+APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+           else os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(APP_DIR, "widget_config.json")
 FONT_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
@@ -59,7 +61,8 @@ THEMES = {
 }
 
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
-                  "pinned": True, "taskbar": True, "alerts": True, "compact": False}
+                  "pinned": True, "taskbar": True, "alerts": True, "compact": False,
+                  "run_as_admin": True}
 
 # alerts: (switch on at, switch off below) — hysteresis so a value hovering
 # around the limit doesn't spam; each alert at most once per ALERT_COOLDOWN_S
@@ -303,6 +306,78 @@ def autostart_command():
     return f'"{exe}" "{os.path.abspath(__file__)}"'
 
 
+TASK_NAME = "PCMonitorWidget"
+
+
+def launch_target():
+    """(program, arguments) that start this widget."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, ""
+    exe = sys.executable
+    windowless = os.path.join(os.path.dirname(exe), "pythonw.exe")
+    if os.path.exists(windowless):
+        exe = windowless
+    return exe, f'"{os.path.abspath(__file__)}"'
+
+
+def relaunch_as_admin():
+    """Ask UAC to restart us elevated. True if the elevated copy was started."""
+    exe, args = launch_target()
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, APP_DIR, 1)
+    except (AttributeError, OSError):
+        return False
+    return rc > 32  # <= 32: error, e.g. the user pressed "No"
+
+
+def _schtasks(*args):
+    import subprocess
+    return subprocess.run(["schtasks", *args], capture_output=True,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
+
+
+def task_xml():
+    """Logon task with highest privileges: elevated autostart without a UAC prompt.
+    Battery and time limits are switched off (schtasks defaults would stop it on laptops)."""
+    from xml.sax.saxutils import escape
+    exe, args = launch_target()
+    user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{escape(user)}</UserId>
+    <Delay>PT5S</Delay></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>{escape(user)}</UserId>
+    <LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{escape(exe)}</Command>
+    <Arguments>{escape(args)}</Arguments><WorkingDirectory>{escape(APP_DIR)}</WorkingDirectory></Exec></Actions>
+</Task>"""
+
+
+def admin_task_enabled():
+    return _schtasks("/Query", "/TN", TASK_NAME)
+
+
+def set_admin_task(enable):
+    """Needs admin rights (we have them when this is called)."""
+    if not enable:
+        return _schtasks("/Delete", "/TN", TASK_NAME, "/F") or not admin_task_enabled()
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".xml")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-16") as f:
+            f.write(task_xml())
+        return _schtasks("/Create", "/TN", TASK_NAME, "/XML", path, "/F")
+    finally:
+        os.remove(path)
+
+
 def autostart_enabled(name=RUN_NAME):
     try:
         import winreg
@@ -512,13 +587,84 @@ EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None
                  "gpu_name": None, "ssd": None}
 
 
+def is_admin():
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+def lhm_dir():
+    """Folder with LibreHardwareMonitorLib.dll (bundled into the .exe, or ./lhm)."""
+    base = getattr(sys, "_MEIPASS", APP_DIR)
+    path = os.path.join(base, "lhm")
+    return path if os.path.exists(os.path.join(path, "LibreHardwareMonitorLib.dll")) else None
+
+
+class NativeSensors:
+    """Reads sensors in-process with LibreHardwareMonitorLib (via pythonnet).
+    Without admin rights it still gives GPU load; temperatures need admin and
+    the PawnIO driver. Produces the same tree as LHM's web server, so
+    read_lhm() handles both."""
+
+    ICONS = {"Cpu": "cpu", "GpuNvidia": "nvidia", "GpuAmd": "ati", "GpuIntel": "intel",
+             "Storage": "hdd"}
+    GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %")}
+
+    def __init__(self, path):
+        from pythonnet import load
+        load("netfx")
+        import clr
+        if path not in sys.path:
+            sys.path.append(path)
+        clr.AddReference("LibreHardwareMonitorLib")
+        from LibreHardwareMonitor.Hardware import Computer
+        self.computer = Computer()
+        self.computer.IsCpuEnabled = True
+        self.computer.IsGpuEnabled = True
+        self.computer.IsStorageEnabled = True
+        self.computer.Open()
+
+    def _node(self, hw):
+        hw.Update()
+        groups = {}
+        for sensor in hw.Sensors:
+            group = self.GROUPS.get(str(sensor.SensorType))
+            if group is None or sensor.Value is None:
+                continue
+            name, unit = group
+            groups.setdefault(name, []).append({"Text": sensor.Name,
+                                                "Value": f"{float(sensor.Value):.1f}{unit}",
+                                                "SensorId": str(sensor.Identifier)})
+        children = [{"Text": g, "Children": leaves} for g, leaves in groups.items()]
+        children += [self._node(sub) for sub in hw.SubHardware]
+        icon = self.ICONS.get(str(hw.HardwareType), "chip")
+        return {"Text": hw.Name, "ImageURL": f"images_icon/{icon}.png", "Children": children}
+
+    def tree(self):
+        return {"Text": "Sensor", "Children": [
+            {"Text": "PC", "ImageURL": "images_icon/computer.png",
+             "Children": [self._node(hw) for hw in self.computer.Hardware]}]}
+
+
+def _fetch_web():
+    with urllib.request.urlopen(LHM_URL, timeout=1) as resp:
+        return read_lhm(json.loads(resp.read().decode("utf-8")))
+
+
 class LhmReader(threading.Thread):
-    """Polls LibreHardwareMonitor in the background so the UI never freezes."""
+    """Background sensor polling, best source first:
+    1. built-in LibreHardwareMonitorLib (full data when running as admin),
+    2. LibreHardwareMonitor's web server (if the user runs that program),
+    so the UI never waits on either."""
 
     def __init__(self):
         super().__init__(daemon=True)
         self.sensors = dict(EMPTY_SENSORS)
         self.online = False
+        self.source = None   # "native", "web" or None
+        self.native_ok = False
+        self.admin = is_admin()
 
     @property
     def cpu(self):
@@ -528,16 +674,49 @@ class LhmReader(threading.Thread):
     def gpu(self):
         return self.sensors["gpu"]
 
+    def hint(self):
+        """What the user can do to get temperatures, or None when they are there."""
+        s = self.sensors
+        if any(s[k] is not None for k in ("cpu", "gpu", "ssd")):
+            return None
+        if self.native_ok and not self.admin:
+            return "Для температур запусти от администратора"
+        if self.native_ok:
+            return "Нет доступа к датчикам: нужен драйвер PawnIO"
+        if self.online:
+            return "Запусти LibreHardwareMonitor от админа"
+        return "Запусти LibreHardwareMonitor с веб-сервером"
+
     def run(self):
-        while True:
+        native = None
+        path = lhm_dir()
+        if path:
             try:
-                with urllib.request.urlopen(LHM_URL, timeout=1) as resp:
-                    tree = json.loads(resp.read().decode("utf-8"))
-                self.sensors = read_lhm(tree)
-                self.online = True
-            except (OSError, ValueError):
-                self.sensors = dict(EMPTY_SENSORS)
-                self.online = False
+                native = NativeSensors(path)
+                self.native_ok = True
+            except Exception:  # no .NET / pythonnet / broken DLLs: fall back to the web server
+                native = None
+        while True:
+            found, source = None, None
+            if native is not None:
+                try:
+                    found, source = read_lhm(native.tree()), "native"
+                except Exception:
+                    found = None
+            if found is None or found["cpu"] is None:
+                try:
+                    web = _fetch_web()
+                    if found is None or web["cpu"] is not None:
+                        merged = dict(web)
+                        for key, value in (found or {}).items():
+                            if merged.get(key) is None:
+                                merged[key] = value
+                        found, source = merged, "web"
+                except (OSError, ValueError):
+                    pass
+            self.sensors = found or dict(EMPTY_SENSORS)
+            self.online = found is not None
+            self.source = source
             time.sleep(LHM_POLL_S)
 
 
@@ -983,8 +1162,7 @@ class Renderer:
             texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
             y += 20
         else:
-            hint = ("Запусти LibreHardwareMonitor с веб-сервером" if not data["lhm_online"]
-                    else "Запусти LibreHardwareMonitor от админа")
+            hint = data.get("sensor_hint") or "Нет данных о температуре"
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
             y += 16
 
@@ -1487,11 +1665,13 @@ class Widget:
         self.hotkey = HotkeyListener()
         self.hotkey.start()
         self._poll_hotkey()
-        if self.autostart_var.get():
-            try:
-                set_autostart(True)  # refresh the path in case the folder moved
-            except OSError:
-                pass
+        try:  # keep autostart pointing at the current location
+            if autostart_enabled():
+                set_autostart(True)
+            elif is_admin() and admin_task_enabled():
+                set_admin_task(True)
+        except OSError:
+            pass
 
     # --- show / hide ---
     def hide_widget(self):
@@ -1527,10 +1707,38 @@ class Widget:
         self.root.after(120, self._poll_hotkey)
 
     def _toggle_autostart(self):
+        """Elevated + wants admin: a scheduled task (no UAC at logon); otherwise the Run key."""
+        enable = self.autostart_var.get()
+        use_task = enable and is_admin() and self.cfg["run_as_admin"]
         try:
-            set_autostart(self.autostart_var.get())
+            if use_task and set_admin_task(True):
+                set_autostart(False)
+            else:
+                set_autostart(enable)
+                if is_admin() and not enable:
+                    set_admin_task(False)
         except OSError:
-            self.autostart_var.set(autostart_enabled())
+            pass
+        self.autostart_var.set(autostart_enabled() or admin_task_enabled())
+
+    def _toggle_admin(self):
+        self.cfg["run_as_admin"] = self.admin_var.get()
+        save_config(self.cfg)
+        if self.cfg["run_as_admin"] and not is_admin():
+            self.quit_for_elevation()
+        elif self.autostart_var.get():
+            self._toggle_autostart()  # switch autostart between task and Run key
+
+    def quit_for_elevation(self):
+        """Restart elevated; if UAC is refused, keep running as we are."""
+        release_instance()
+        if relaunch_as_admin():
+            self.quit()
+        else:
+            already_running()  # take the single-instance lock back
+            self.admin_var.set(False)
+            self.cfg["run_as_admin"] = False
+            save_config(self.cfg)
 
     def _toggle_compact(self):
         self.cfg["compact"] = self.compact_var.get()
@@ -1598,9 +1806,13 @@ class Widget:
         self.compact_var = tk.BooleanVar(value=bool(self.cfg["compact"]))
         menu.add_checkbutton(label="Компактный режим", variable=self.compact_var,
                              command=self._toggle_compact)
-        self.autostart_var = tk.BooleanVar(value=autostart_enabled())
+        self.autostart_var = tk.BooleanVar(value=autostart_enabled() or admin_task_enabled())
         menu.add_checkbutton(label="Запускать вместе с Windows", variable=self.autostart_var,
                              command=self._toggle_autostart)
+        self.admin_var = tk.BooleanVar(value=bool(self.cfg["run_as_admin"]))
+        if lhm_dir():
+            menu.add_checkbutton(label="Права администратора (температуры)",
+                                 variable=self.admin_var, command=self._toggle_admin)
         menu.add_separator()
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
@@ -1857,6 +2069,7 @@ class Widget:
             "gpu_name": sensors["gpu_name"],
             "temp_ssd": sensors["ssd"],
             "lhm_online": self.lhm.online,
+            "sensor_hint": self.lhm.hint(),
             "ping": self.ping.ms,
             "ping_ready": self.ping.ready,
             "procs": top_processes() if self.show_procs else None,
@@ -1899,12 +2112,28 @@ def already_running():
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateMutexW.restype = ctypes.c_void_p
         kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
-        globals()["_instance_mutex"] = kernel32.CreateMutexW(None, False, r"Local\PCMonitorWidget")
-        return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+        handle = kernel32.CreateMutexW(None, False, r"Local\PCMonitorWidget")
+        error = ctypes.get_last_error()
+        globals()["_instance_mutex"] = handle
+        # 183 = already exists; 5 = exists but belongs to an elevated copy
+        return error == 183 or (not handle and error == 5)
     except (AttributeError, OSError):
         return False
 
 
+def release_instance():
+    handle = globals().pop("_instance_mutex", None)
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
 if __name__ == "__main__":
     if not already_running():
+        wants_admin = load_config().get("run_as_admin") and lhm_dir() and not is_admin()
+        if wants_admin and "--no-elevate" not in sys.argv:
+            release_instance()  # let the elevated copy take over the single-instance lock
+            if relaunch_as_admin():
+                sys.exit(0)
+            if already_running():  # lost a race while UAC was open
+                sys.exit(0)
         Widget().run()

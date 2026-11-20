@@ -49,21 +49,29 @@ python -m pip install -r requirements.txt
 Настройки и позиция сохраняются в `widget_config.json` рядом с программой.
 
 ## Температура
-Windows не отдаёт настоящие температуры процессора обычным программам —
-их можно прочитать только через драйвер. Поэтому виджет берёт их из
-[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor):
+Настоящие температуры процессора Windows обычным программам не отдаёт —
+их читают через драйвер. Виджет делает это сам с помощью библиотеки
+[LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
+(лицензия MPL-2.0):
 
-1. Скачай последний релиз и запусти `LibreHardwareMonitor.exe` от имени
-   администратора (если предложит поставить драйвер PawnIO — соглашайся).
-2. Включи `Options → Remote Web Server → Run` (порт 8085).
-3. По желанию: `Options → Start Minimized`, `Minimize To Tray`,
-   `Run On Windows Startup`.
+- при запуске виджет просит права администратора (окно UAC) и читает
+  датчики напрямую — отдельная программа не нужна. Нужен драйвер PawnIO
+  (ставится один раз, его же ставит LibreHardwareMonitor);
+- автозапуск с правами администратора делается через Планировщик заданий —
+  без окна UAC при входе в систему;
+- если отказаться от прав администратора (или выключить пункт «Права
+  администратора» в меню), всё остальное работает, а температуры берутся из
+  программы LibreHardwareMonitor с включённым `Options → Remote Web Server`,
+  если она запущена.
 
-Без него всё остальное работает, вместо температур будет «нет данных».
+Для запуска из исходников положи DLL из релиза LibreHardwareMonitor
+(`LibreHardwareMonitorLib.dll` и её зависимости) в папку `lhm/` и поставь
+`pythonnet` (`pip install -r requirements.txt`). В .exe всё уже внутри.
 
 ## Как это устроено
 - Один файл `widget.pyw`: tkinter-окно без рамки, всё рисуется Pillow
   (с суперсэмплингом), шрифт Bahnschrift из Windows.
+- Датчики: LibreHardwareMonitorLib через `pythonnet` (или веб-сервер LHM).
 - Данные: `psutil`; процессы — одним вызовом `NtQuerySystemInformation`,
   как в диспетчере задач; пинг — `IcmpSendEcho` (без прав администратора).
 - Закрепление: окно принадлежит значкам рабочего стола (`SHELLDLL_DefView`);
