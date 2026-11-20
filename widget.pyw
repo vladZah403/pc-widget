@@ -17,6 +17,8 @@ import ctypes
 import json
 import os
 import re
+import socket
+import struct
 import threading
 import time
 import tkinter as tk
@@ -56,7 +58,15 @@ THEMES = {
 }
 
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
-                  "pinned": True, "taskbar": True}
+                  "pinned": True, "taskbar": True, "alerts": True}
+
+# alerts: (switch on at, switch off below) — hysteresis so a value hovering
+# around the limit doesn't spam; each alert at most once per ALERT_COOLDOWN_S
+ALERT_CPU_TEMP = (90, 85)
+ALERT_GPU_TEMP = (87, 82)
+ALERT_RAM = (90, 85)
+ALERT_BATTERY = (15, 20)
+ALERT_COOLDOWN_S = 600
 
 
 # ---------- helpers ----------
@@ -93,6 +103,26 @@ def fmt_speed(bytes_per_s):
     if bytes_per_s < 1024**2:
         return f"{bytes_per_s / 1024:.0f} КБ/с"
     return f"{bytes_per_s / 1024**2:.1f} МБ/с".replace(".", ",")
+
+
+def fmt_mem(n_bytes):
+    if n_bytes < 2**30:
+        return f"{n_bytes / 2**20:.0f} МБ"
+    return f"{n_bytes / 2**30:.1f} ГБ".replace(".", ",")
+
+
+def ping_color(scale, ms):
+    if ms is None:
+        return scale(1.0)
+    return scale(0.05 if ms < 50 else 0.55 if ms < 100 else 0.95)
+
+
+def ellipsize(text, font, max_w):
+    if font.getlength(text) <= max_w:
+        return text
+    while text and font.getlength(text + "…") > max_w:
+        text = text[:-1]
+    return text + "…"
 
 
 def fmt_uptime(seconds):
@@ -375,6 +405,139 @@ class LhmReader(threading.Thread):
             time.sleep(LHM_POLL_S)
 
 
+# ---------- ping & processes ----------
+
+PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up
+PING_EVERY_S = 2
+
+
+class PingReader(threading.Thread):
+    """Real ICMP ping via Windows IcmpSendEcho (works without admin rights)."""
+
+    def __init__(self, host=PING_HOST):
+        super().__init__(daemon=True)
+        self.host = host
+        self.ms = None      # last round-trip time, None = no reply
+        self.ready = False  # at least one attempt finished
+
+    def run(self):
+        try:
+            icmp = ctypes.WinDLL("iphlpapi")
+            icmp.IcmpCreateFile.restype = ctypes.c_void_p
+            icmp.IcmpSendEcho.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+                                          ctypes.c_ushort, ctypes.c_void_p, ctypes.c_void_p,
+                                          ctypes.c_ulong, ctypes.c_ulong]
+            icmp.IcmpSendEcho.restype = ctypes.c_ulong
+            handle = icmp.IcmpCreateFile()
+        except (AttributeError, OSError):
+            return
+        payload = ctypes.create_string_buffer(b"pc-monitor", 10)
+        reply = ctypes.create_string_buffer(256)
+        while True:
+            try:
+                addr = struct.unpack("<I", socket.inet_aton(socket.gethostbyname(self.host)))[0]
+                got = icmp.IcmpSendEcho(handle, addr, payload, 10, None, reply, 256, 1000)
+                # ICMP_ECHO_REPLY: Address, Status, RoundTripTime (ULONGs)
+                _, status, rtt = struct.unpack_from("<III", reply.raw)
+                self.ms = rtt if got and status == 0 else None
+            except OSError:
+                self.ms = None
+            self.ready = True
+            time.sleep(PING_EVERY_S)
+
+
+class _UnicodeString(ctypes.Structure):
+    _fields_ = [("Length", ctypes.c_ushort), ("MaximumLength", ctypes.c_ushort),
+                ("Buffer", ctypes.c_void_p)]
+
+
+class _ProcInfo(ctypes.Structure):
+    """Head of SYSTEM_PROCESS_INFORMATION (ntdll); ctypes handles the padding."""
+    _fields_ = [
+        ("NextEntryOffset", ctypes.c_ulong),
+        ("NumberOfThreads", ctypes.c_ulong),
+        ("WorkingSetPrivateSize", ctypes.c_longlong),
+        ("HardFaultCount", ctypes.c_ulong),
+        ("NumberOfThreadsHighWatermark", ctypes.c_ulong),
+        ("CycleTime", ctypes.c_ulonglong),
+        ("CreateTime", ctypes.c_longlong),
+        ("UserTime", ctypes.c_longlong),
+        ("KernelTime", ctypes.c_longlong),
+        ("ImageName", _UnicodeString),
+        ("BasePriority", ctypes.c_long),
+        ("UniqueProcessId", ctypes.c_void_p),
+    ]
+
+
+class ProcessSampler:
+    """Per-program CPU and memory, like Task Manager: one NtQuerySystemInformation
+    call returns every process at once (~ms), instead of opening each process
+    (psutil needs ~0.5 s for that on Windows because of protected processes).
+    Memory = private working set, the number Task Manager shows."""
+
+    def __init__(self):
+        self.ntdll = ctypes.WinDLL("ntdll")
+        self.ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+        self.buf = ctypes.create_string_buffer(1 << 20)
+        self.prev = {}
+        self.prev_t = None
+        self.ncpu = psutil.cpu_count() or 1
+
+    def _snapshot(self):
+        ret = ctypes.c_ulong()
+        while True:
+            status = self.ntdll.NtQuerySystemInformation(
+                5, self.buf, len(self.buf), ctypes.byref(ret))  # SystemProcessInformation
+            if status == 0:
+                break
+            if status & 0xFFFFFFFF == 0xC0000004:  # STATUS_INFO_LENGTH_MISMATCH
+                self.buf = ctypes.create_string_buffer(max(ret.value, len(self.buf)) * 2)
+                continue
+            raise OSError(f"NtQuerySystemInformation failed: {status & 0xFFFFFFFF:#x}")
+        base = ctypes.addressof(self.buf)
+        offset = 0
+        while True:
+            info = _ProcInfo.from_address(base + offset)
+            pid = info.UniqueProcessId or 0
+            name = (ctypes.wstring_at(info.ImageName.Buffer, info.ImageName.Length // 2)
+                    if info.ImageName.Buffer else "")
+            yield pid, name, info.UserTime + info.KernelTime, info.WorkingSetPrivateSize, info.CreateTime
+            if not info.NextEntryOffset:
+                break
+            offset += info.NextEntryOffset
+
+    def top(self, limit=5, key="cpu"):
+        """[(name, cpu_percent_of_whole_pc, ram_bytes)], same-name processes summed."""
+        now = time.monotonic()
+        dt = (now - self.prev_t) if self.prev_t else None
+        groups, current = {}, {}
+        for pid, name, cpu_time, mem, created in self._snapshot():
+            if pid == 0:  # idle
+                continue
+            current[pid] = (created, cpu_time)
+            cpu = 0.0
+            before = self.prev.get(pid)
+            if dt and before and before[0] == created:
+                cpu = max(0.0, (cpu_time - before[1]) / 1e7 / dt / self.ncpu * 100)
+            g = groups.setdefault(name.removesuffix(".exe") or "?", [0.0, 0])
+            g[0] += cpu
+            g[1] += mem
+        self.prev, self.prev_t = current, now
+        idx = 0 if key == "cpu" else 1
+        rows = sorted(groups.items(), key=lambda kv: (kv[1][idx], kv[1][1 - idx]), reverse=True)
+        return [(name, cpu, mem) for name, (cpu, mem) in rows[:limit]]
+
+
+_sampler = None
+
+
+def top_processes(limit=5, key="cpu"):
+    global _sampler
+    if _sampler is None:
+        _sampler = ProcessSampler()
+    return _sampler.top(limit, key)
+
+
 # ---------- rendering ----------
 
 class Renderer:
@@ -396,6 +559,8 @@ class Renderer:
         self.f_sym = load_symbol_font(self.px(13))
         self._card_cache = {}
         self.close_box = (0, 0, 0, 0)
+        self.pin_box = (0, 0, 0, 0)
+        self.hero_box = (0, 0, 0, 0)
 
     def px(self, v):
         return int(round(v * self.s))
@@ -474,6 +639,14 @@ class Renderer:
             color = scale(1 - pct / 100) if not plugged else scale(0)
             self._rrect(d, x + 2.2, y - 2.3, x + 2.2 + fill_w, y + 2.3, 0.8, color)
 
+    def _pin_icon(self, d, cx, cy, color):
+        # upright push pin, ~10 x 14
+        self._rrect(d, cx - 4, cy - 7, cx + 4, cy - 4.6, 1.2, color)
+        d.polygon(self._ss(cx - 2.4, cy - 4.8, cx + 2.4, cy - 4.8, cx + 3.4, cy + 0.6,
+                           cx - 3.4, cy + 0.6), fill=color)
+        self._rrect(d, cx - 5, cy + 0.4, cx + 5, cy + 2.2, 0.8, color)
+        d.rectangle(self._ss(cx - 0.6, cy + 2, cx + 0.6, cy + 7.5), fill=color)
+
     def _close_icon(self, d, cx, cy, color):
         a = 4.2
         w = 1.5 * self.s * SS
@@ -494,14 +667,16 @@ class Renderer:
     # --- layout ---
     def layout_height(self, data):
         h = 128  # header + hero
+        if data.get("procs") is not None:
+            h += 120
         h += 38 * (1 + len(data["disks"]))  # memory + disks
         h += 40  # temperature
         if not data["lhm_online"] or (data["temp_cpu"] is None and data["temp_gpu"] is None):
             h += 16
-        h += 16 + 22 + 22 + 30  # divider, net, disk io, footer
+        h += 16 + 22 + 22 + 22 + 30  # divider, net, ping, disk io, footer
         return self.px(h)
 
-    def render(self, data, theme, close_hover=False):
+    def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
         H = self.layout_height(data)
@@ -515,10 +690,16 @@ class Renderer:
         texts.append((P, 28, "Система", self.f_title, TEXT, "ls"))
         self._close_icon(d, Wl - P - 4, 23, CLOSE_HOVER if close_hover else DIM)
         self.close_box = (self.px(Wl - P - 14), self.px(11), self.px(Wl - P + 6), self.px(35))
+        pin_x = Wl - P - 28
+        pin_color = scale(0.0) if pinned else (TEXT if pin_hover else FAINT)
+        if pinned and pin_hover:
+            pin_color = lerp(pin_color, TEXT, 0.35)
+        self._pin_icon(d, pin_x, 23, pin_color)
+        self.pin_box = (self.px(pin_x - 10), self.px(11), self.px(pin_x + 9), self.px(35))
         batt = data["battery"]
         if batt is not None:
             pct, plugged = batt
-            bx = Wl - P - 26 - 19
+            bx = Wl - P - 50 - 19
             self._battery_icon(d, bx, 23.5, pct, plugged, scale)
             texts.append(("rich", bx - 6, 28, [(f"{pct:.0f}%", self.f_small, DIM)]
                           + ([(" ⚡", self.f_sym, DIM)] if plugged else [])))
@@ -530,11 +711,33 @@ class Renderer:
         num_w = self.f_hero.getlength(num) / self.s
         texts.append((P - 1, hero_base, num, self.f_hero, scale(cpu / 100), "ls"))
         texts.append((P + num_w + 2, hero_base, "%", self.f_hero_unit, DIM, "ls"))
+        procs = data.get("procs")
         texts.append((P, hero_base + 18, "Процессор", self.f_small, DIM, "ls"))
+        chev_x = P + self.f_small.getlength("Процессор ") / self.s
+        texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         hx0 = P + 82
         self._histogram(d, hx0, 50, Wl - P, 108, data["cpu_hist"], scale)
+        self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
         y = 128
+        if procs is not None:
+            y0, y1 = y - 4, y + 108
+            self._rrect(d, P - 6, y0, Wl - P + 6, y1, 8, (34, 40, 52))
+            col_mem, col_cpu = Wl - P, Wl - P - 58
+            texts.append((P, y0 + 17, "Программа", self.f_small, FAINT, "ls"))
+            texts.append(("rich", col_cpu, y0 + 17, [("CPU", self.f_small, FAINT)]))
+            texts.append(("rich", col_mem, y0 + 17, [("Память", self.f_small, FAINT)]))
+            name_w = self.px(col_cpu - 42 - P)
+            for i, (name, cpu_p, mem) in enumerate(procs):
+                by = y0 + 36 + i * 17
+                texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
+                cpu_txt = f"{cpu_p:.1f}".replace(".", ",") if cpu_p < 10 else f"{cpu_p:.0f}"
+                texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
+                                                     scale(min(1.0, cpu_p / 50)))]))
+                texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
+            if not procs:
+                texts.append((P, y0 + 36, "собираю данные…", self.f_small, FAINT, "ls"))
+            y += 120
         # memory
         texts.append((P, y + 14, "Память", self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 14, [
@@ -588,6 +791,17 @@ class Renderer:
             ("↓ ", self.f_sym, down_c), (fmt_speed(data["net_down"]), self.f_small, TEXT),
             ("     ↑ ", self.f_sym, up_c), (fmt_speed(data["net_up"]), self.f_small, TEXT)]))
         y += 22
+        texts.append((P, y + 12, "Пинг", self.f_label, TEXT, "ls"))
+        ping = data.get("ping")
+        if not data.get("ping_ready"):
+            parts = [("…", self.f_small, FAINT)]
+        elif ping is None:
+            parts = [("нет ответа", self.f_value, ping_color(scale, None))]
+        else:
+            parts = [(f"до {PING_HOST}   ", self.f_small, FAINT),
+                     (f"{ping} мс", self.f_value, ping_color(scale, ping))]
+        texts.append(("rich", Wl - P, y + 12, parts))
+        y += 22
         texts.append((P, y + 12, "Диск", self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 12, [
             ("чтение ", self.f_small, DIM), (fmt_speed(data["io_read"]), self.f_small, TEXT),
@@ -635,6 +849,7 @@ class TaskbarPanel:
         self.col_a = max(f.getlength("CPU "), f.getlength("RAM ")) + fv.getlength("100%")
         self.col_b = fs.getlength("↓ ") + speed_w
         self.col_c = max(f.getlength("CPU "), f.getlength("GPU ")) + fv.getlength("100°")
+        self.col_d = max(f.getlength("пинг"), fv.getlength("999 мс"))
         self.col_gap = px(14)
 
         self.top = top = tk.Toplevel(widget.root)
@@ -664,8 +879,9 @@ class TaskbarPanel:
         h = self.bar_h
         temps = data["temp_cpu"] is not None or data["temp_gpu"] is not None
         x_b = self.col_a + self.col_gap
-        x_c = x_b + self.col_b + self.col_gap
-        width = int((x_c + self.col_c) if temps else (x_b + self.col_b)) + 2
+        x_d = x_b + self.col_b + self.col_gap
+        x_c = x_d + self.col_d + self.col_gap
+        width = int((x_c + self.col_c) if temps else (x_d + self.col_d)) + 2
         img = Image.new("RGB", (width, h), self.key)
         d = ImageDraw.Draw(img)
         label_c = (88, 88, 92) if self.light else (158, 163, 172)
@@ -687,6 +903,16 @@ class TaskbarPanel:
                                        (rows[1], "↑", tone(0.75), data["net_up"])):
             d.text((x_b, y), arrow, font=fs, fill=color, anchor="lm")
             d.text((x_b + self.col_b, y), fmt_speed(speed), font=f, fill=text_c, anchor="rm")
+
+        ping = data.get("ping")
+        d.text((x_d + self.col_d, rows[0]), "пинг", font=f, fill=label_c, anchor="rm")
+        if not data.get("ping_ready"):
+            value, color = "…", label_c
+        elif ping is None:
+            value, color = "нет", tone(1.0)
+        else:
+            value, color = f"{ping} мс", tone(0.05 if ping < 50 else 0.55 if ping < 100 else 0.95)
+        d.text((x_d + self.col_d, rows[1]), value, font=fv, fill=color, anchor="rm")
 
         if temps:
             for y, name, t in ((rows[0], "CPU", data["temp_cpu"]), (rows[1], "GPU", data["temp_gpu"])):
@@ -752,6 +978,90 @@ class TaskbarPanel:
         self.tasks = self.rebar = None
 
 
+# ---------- notifications ----------
+
+def work_area():
+    """Screen area not covered by the taskbar: (left, top, right, bottom)."""
+    r = _wt.RECT()
+    ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(r), 0)  # SPI_GETWORKAREA
+    return r.left, r.top, r.right, r.bottom
+
+
+class Toast:
+    """Our own notification card in the bottom-right corner, in the widget's style.
+    Click to dismiss; disappears by itself after a few seconds."""
+
+    OFFSCREEN = "1x1+-32000+-32000"
+    WIDTH = 300
+    SHOW_MS = 9000
+
+    def __init__(self, widget):
+        self.widget = widget
+        self.px = widget.renderer.px
+        self.s = widget.renderer.s
+        self.f_title = load_font(self.px(14), "SemiBold")
+        self.f_body = load_font(self.px(12))
+        self.top = top = tk.Toplevel(widget.root)
+        top.overrideredirect(True)
+        top.configure(bg=KEY_HEX)
+        top.attributes("-transparentcolor", KEY_HEX)
+        top.attributes("-topmost", True)
+        self.view = tk.Label(top, bg=KEY_HEX, bd=0, highlightthickness=0, cursor="hand2")
+        self.view.pack()
+        self.view.bind("<ButtonRelease-1>", lambda e: self.hide())
+        top.geometry(self.OFFSCREEN)
+        self.photo = None
+        self.job = None
+
+    def _wrap(self, text, max_w):
+        lines, line = [], ""
+        for word in text.split():
+            trial = f"{line} {word}".strip()
+            if line and self.f_body.getlength(trial) > max_w:
+                lines.append(line)
+                line = word
+            else:
+                line = trial
+        return lines + ([line] if line else [])
+
+    def render(self, title, body, color):
+        px, S = self.px, SS
+        W = px(self.WIDTH)
+        lines = self._wrap(body, W - px(46))
+        H = px(46 + 17 * len(lines))
+        big = Image.new("RGB", (W * S, H * S), KEY)
+        d = ImageDraw.Draw(big)
+        r = px(12) * S
+        d.rounded_rectangle((0, 0, W * S - 1, H * S - 1), radius=r, fill=BORDER)
+        bw = max(1, px(1)) * S
+        d.rounded_rectangle((bw, bw, W * S - 1 - bw, H * S - 1 - bw), radius=r - bw, fill=CARD)
+        d.rounded_rectangle((px(14) * S, px(16) * S, px(18) * S, H * S - px(16) * S),
+                            radius=px(2) * S, fill=color)
+        img = big.reduce(S)
+        td = ImageDraw.Draw(img)
+        td.text((px(30), px(29)), title, font=self.f_title, fill=TEXT, anchor="ls")
+        for i, line in enumerate(lines):
+            td.text((px(30), px(48 + 17 * i)), line, font=self.f_body, fill=DIM, anchor="ls")
+        return img
+
+    def show(self, title, body, color):
+        img = self.render(title, body, color)
+        self.photo = ImageTk.PhotoImage(img)
+        self.view.configure(image=self.photo)
+        _, _, right, bottom = work_area()
+        x = right - img.width - self.px(14)
+        y = bottom - img.height - self.px(14)
+        self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
+        self.top.lift()
+        if self.job:
+            self.top.after_cancel(self.job)
+        self.job = self.top.after(self.SHOW_MS, self.hide)
+
+    def hide(self):
+        self.job = None
+        self.top.geometry(self.OFFSCREEN)
+
+
 # ---------- window ----------
 
 class Widget:
@@ -777,6 +1087,8 @@ class Widget:
         self.height = None
         self.close_hover = False
         self.close_pressed = False
+        self.pin_hover = False
+        self.pin_pressed = False
         self._drag = (0, 0)
         self.hwnd = None
 
@@ -785,7 +1097,7 @@ class Widget:
         self.view.bind("<B1-Motion>", self._drag_move)
         self.view.bind("<ButtonRelease-1>", self._release)
         self.view.bind("<Motion>", self._hover)
-        self.view.bind("<Leave>", lambda e: self._set_hover(False))
+        self.view.bind("<Leave>", self._leave)
         self.view.bind("<Button-3>", self._show_menu)
 
         # prime counters so the first readings are meaningful
@@ -800,6 +1112,12 @@ class Widget:
 
         self.lhm = LhmReader()
         self.lhm.start()
+        self.ping = PingReader()
+        self.ping.start()
+        self.show_procs = False
+        self.alert_state = {}
+        self._press_at = (0, 0)
+        self.hero_pressed = False
 
         self.update()
         self._place()
@@ -809,6 +1127,7 @@ class Widget:
 
         self.taskbar = TaskbarPanel(self) if _user32 is not None else None
         self._taskbar_tick()
+        self.toast = Toast(self) if _user32 is not None else None
 
     # --- taskbar panel ---
     def _taskbar_tick(self):
@@ -844,6 +1163,7 @@ class Widget:
         self.cfg["pinned"] = self.pinned_var.get()
         save_config(self.cfg)
         self._apply_pin()
+        self._draw()
 
     def _back_if_pinned(self):
         if self.cfg["pinned"]:
@@ -861,6 +1181,12 @@ class Widget:
                              command=self._toggle_pin)
         menu.add_checkbutton(label="Мини-панель на панели задач", variable=self.taskbar_var,
                              command=self._toggle_taskbar)
+        self.procs_var = tk.BooleanVar(value=False)
+        menu.add_checkbutton(label="Список процессов", variable=self.procs_var,
+                             command=lambda: self._set_procs(self.procs_var.get()))
+        self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
+        menu.add_checkbutton(label="Предупреждения", variable=self.alerts_var,
+                             command=self._toggle_alerts)
         menu.add_separator()
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
@@ -934,12 +1260,19 @@ class Widget:
         x0, y0, x1, y1 = self.renderer.close_box
         return x0 <= event.x <= x1 and y0 <= event.y <= y1
 
+    def _in_box(self, box, event):
+        x0, y0, x1, y1 = box
+        return x0 <= event.x <= x1 and y0 <= event.y <= y1
+
     def _press(self, event):
         self.close_pressed = self._in_close(event)
+        self.pin_pressed = self._in_box(self.renderer.pin_box, event)
+        self.hero_pressed = self._in_box(self.renderer.hero_box, event)
+        self._press_at = (event.x_root, event.y_root)
         self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
 
     def _drag_move(self, event):
-        if self.close_pressed or self.cfg["pinned"]:
+        if self.close_pressed or self.pin_pressed or self.cfg["pinned"]:
             return
         dx, dy = self._drag
         self.root.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
@@ -950,6 +1283,15 @@ class Widget:
             if self._in_close(event):
                 self.quit()
             return
+        if self.pin_pressed:
+            self.pin_pressed = False
+            if self._in_box(self.renderer.pin_box, event):
+                self.pinned_var.set(not self.cfg["pinned"])
+                self._toggle_pin()
+            return
+        moved = abs(event.x_root - self._press_at[0]) + abs(event.y_root - self._press_at[1])
+        if self.hero_pressed and moved < 5 and self._in_box(self.renderer.hero_box, event):
+            self._set_procs(not self.show_procs)  # a click (not a drag) on the CPU block
         if self.cfg["pinned"]:
             self._back_if_pinned()
             return
@@ -957,6 +1299,80 @@ class Widget:
 
     def _hover(self, event):
         self._set_hover(self._in_close(event))
+        on_pin = self._in_box(self.renderer.pin_box, event)
+        if on_pin != self.pin_hover:
+            self.pin_hover = on_pin
+            self._draw()
+        hand = (self._in_close(event) or on_pin
+                or self._in_box(self.renderer.hero_box, event))
+        cursor = "hand2" if hand else ""
+        if self.view.cget("cursor") != cursor:
+            self.view.configure(cursor=cursor)
+
+    # --- processes & alerts ---
+    def _set_procs(self, show):
+        self.show_procs = show
+        self.procs_var.set(show)
+        if self.data is not None:
+            self.data["procs"] = top_processes() if show else None
+            self._draw()
+
+    def _toggle_alerts(self):
+        self.cfg["alerts"] = self.alerts_var.get()
+        save_config(self.cfg)
+
+    def _alert(self, key, active, cleared, hold_s, title, body, color):
+        """Fire a toast when `active` has held for hold_s; re-arm once `cleared`."""
+        now = time.monotonic()
+        st = self.alert_state.setdefault(key, {"armed": True, "since": None, "last": -1e9})
+        if active:
+            st["since"] = st["since"] or now
+            if (st["armed"] and now - st["since"] >= hold_s
+                    and now - st["last"] >= ALERT_COOLDOWN_S):
+                st["armed"], st["last"] = False, now
+                self.toast.show(title, body() if callable(body) else body, color)
+        else:
+            st["since"] = None
+            if cleared:
+                st["armed"] = True
+
+    def _check_alerts(self, data):
+        if not self.cfg["alerts"] or self.toast is None:
+            return
+        scale = Scale(THEMES[self.cfg["theme"]][1])
+        hot = scale(1.0)
+        t = data["temp_cpu"]
+        if t is not None:
+            self._alert("cpu_temp", t >= ALERT_CPU_TEMP[0], t < ALERT_CPU_TEMP[1], 5,
+                        "Процессор перегревается",
+                        f"CPU {t:.0f}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.",
+                        hot)
+        t = data["temp_gpu"]
+        if t is not None:
+            self._alert("gpu_temp", t >= ALERT_GPU_TEMP[0], t < ALERT_GPU_TEMP[1], 5,
+                        "Видеокарта перегревается",
+                        f"GPU {t:.0f}°. Понизь настройки графики или ограничь FPS.", hot)
+        pct = data["ram_pct"]
+
+        def ram_body():
+            name, _, mem = (top_processes(1, key="mem") or [("?", 0, 0)])[0]
+            return (f"Занято {pct:.0f}% ({fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ). "
+                    f"Больше всех: {name} — {fmt_mem(mem)}.")
+
+        self._alert("ram", pct >= ALERT_RAM[0], pct < ALERT_RAM[1], 10,
+                    "Память почти закончилась", ram_body, hot)
+        batt = data["battery"]
+        if batt is not None:
+            level, plugged = batt
+            self._alert("battery", not plugged and level <= ALERT_BATTERY[0],
+                        plugged or level > ALERT_BATTERY[1], 0,
+                        "Батарея садится", f"Осталось {level:.0f}%. Подключи зарядку.",
+                        scale(0.75))
+
+    def _leave(self, event):
+        self.pin_hover = False
+        self._set_hover(False)
+        self._draw()
 
     def _set_hover(self, value):
         if value != self.close_hover:
@@ -1021,6 +1437,9 @@ class Widget:
             "temp_cpu": self.lhm.cpu,
             "temp_gpu": self.lhm.gpu,
             "lhm_online": self.lhm.online,
+            "ping": self.ping.ms,
+            "ping_ready": self.ping.ready,
+            "procs": top_processes() if self.show_procs else None,
         }
 
     def _refresh(self):
@@ -1028,6 +1447,8 @@ class Widget:
         self._draw()
         if getattr(self, "taskbar", None) is not None:
             self.taskbar.draw(self.data, self.cfg["theme"])
+        if getattr(self, "toast", None) is not None:
+            self._check_alerts(self.data)
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
@@ -1035,7 +1456,8 @@ class Widget:
     def _draw(self):
         if self.data is None:
             return
-        img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover)
+        img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
+                                   bool(self.cfg["pinned"]), self.pin_hover)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         if img.height != self.height:
@@ -1050,5 +1472,18 @@ class Widget:
                 self.taskbar.restore()
 
 
+def already_running():
+    """Named mutex: a second copy (start.bat clicked twice) exits immediately."""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        globals()["_instance_mutex"] = kernel32.CreateMutexW(None, False, r"Local\PCMonitorWidget")
+        return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+    except (AttributeError, OSError):
+        return False
+
+
 if __name__ == "__main__":
-    Widget().run()
+    if not already_running():
+        Widget().run()
