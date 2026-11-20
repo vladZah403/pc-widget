@@ -130,7 +130,8 @@ IS_WIN11 = _windows_build() >= 22000
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
                   "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
                   "run_as_admin": False, "hidden": [],
-                  "alert_temp": 90, "alert_ram": 90, "alert_battery": 15}
+                  "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
+                  "check_updates": True, "update_seen": ""}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -252,6 +253,9 @@ def sanitize_config(raw):
         elif key == "hidden":
             if isinstance(v, list):
                 cfg[key] = [s for s in v if s in SECTIONS]
+        elif key == "update_seen":
+            if isinstance(v, str) and (v == "" or parse_version(v)):
+                cfg[key] = v
     return cfg
 
 
@@ -1053,6 +1057,86 @@ class LhmReader(threading.Thread):
             time.sleep(LHM_POLL_S)
 
 
+# ---------- updates ----------
+# Once in a while the widget asks GitHub for the latest release. It only reads
+# that one public page: nothing is downloaded or installed by itself.
+
+REPO = "vladZah403/pc-widget"
+RELEASES_URL = f"https://github.com/{REPO}/releases"
+LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+UPDATE_FIRST_S = 20        # first check soon after the start
+UPDATE_EVERY_S = 6 * 3600
+
+
+def parse_version(text):
+    """'v1.10' or '1.10' -> (1, 10); None if it isn't a plain version number."""
+    m = re.fullmatch(r"v?(\d+(?:\.\d+){0,3})", (text or "").strip())
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def newer_release(info, current=APP_VERSION):
+    """(version, page url) from GitHub's 'latest release' JSON if it is newer than us."""
+    if not isinstance(info, dict) or info.get("draft") or info.get("prerelease"):
+        return None
+    tag = info.get("tag_name")
+    have, got = parse_version(current), parse_version(tag)
+    if not have or not got or got <= have:
+        return None
+    url = info.get("html_url")
+    if not isinstance(url, str) or not url.startswith(RELEASES_URL + "/"):
+        url = RELEASES_URL + "/latest"  # only ever open our own release page
+    return ".".join(map(str, got)), url
+
+
+def open_in_browser(url):
+    """Open one of our GitHub pages. When we run elevated, explorer.exe hands the
+    link to the user's normal shell, so the browser doesn't get admin rights."""
+    if not url.startswith(f"https://github.com/{REPO}"):
+        return
+    try:
+        if is_admin():
+            import subprocess
+            windir = os.path.dirname(_system32())
+            subprocess.Popen([os.path.join(windir, "explorer.exe"), url])
+        else:
+            os.startfile(url)
+    except OSError:
+        log.exception("opening %s failed", url)
+
+
+class UpdateChecker(threading.Thread):
+    """Background check of the latest release; `found` = (version, url) or None."""
+
+    def __init__(self, enabled):
+        super().__init__(daemon=True)
+        self.enabled = enabled            # callable -> bool (the menu switch)
+        self.found = None
+        self.checks = 0                   # finished attempts, successful or not
+        self.failed = False               # the last attempt failed (offline, GitHub down)
+        self.wake = threading.Event()     # set() = check right now
+
+    def check_now(self):
+        self.wake.set()
+
+    def run(self):
+        self.wake.wait(UPDATE_FIRST_S)
+        while True:
+            self.wake.clear()
+            if self.enabled():
+                try:
+                    req = urllib.request.Request(LATEST_API, headers={
+                        "User-Agent": f"PC-Monitor/{APP_VERSION}",
+                        "Accept": "application/vnd.github+json"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        self.found = newer_release(json.loads(resp.read().decode("utf-8")))
+                    self.failed = False
+                except (OSError, ValueError) as exc:  # offline is normal for a laptop
+                    log.info("update check failed: %s", exc)
+                    self.failed = True
+                self.checks += 1
+            self.wake.wait(UPDATE_EVERY_S)
+
+
 # ---------- ping & processes ----------
 
 PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up
@@ -1214,6 +1298,7 @@ class Renderer:
         self.close_box = (0, 0, 0, 0)
         self.pin_box = (0, 0, 0, 0)
         self.hero_box = (0, 0, 0, 0)
+        self.update_box = (0, 0, 0, 0)
 
     def px(self, v):
         return int(round(v * self.s))
@@ -1330,6 +1415,8 @@ class Renderer:
 
     def _sections(self, data, hidden):
         secs = []
+        if data.get("update"):
+            secs.append((30, self._draw_update))
         if data.get("procs") is not None:
             secs.append((120, self._draw_procs))
         if "ram" not in hidden:
@@ -1401,8 +1488,9 @@ class Renderer:
                compact=False, close_armed=False, hidden=()):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
+        self.update_box = (0, 0, 0, 0)
         if compact:
-            data = dict(data, procs=None)
+            data = dict(data, procs=None, update=None)
         H = self.layout_height(data, compact, hidden)
         card = self._card(H)
 
@@ -1465,6 +1553,17 @@ class Renderer:
         return self._compose(card, layer, texts)
 
     # --- sections: draw(d, texts, y, data, scale) ---
+    def _draw_update(self, d, texts, y, data, scale):
+        """'Вышла версия 1.2 — скачать' pill; a click opens the release page."""
+        P, Wl = self.PAD, self.WIDTH
+        version, _ = data["update"]
+        accent = scale(0.0)
+        self._rrect(d, P - 6, y - 2, Wl - P + 6, y + 22, 8, lerp(CARD, accent, 0.18))
+        texts.append((P, y + 14, f"Вышла версия {version}", self.f_value, TEXT, "ls"))
+        texts.append(("rich", Wl - P, y + 14, [("скачать ", self.f_small, accent),
+                                                ("↗", self.f_sym, accent)]))
+        self.update_box = (self.px(P - 6), self.px(y - 2), self.px(Wl - P + 6), self.px(y + 22))
+
     def _draw_procs(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
         procs = data["procs"]
@@ -1889,8 +1988,15 @@ class Toast(PopupCard):
         super().__init__(widget)
         self.f_title = load_font(self.px(14), "SemiBold")
         self.f_body = load_font(self.px(12))
-        self.view.bind("<ButtonRelease-1>", lambda e: self.hide())
+        self.view.bind("<ButtonRelease-1>", self._clicked)
         self.job = None
+        self.on_click = None
+
+    def _clicked(self, event):
+        action, self.on_click = self.on_click, None
+        self.hide()
+        if action is not None:
+            action()
 
     def _wrap(self, text, max_w):
         lines, line = [], ""
@@ -1914,7 +2020,9 @@ class Toast(PopupCard):
             td.text((px(30), px(48 + 17 * i)), line, font=self.f_body, fill=DIM, anchor="ls")
         return img
 
-    def show(self, title, body, color):
+    def show(self, title, body, color, on_click=None):
+        """on_click: what a click on the card does (besides closing it)."""
+        self.on_click = on_click
         img = self.render(title, body, color)
         _, _, right, bottom = work_area()
         self._show_image(img, right - img.width - self.px(14), bottom - img.height - self.px(14))
@@ -2081,6 +2189,9 @@ class Widget:
         self.taskbar = TaskbarPanel(self) if _user32 is not None else None
         self._taskbar_tick()
         self.toast = Toast(self) if _user32 is not None else None
+        self.updates = UpdateChecker(lambda: bool(self.cfg["check_updates"]))
+        self.updates.start()
+        self.manual_check = None  # checks count when "Проверить сейчас" was clicked
         self.info = InfoCard(self) if _user32 is not None else None
         self.visible = True
 
@@ -2272,6 +2383,14 @@ class Widget:
                              command=self._toggle_topmost)
         self.topmost_index = menu.index("end")
         menu.add_command(label="В правый верхний угол", command=self._reset_position)
+        about = tk.Menu(menu, tearoff=0)
+        about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
+        self.updates_var = tk.BooleanVar(value=bool(self.cfg["check_updates"]))
+        about.add_checkbutton(label="Проверять обновления", variable=self.updates_var,
+                              command=self._toggle_updates)
+        about.add_command(label="Проверить сейчас", command=self._check_updates_now)
+        about.add_command(label="Страница программы", command=lambda: open_in_browser(RELEASES_URL))
+        menu.add_cascade(label="О программе", menu=about)
         menu.add_separator()
         menu.add_command(label=f"Скрыть  ({HOTKEY_TEXT} — показать)", command=self.hide_widget)
         menu.add_command(label="Закрыть", command=self.quit)
@@ -2377,6 +2496,9 @@ class Widget:
         moved = abs(event.x_root - self._press_at[0]) + abs(event.y_root - self._press_at[1])
         if self.hero_pressed and moved < 5 and self._in_box(self.renderer.hero_box, event):
             self._set_procs(not self.show_procs)  # a click (not a drag) on the CPU block
+        if (moved < 5 and self.data and self.data.get("update")
+                and self._in_box(self.renderer.update_box, event)):
+            open_in_browser(self.data["update"][1])
         if self.cfg["pinned"]:
             self._back_if_pinned()
             return
@@ -2389,7 +2511,8 @@ class Widget:
             self.pin_hover = on_pin
             self._draw()
         hand = (self._in_close(event) or on_pin
-                or self._in_box(self.renderer.hero_box, event))
+                or self._in_box(self.renderer.hero_box, event)
+                or self._in_box(self.renderer.update_box, event))
         cursor = "hand2" if hand else ""
         if self.view.cget("cursor") != cursor:
             self.view.configure(cursor=cursor)
@@ -2401,6 +2524,43 @@ class Widget:
         if self.data is not None:
             self.data["procs"] = top_processes() if show else None
             self._draw()
+
+    # --- updates ---
+    def _toggle_updates(self):
+        self.cfg["check_updates"] = self.updates_var.get()
+        save_config(self.cfg)
+        if self.cfg["check_updates"]:
+            self.updates.check_now()
+
+    def _check_updates_now(self):
+        self.manual_check = self.updates.checks
+        if not self.cfg["check_updates"]:
+            self.updates_var.set(True)
+            self._toggle_updates()
+        else:
+            self.updates.check_now()
+
+    def _update_notice(self):
+        """Toast once per new version, and the answer to "Проверить сейчас"."""
+        found = self.updates.found if self.cfg["check_updates"] else None
+        manual = self.manual_check is not None and self.updates.checks > self.manual_check
+        if manual:
+            self.manual_check = None
+        scale = Scale(THEMES[self.cfg["theme"]][1])
+        if found and (manual or found[0] != self.cfg["update_seen"]):
+            version, url = found
+            self.cfg["update_seen"] = version
+            save_config(self.cfg)
+            self.toast.show(f"Вышла версия {version}",
+                            f"У тебя {APP_VERSION}. Нажми, чтобы открыть страницу загрузки.",
+                            scale(0.0), on_click=lambda: open_in_browser(url))
+        elif manual:
+            if self.updates.failed:
+                self.toast.show("Не удалось проверить", "Нет связи с GitHub. Попробуй позже.",
+                                scale(0.75))
+            else:
+                self.toast.show("Обновлений нет", f"У тебя последняя версия, {APP_VERSION}.",
+                                scale(0.0))
 
     def _toggle_alerts(self):
         self.cfg["alerts"] = self.alerts_var.get()
@@ -2569,6 +2729,8 @@ class Widget:
             "ping": self.ping.ms,
             "ping_ready": self.ping.ready,
             "procs": top_processes() if self.show_procs else None,
+            "update": (getattr(self, "updates", None) and self.cfg["check_updates"]
+                       and self.updates.found) or None,
         }
 
     def _refresh(self):
@@ -2578,6 +2740,7 @@ class Widget:
             self.taskbar.draw(self.data, self.cfg["theme"])
         if getattr(self, "toast", None) is not None:
             self._check_alerts(self.data)
+            self._update_notice()
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
