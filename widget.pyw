@@ -1095,8 +1095,18 @@ class TaskbarPanel:
     def draw(self, data, theme):
         if not self.bar_h:
             return
+        img = self.render(data, theme, self.bar_h)
+        self.photo = ImageTk.PhotoImage(img)
+        self.view.configure(image=self.photo)
+        if img.size != self.size:
+            self.size = img.size
+            self.layout()
+        info = getattr(self.widget, "info", None)
+        if self.hover and info is not None and info.visible:
+            self._show_info()  # keep the details live while hovering
+
+    def render(self, data, theme, h):
         scale = Scale(THEMES[theme][1])
-        h = self.bar_h
         temps = data["temp_cpu"] is not None or data["temp_gpu"] is not None
         x_b = self.col_a + self.col_gap
         x_d = x_b + self.col_b + self.col_gap
@@ -1146,14 +1156,7 @@ class TaskbarPanel:
                 if approx:
                     d.text((right - fv.getlength(value), y), "≈", font=fs, fill=color, anchor="rm")
 
-        self.photo = ImageTk.PhotoImage(img)
-        self.view.configure(image=self.photo)
-        if img.size != self.size:
-            self.size = img.size
-            self.layout()
-        info = getattr(self.widget, "info", None)
-        if self.hover and info is not None and info.visible:
-            self._show_info()  # keep the details live while hovering
+        return img
 
     # --- hover details ---
     def _enter(self, event):
