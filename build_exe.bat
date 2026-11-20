@@ -7,7 +7,10 @@ if not exist lhm\LibreHardwareMonitorLib.dll (
   echo Put LibreHardwareMonitorLib.dll and its DLLs into the lhm folder first.
   exit /b 1
 )
+rem work files go to %TEMP%: a build\ folder here holds an exe that can't run and only confuses
+if exist build rmdir /s /q build
 python -m PyInstaller --noconfirm --clean --windowed --name PC-Monitor ^
+  --workpath "%TEMP%\pc-monitor-build" ^
   --icon assets\app.ico --add-data "lhm;lhm" --add-data "assets\app.png;assets" ^
   --exclude-module numpy --exclude-module setuptools --exclude-module pkg_resources ^
   --exclude-module pywintypes --exclude-module pythoncom --exclude-module win32com ^
