@@ -56,7 +56,7 @@ THEMES = {
 }
 
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
-                  "pinned": True}
+                  "pinned": True, "taskbar": True}
 
 
 # ---------- helpers ----------
@@ -149,6 +149,10 @@ try:
     _user32.IsWindow.argtypes = [_wt.HWND]
     _user32.SetWindowPos.argtypes = [_wt.HWND, _wt.HWND, ctypes.c_int, ctypes.c_int,
                                      ctypes.c_int, ctypes.c_int, _wt.UINT]
+    _user32.GetWindowRect.argtypes = [_wt.HWND, ctypes.POINTER(_wt.RECT)]
+    _user32.ScreenToClient.argtypes = [_wt.HWND, ctypes.POINTER(_wt.POINT)]
+    _user32.GetForegroundWindow.restype = _wt.HWND
+    _user32.GetClassNameW.argtypes = [_wt.HWND, _wt.LPWSTR, ctypes.c_int]
 except (AttributeError, OSError):  # not Windows
     _user32 = None
 
@@ -184,6 +188,72 @@ def send_to_back(hwnd):
     """Bottom of the z-order; an owned window still stays above its owner."""
     if _user32 is not None:
         _user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_FLAGS)
+
+
+# ---------- taskbar (Win32) ----------
+# The mini panel is a separate topmost window owned by the taskbar
+# (Shell_TrayWnd), so it always stays above it. To make room, the task
+# button area (MSTaskSwWClass) is narrowed — the same trick TrafficMonitor
+# uses — and restored on exit.
+
+SWP_NOZORDER = 0x4
+SWP_NOACTIVATE = 0x10
+SWP_ASYNC = 0x4000  # never block on explorer.exe
+
+
+def window_rect(hwnd):
+    r = _wt.RECT()
+    _user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.left, r.top, r.right, r.bottom
+
+
+def class_name(hwnd):
+    buf = ctypes.create_unicode_buffer(64)
+    _user32.GetClassNameW(hwnd, buf, 64)
+    return buf.value
+
+
+def find_taskbar():
+    """(taskbar, tray_notify, task_list, rebar) handles; missing ones are None."""
+    if _user32 is None:
+        return None, None, None, None
+    bar = _user32.FindWindowW("Shell_TrayWnd", None)
+    if not bar:
+        return None, None, None, None
+    notify = _user32.FindWindowExW(bar, None, "TrayNotifyWnd", None)
+    rebar = _user32.FindWindowExW(bar, None, "ReBarWindow32", None)
+    tasks = _user32.FindWindowExW(rebar, None, "MSTaskSwWClass", None) if rebar else None
+    return bar, notify, tasks, rebar
+
+
+def set_child_right(child, parent, right_screen):
+    """Resize a child window so its right edge is at right_screen (screen px)."""
+    left, top, _, bottom = window_rect(child)
+    pt = _wt.POINT(left, top)
+    _user32.ScreenToClient(parent, ctypes.byref(pt))
+    width = max(0, right_screen - left)
+    _user32.SetWindowPos(child, None, pt.x, pt.y, width, bottom - top,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNC)
+
+
+def fullscreen_app_active():
+    """True when the foreground window covers the whole primary screen (games, video)."""
+    fg = _user32.GetForegroundWindow()
+    if not fg or class_name(fg) in ("Progman", "WorkerW", "Shell_TrayWnd"):
+        return False
+    left, top, right, bottom = window_rect(fg)
+    gsm = ctypes.windll.user32.GetSystemMetrics
+    return left <= 0 and top <= 0 and right >= gsm(0) and bottom >= gsm(1)
+
+
+def taskbar_uses_light_theme():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            return winreg.QueryValueEx(key, "SystemUsesLightTheme")[0] == 1
+    except OSError:
+        return False
 
 
 def virtual_screen(root):
@@ -540,6 +610,148 @@ class Renderer:
         return img.convert("RGB")
 
 
+# ---------- taskbar mini panel ----------
+
+class TaskbarPanel:
+    """Two-line readout on the Windows taskbar, just left of the tray icons."""
+
+    # hidden = parked off-screen; Win32 ShowWindow would desync Tk's geometry
+    OFFSCREEN = "1x1+-32000+-32000"
+
+    def __init__(self, widget):
+        self.widget = widget
+        px = self.px = widget.renderer.px
+        self.gap = px(6)
+        self.font = load_font(px(12))
+        self.font_val = load_font(px(12), "SemiBold")
+        self.font_sym = load_symbol_font(px(12))
+        self.light = taskbar_uses_light_theme()
+        # background ~ taskbar colour: text edges blend into it, then it is keyed out
+        self.key = (232, 232, 234) if self.light else (22, 22, 24)
+        key_hex = "#%02x%02x%02x" % self.key
+
+        f, fv, fs = self.font, self.font_val, self.font_sym
+        speed_w = max(f.getlength("1023 КБ/с"), f.getlength("99,9 МБ/с"))
+        self.col_a = max(f.getlength("CPU "), f.getlength("RAM ")) + fv.getlength("100%")
+        self.col_b = fs.getlength("↓ ") + speed_w
+        self.col_c = max(f.getlength("CPU "), f.getlength("GPU ")) + fv.getlength("100°")
+        self.col_gap = px(14)
+
+        self.top = top = tk.Toplevel(widget.root)
+        top.overrideredirect(True)
+        top.configure(bg=key_hex)
+        top.attributes("-transparentcolor", key_hex)
+        top.attributes("-topmost", True)
+        self.view = tk.Label(top, bg=key_hex, bd=0, highlightthickness=0)
+        self.view.pack()
+        self.view.bind("<Button-3>", widget._show_menu)
+        top.geometry(self.OFFSCREEN)
+        top.update_idletasks()
+        self.hwnd = int(top.wm_frame(), 16)
+        self.shown = False
+        self.owner = None
+        self.photo = None
+        self.size = None
+        self.bar_h = None
+        self.pos = None
+        self.tasks = self.rebar = None
+
+    # --- drawing ---
+    def draw(self, data, theme):
+        if not self.bar_h:
+            return
+        scale = Scale(THEMES[theme][1])
+        h = self.bar_h
+        temps = data["temp_cpu"] is not None or data["temp_gpu"] is not None
+        x_b = self.col_a + self.col_gap
+        x_c = x_b + self.col_b + self.col_gap
+        width = int((x_c + self.col_c) if temps else (x_b + self.col_b)) + 2
+        img = Image.new("RGB", (width, h), self.key)
+        d = ImageDraw.Draw(img)
+        label_c = (88, 88, 92) if self.light else (158, 163, 172)
+        text_c = (24, 24, 24) if self.light else (240, 240, 242)
+
+        def tone(t):
+            c = scale(t)
+            return lerp(c, (0, 0, 0), 0.4) if self.light else c
+
+        off = min(self.px(8), h * 0.24)
+        rows = (h / 2 - off, h / 2 + off)
+        f, fv, fs = self.font, self.font_val, self.font_sym
+
+        for y, name, pct in ((rows[0], "CPU", data["cpu"]), (rows[1], "RAM", data["ram_pct"])):
+            d.text((0, y), name, font=f, fill=label_c, anchor="lm")
+            d.text((self.col_a, y), f"{pct:.0f}%", font=fv, fill=tone(pct / 100), anchor="rm")
+
+        for y, arrow, color, speed in ((rows[0], "↓", tone(0.0), data["net_down"]),
+                                       (rows[1], "↑", tone(0.75), data["net_up"])):
+            d.text((x_b, y), arrow, font=fs, fill=color, anchor="lm")
+            d.text((x_b + self.col_b, y), fmt_speed(speed), font=f, fill=text_c, anchor="rm")
+
+        if temps:
+            for y, name, t in ((rows[0], "CPU", data["temp_cpu"]), (rows[1], "GPU", data["temp_gpu"])):
+                d.text((x_c, y), name, font=f, fill=label_c, anchor="lm")
+                value, color = ("—", label_c) if t is None else (f"{t:.0f}°", tone((t - 30) / 70))
+                d.text((x_c + self.col_c, y), value, font=fv, fill=color, anchor="rm")
+
+        self.photo = ImageTk.PhotoImage(img)
+        self.view.configure(image=self.photo)
+        if img.size != self.size:
+            self.size = img.size
+            self.layout()
+
+    # --- placement ---
+    def _hide(self):
+        if self.shown:
+            self.top.geometry(self.OFFSCREEN)
+            self.shown = False
+            self.pos = None
+
+    def layout(self):
+        if not self.widget.cfg["taskbar"]:
+            self._hide()
+            return
+        bar, notify, tasks, rebar = find_taskbar()
+        if not bar or not notify:
+            self._hide()
+            return
+        bl, bt, br, bb = window_rect(bar)
+        h = bb - bt
+        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+        visible = min(bb, screen_h) - max(bt, 0)
+        if br - bl <= h or visible < h * 0.8 or fullscreen_app_active():
+            self._hide()  # vertical, auto-hidden, or a fullscreen game/video
+            return
+        if h != self.bar_h:
+            self.bar_h = h
+            if self.widget.data:
+                self.draw(self.widget.data, self.widget.cfg["theme"])
+        if not self.size:
+            return
+        if self.owner != bar:
+            set_owner(self.hwnd, bar)
+            self.owner = bar
+        w = self.size[0]
+        x = window_rect(notify)[0] - self.gap - w
+        if tasks and rebar:
+            limit = x - self.gap
+            tl, _, tr, _ = window_rect(tasks)
+            if tl < limit and abs(tr - limit) > 1:
+                set_child_right(tasks, rebar, limit)
+            self.tasks, self.rebar = tasks, rebar
+        pos = (w, h, x, bt)
+        if pos != self.pos:
+            self.top.geometry("%dx%d+%d+%d" % pos)
+            self.pos = pos
+        self.shown = True
+
+    def restore(self):
+        """Give the task buttons their full width back."""
+        if self.tasks and self.rebar and _user32.IsWindow(self.tasks):
+            set_child_right(self.tasks, self.rebar, window_rect(self.rebar)[2])
+        self.tasks = self.rebar = None
+
+
 # ---------- window ----------
 
 class Widget:
@@ -595,6 +807,26 @@ class Widget:
         self.hwnd = int(root.wm_frame(), 16)
         self._apply_pin()
 
+        self.taskbar = TaskbarPanel(self) if _user32 is not None else None
+        self._taskbar_tick()
+
+    # --- taskbar panel ---
+    def _taskbar_tick(self):
+        if self.taskbar is not None:
+            try:
+                self.taskbar.layout()
+            except Exception:  # explorer restarting etc. — try again next tick
+                pass
+        self.root.after(500, self._taskbar_tick)
+
+    def _toggle_taskbar(self):
+        self.cfg["taskbar"] = self.taskbar_var.get()
+        save_config(self.cfg)
+        if self.taskbar is not None:
+            if not self.cfg["taskbar"]:
+                self.taskbar.restore()
+            self.taskbar.layout()
+
     # --- pinning ---
     def _apply_pin(self):
         pinned = bool(self.cfg["pinned"])
@@ -624,8 +856,11 @@ class Widget:
         self.alpha_var = tk.DoubleVar(value=float(self.cfg["alpha"]))
         self.theme_var = tk.StringVar(value=self.cfg["theme"])
         menu = tk.Menu(self.root, tearoff=0)
+        self.taskbar_var = tk.BooleanVar(value=bool(self.cfg["taskbar"]))
         menu.add_checkbutton(label="Закрепить на рабочем столе", variable=self.pinned_var,
                              command=self._toggle_pin)
+        menu.add_checkbutton(label="Мини-панель на панели задач", variable=self.taskbar_var,
+                             command=self._toggle_taskbar)
         menu.add_separator()
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
@@ -656,6 +891,8 @@ class Widget:
         self.cfg["theme"] = self.theme_var.get()
         save_config(self.cfg)
         self._draw()
+        if self.taskbar is not None and self.data:
+            self.taskbar.draw(self.data, self.cfg["theme"])
 
     def _toggle_topmost(self):
         self.cfg["topmost"] = self.topmost_var.get()
@@ -668,6 +905,12 @@ class Widget:
         save_config(self.cfg)
 
     def quit(self):
+        if getattr(self, "taskbar", None) is not None:
+            try:
+                self.taskbar.restore()
+            except Exception:
+                pass
+            self.taskbar = None
         self.root.destroy()
 
     # --- placement, dragging, close button ---
@@ -783,6 +1026,8 @@ class Widget:
     def _refresh(self):
         self.data = self._collect()
         self._draw()
+        if getattr(self, "taskbar", None) is not None:
+            self.taskbar.draw(self.data, self.cfg["theme"])
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
@@ -798,7 +1043,11 @@ class Widget:
             self.root.geometry(f"{img.width}x{img.height}")
 
     def run(self):
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            if getattr(self, "taskbar", None) is not None:
+                self.taskbar.restore()
 
 
 if __name__ == "__main__":
