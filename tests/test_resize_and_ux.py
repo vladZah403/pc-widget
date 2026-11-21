@@ -75,7 +75,7 @@ def test_snap_to_screen_edges(w):
 
 
 def test_shape_sanitized_and_drawn(w):
-    for raw, want in ((400, 400), (100, 264), (5000, 640), ("x", 264), (True, 264)):
+    for raw, want in ((400, 400), (100, 264), (5000, 900), ("x", 264), (True, 264)):
         assert w.sanitize_config({"width": raw})["width"] == want, raw
     for raw, want in ((120, 120), (-3, 0), (9999, 600), (math.inf, 0)):
         assert w.sanitize_config({"stretch": raw})["stretch"] == want, raw
@@ -84,7 +84,7 @@ def test_shape_sanitized_and_drawn(w):
     a, b = std.render(data, "heat"), shaped.render(data, "heat", grip=1)
     assert a.size == (264, std.layout_height(data)) and b.size == (400, a.height + 200)
     assert shaped.hero_h(data) == w.HERO_H + 120  # the CPU graph gets 3/5, the network graph 2/5
-    net = lambda r: [bottom - top for s, top, bottom in r._row_spans(data, ()) if s == 3][0]
+    net = lambda r: [bottom - top for s, _, top, _, bottom in r._row_spans(data, ()) if s == 3][0]
     assert net(shaped) == net(std) + 80
     assert shaped.layout_height(data, compact=True) == std.layout_height(data, compact=True) + 200
     assert shaped.layout_height(data, hidden=("net_graph",)) - std.layout_height(data, hidden=("net_graph",)) == 200

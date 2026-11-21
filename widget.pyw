@@ -197,8 +197,9 @@ def clean_size(value):
 
 # its shape (dragging the right edge, the bottom edge or the corner), in logical px:
 # wider than the standard 264 px and taller by up to STRETCH_MAX, never smaller (the
-# text would overlap; smaller is the size slider's job)
-WIDTH_STD, WIDTH_MAX, STRETCH_MAX = 264, 640, 600
+# text would overlap; smaller is the size slider's job). From 2 x 264 wide the rows
+# go into 2 columns, from 3 x 264 into 3.
+WIDTH_STD, WIDTH_MAX, STRETCH_MAX = 264, 900, 600
 
 
 def clean_width(value):
@@ -2660,8 +2661,11 @@ class Renderer:
         return big
 
     # --- primitives on the supersampled layer (logical coords in) ---
+    ox = 0  # x offset of the column being drawn (every _ss call takes x, y pairs)
+
     def _ss(self, *vals):
-        return [v * self.s * SS for v in vals]
+        k = self.s * SS
+        return [(v + self.ox) * k if i % 2 == 0 else v * k for i, v in enumerate(vals)]
 
     def _rrect(self, d, x0, y0, x1, y1, r, fill):
         d.rounded_rectangle(self._ss(x0, y0, x1, y1), radius=r * self.s * SS, fill=fill)
@@ -2752,12 +2756,68 @@ class Renderer:
             d.text((x, self.px(y)), text, font=font, fill=color, anchor="ls")
 
     # --- layout ---
-    # The body under the CPU block is a list of sections (height, draw function):
-    # the same list gives the window height and draws it, so they always agree.
+    # The body under the CPU block is made of rows (height, draw function, key) in
+    # three groups: resources, sensors, network. A narrow widget stacks them in one
+    # column with dividers; a wide one puts them side by side in 2 or 3 columns. The
+    # same plan gives the window height and draws it, so they always agree.
+
+    def columns(self):
+        """How many columns the width holds: each one at least the standard width."""
+        return max(1, min(3, int(self.WIDTH // WIDTH_STD)))
+
+    def _join(self, groups):
+        """Groups one under another, a divider between them."""
+        rows = []
+        for group in groups:
+            if group:
+                if rows:
+                    rows.append((16, self._draw_divider, None))
+                rows += group
+        return rows
+
+    def _plan(self, data, hidden):
+        """(extra height of the CPU graph, [(x offset, width, rows)], footer row,
+        body height), logical px."""
+        n = self.columns()
+        if n == 1:
+            hero_extra, net_extra = self._extras(data, hidden)
+            *groups, footer = self._groups(data, hidden, net_extra)
+            cols = [(0, self.WIDTH, self._join(groups))]
+        else:
+            # side by side the network graph keeps its height: all the extra height
+            # goes to the CPU graph, which spans the whole width
+            hero_extra = self.stretch
+            *groups, footer = self._groups(data, hidden, 0)
+            groups = [g for g in groups if g] or [[]]
+            n = min(n, len(groups))
+            height = lambda part: sum(h for h, _, _ in self._join(part))
+            if n == len(groups):
+                parts = [[g] for g in groups]
+            elif n == 1:
+                parts = [groups]
+            else:  # 2 columns, 3 groups: the split with the shorter tallest column
+                parts = min(([groups[0]], groups[1:]), (groups[:2], [groups[2]]),
+                            key=lambda p: max(height(p[0]), height(p[1])))
+                parts = list(parts)
+            width = self.WIDTH / n
+            cols = []
+            for i, part in enumerate(parts):
+                rows = self._join(part)
+                if rows and rows[0][2] in ("net", "ping", "disk_io"):
+                    # their labels sit 2 px higher than the 38 px rows': level the column heads
+                    rows = [(2, None, None)] + rows
+                cols.append((i * width, width, rows))
+        body = max(sum(h for h, _, _ in rows) for _, _, rows in cols)
+        return hero_extra, cols, footer, body
 
     def _sections(self, data, hidden):
-        """[(height, draw function or None, key)]; the key names the row (for the
-        hover highlight and HISTORY_ROWS)."""
+        """All rows in one column, the footer last (the layout of a narrow widget)."""
+        *groups, footer = self._groups(data, hidden, self._extras(data, hidden)[1])
+        return self._join(groups) + [footer]
+
+    def _groups(self, data, hidden, net_extra=0):
+        """(resources, sensors, network, footer): lists of (height, draw function or
+        None, key); the key names the row (hover highlight, HISTORY_ROWS)."""
         secs = []
         if data.get("update"):
             secs.append((30, self._draw_update, "update"))
@@ -2788,47 +2848,48 @@ class Renderer:
                                 self._draw_ssd(d, texts, y, drive, scale, show_temp=not twice), "ssd"))
         if "fans" not in hidden and data.get("fans"):
             sensors.append((24, self._draw_fans, "fans"))
-        if sensors and secs:
-            secs.append((16, self._draw_divider, None))
-        secs += sensors
         lower = []
         if "net" not in hidden:
             lower.append((22, self._draw_net, "net"))
             if "net_graph" not in hidden:
-                gh = 26 + self._extras(data, hidden)[1]  # taller when the widget is stretched
+                gh = 26 + net_extra  # taller when the widget is stretched
                 lower.append((gh, lambda d, texts, y, data, scale, gh=gh:
                               self._draw_net_graph(d, texts, y, data, scale, gh), "net"))
         if "ping" not in hidden:
             lower.append((22, self._draw_ping, "ping"))
         if "disk_io" not in hidden:
             lower.append((22, self._draw_disk_io, "disk_io"))
-        if lower and secs:
-            secs.append((16, self._draw_divider, None))
-        secs += lower
-        secs.append((30, self._draw_footer, "uptime") if "uptime" not in hidden else (10, None, None))
-        return secs
+        footer = (30, self._draw_footer, "uptime") if "uptime" not in hidden else (10, None, None)
+        return secs, sensors, lower, footer
 
     def hero_h(self, data, hidden=(), compact=False):
         """Header + CPU block, logical px: its graph takes its share of the stretch."""
-        return HERO_H + self._extras(data, hidden, compact)[0]
+        if compact:
+            return HERO_H + self._extras(data, hidden, True)[0]
+        return HERO_H + self._plan(data, hidden)[0]
 
     def layout_height(self, data, compact=False, hidden=()):
         if compact:
             return self.px(self.hero_h(data, hidden, True) + 178 - HERO_H)
-        return self.px(self.hero_h(data, hidden) + sum(h for h, _, _ in self._sections(data, hidden)))
+        hero_extra, _, footer, body = self._plan(data, hidden)
+        return self.px(HERO_H + hero_extra + body + footer[0])
 
     def _row_spans(self, data, hidden):
-        """[(history subject, top, bottom)] in logical px for the rows a click opens
-        the history of; a row and its graph (network) make one span."""
-        spans, y = [], self.hero_h(data, hidden)
-        for h, _, key in self._sections(data, hidden):
-            subject = HISTORY_ROWS.get(key)
-            if subject is not None:
-                if spans and spans[-1][0] == subject and spans[-1][2] == y:
-                    spans[-1] = (subject, spans[-1][1], y + h)
-                else:
-                    spans.append((subject, y, y + h))
-            y += h
+        """[(history subject, left, top, right, bottom)] in logical px for the rows a
+        click opens the history of; a row and its graph (network) make one span."""
+        hero_extra, cols, _, _ = self._plan(data, hidden)
+        spans = []
+        for x0, width, rows in cols:
+            y, start = HERO_H + hero_extra, len(spans)
+            for h, _, key in rows:
+                subject = HISTORY_ROWS.get(key)
+                if subject is not None:
+                    last = spans[-1] if len(spans) > start else None
+                    if last and last[0] == subject and last[4] == y:
+                        spans[-1] = last[:4] + (y + h,)
+                    else:
+                        spans.append((subject, x0, y, x0 + width, y + h))
+                y += h
         return spans
 
     def _compact_rows(self, d, texts, data, scale, y):
@@ -2915,7 +2976,10 @@ class Renderer:
 
         # hero: CPU number + histogram (+ clock and power when the sensors give them);
         # a stretched widget gets a taller histogram, the number stays at its foot
-        grow = self._extras(data, hidden, compact)[0]
+        if compact:
+            grow = self._extras(data, hidden, True)[0]
+        else:
+            grow, cols, footer, body = self._plan(data, hidden)
         cpu = data["cpu"]
         hero_base = 92 + grow
         num = f"{cpu:.0f}"
@@ -2941,18 +3005,46 @@ class Renderer:
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118 + grow))
 
         # rows that open their history: a soft highlight under the one the mouse is on
-        for subject, top, bottom in self._row_spans(data, hidden):
+        for subject, x0, top, x1, bottom in self._row_spans(data, hidden):
             if subject == hover_row:
-                self._rrect(d, P - 7, top + 1, Wl - P + 7, bottom - 3, 8, ROW_HOVER)
-            self.row_boxes.append((subject, (self.px(P - 7), self.px(top + 1),
-                                             self.px(Wl - P + 7), self.px(bottom - 3))))
-        y = HERO_H + grow
-        for h, draw, _ in self._sections(data, hidden):
-            if draw is not None:
-                draw(d, texts, y, data, scale)
-            y += h
+                self._rrect(d, x0 + P - 7, top + 1, x1 - P + 7, bottom - 3, 8, ROW_HOVER)
+            self.row_boxes.append((subject, (self.px(x0 + P - 7), self.px(top + 1),
+                                             self.px(x1 - P + 7), self.px(bottom - 3))))
+        top = HERO_H + grow
+        for i, (ox, width, rows) in enumerate(cols):
+            if i:  # a thin line between columns, like the dividers between groups
+                d.rectangle(self._ss(ox - 0.5 / self.s, top + 6, ox + 0.5 / self.s, top + body - 6),
+                            fill=TRACK)
+            self._draw_column(d, texts, ox, width, rows, top, data, scale)
+        if footer[1] is not None:
+            footer[1](d, texts, top + body, data, scale)
         self._grip(d, H, grip)
         return self._compose(layer, texts)
+
+    def _draw_column(self, d, texts, ox, width, rows, y, data, scale):
+        """Rows one under another in the column at ox: they draw as if the widget were
+        `width` wide; their shapes, texts and click boxes are moved right by ox."""
+        own, boxes, update_box = [], len(self.proc_boxes), self.update_box
+        full = self.WIDTH
+        self.ox, self.WIDTH = ox, width
+        try:
+            for h, draw, _ in rows:
+                if draw is not None:
+                    draw(d, own, y, data, scale)
+                y += h
+        finally:
+            self.ox, self.WIDTH = 0, full
+        for item in own:
+            if isinstance(item[0], str):  # ("rich" / "rich_left" / "rich_center", x, y, parts)
+                texts.append((item[0], item[1] + ox, *item[2:]))
+            else:  # (x, y, text, font, fill, anchor)
+                texts.append((item[0] + ox, *item[1:]))
+        if ox:
+            dx = self.px(ox)
+            shift = lambda b: (b[0] + dx, b[1], b[2] + dx, b[3])
+            self.proc_boxes[boxes:] = [(name, shift(b)) for name, b in self.proc_boxes[boxes:]]
+            if self.update_box != update_box:
+                self.update_box = shift(self.update_box)
 
     def _grip(self, d, H, state):
         """Resize corner: three short diagonal strokes inside the bottom-right curve."""

@@ -87,9 +87,13 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Languages**: Russian, English, Ukrainian, German — as in Windows or from
   Settings → General.
 - **Hotkey Ctrl+Alt+W** — show/hide the widget.
-- **Any size from 80 to 200%** — drag the widget's bottom-right corner (it shows
-  when the mouse is over the widget), or Ctrl + mouse wheel over it, or the
-  slider in Settings → Look. Double-click the corner for 100%.
+- **Any shape** — drag the widget's right edge (width), its bottom edge (height)
+  or the bottom-right corner (both). Taller: the CPU and network graphs grow.
+  Wider: from twice the standard width the rows go into 2 columns (resources |
+  sensors and network), from three times into 3. Double-click the corner (or
+  "Standard shape" in Settings → Look) to get the usual shape back.
+- **Any size from 80 to 200%** (text and all) — Ctrl + mouse wheel over the
+  widget, or the slider in Settings → Look.
 - **Sticks to screen edges** while you drag it (hold Shift to place it freely),
   and stays above the taskbar when it grows.
 - **Start with Windows**, **compact mode**, palettes, opacity — all in the
