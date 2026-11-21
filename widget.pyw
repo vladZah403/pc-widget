@@ -87,6 +87,49 @@ def log_error(where):
         log.exception("%s failed", where)
 
 
+# ---------- languages ----------
+# Russian is the source language; translations.py holds English, Ukrainian and
+# German. tr() looks a text up in the current language; dec() writes a decimal
+# comma everywhere but in English.
+
+try:
+    from translations import LANGS, TEXTS
+except ImportError:  # translations.py missing: Russian only
+    LANGS, TEXTS = {"ru": "Русский"}, {}
+_LANG_COLUMN = {"en": 0, "uk": 1, "de": 2}
+_lang = "ru"
+
+
+def system_language():
+    """Windows display language -> one of LANGS (English when it's another one)."""
+    try:
+        primary = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
+    except (AttributeError, OSError):
+        return "en"
+    code = {0x19: "ru", 0x22: "uk", 0x07: "de"}.get(primary, "en")
+    return code if code in LANGS else "ru"
+
+
+def set_language(choice):
+    """choice: a code from LANGS or "auto" (the Windows language)."""
+    global _lang
+    _lang = choice if choice in LANGS else system_language()
+
+
+def tr(text, **fields):
+    """The text in the current language; fields fill its {name} places."""
+    if _lang != "ru":
+        row = TEXTS.get(text)
+        if row:
+            text = row[_LANG_COLUMN[_lang]]
+    return text.format(**fields) if fields else text
+
+
+def dec(text):
+    """Decimal comma (Russian, Ukrainian, German) or point (English)."""
+    return text if _lang == "en" else text.replace(".", ",")
+
+
 LHM_URL = "http://127.0.0.1:8085/data.json"  # this computer only
 LHM_POLL_S = 3
 UPDATE_MS = 1000
@@ -133,7 +176,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
-                  "ping_host": "1.1.1.1", "fps": True}
+                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto"}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -168,21 +211,21 @@ class Scale:
 
 
 def fmt_gb(n_bytes):
-    return f"{n_bytes / 2**30:.1f}".replace(".", ",")
+    return dec(f"{n_bytes / 2**30:.1f}")
 
 
 def fmt_speed(bytes_per_s):
     if bytes_per_s < 1024:
-        return f"{bytes_per_s:.0f} Б/с"
+        return tr("{v} Б/с", v=f"{bytes_per_s:.0f}")
     if bytes_per_s < 1024**2:
-        return f"{bytes_per_s / 1024:.0f} КБ/с"
-    return f"{bytes_per_s / 1024**2:.1f} МБ/с".replace(".", ",")
+        return tr("{v} КБ/с", v=f"{bytes_per_s / 1024:.0f}")
+    return tr("{v} МБ/с", v=dec(f"{bytes_per_s / 1024**2:.1f}"))
 
 
 def fmt_mem(n_bytes):
     if n_bytes < 2**30:
-        return f"{n_bytes / 2**20:.0f} МБ"
-    return f"{n_bytes / 2**30:.1f} ГБ".replace(".", ",")
+        return tr("{v} МБ", v=f"{n_bytes / 2**20:.0f}")
+    return tr("{v} ГБ", v=dec(f"{n_bytes / 2**30:.1f}"))
 
 
 def ping_color(scale, ms):
@@ -200,14 +243,14 @@ def ellipsize(text, font, max_w):
 
 
 def fmt_wh(wh):
-    return f"{wh:.1f}".replace(".", ",")
+    return dec(f"{wh:.1f}")
 
 
 def fmt_left(seconds):
     """Battery time left: '2 ч 15 мин', '45 мин'."""
     minutes = int(seconds) // 60
     hours, minutes = divmod(minutes, 60)
-    return f"{hours} ч {minutes} мин" if hours else f"{minutes} мин"
+    return tr("{h} ч {m} мин", h=hours, m=minutes) if hours else tr("{m} мин", m=minutes)
 
 
 def cpu_extra_text(data):
@@ -215,9 +258,9 @@ def cpu_extra_text(data):
     parts = []
     clock, power = data.get("cpu_clock"), data.get("cpu_power")
     if clock:
-        parts.append(f"{clock:.1f} ГГц".replace(".", ","))
+        parts.append(tr("{v} ГГц", v=dec(f"{clock:.1f}")))
     if power:
-        parts.append(f"{power:.0f} Вт" if power >= 10 else f"{power:.1f} Вт".replace(".", ","))
+        parts.append(tr("{v} Вт", v=f"{power:.0f}" if power >= 10 else dec(f"{power:.1f}")))
     return "  ·  ".join(parts)
 
 
@@ -227,8 +270,8 @@ def fmt_uptime(seconds):
     hours, rest = divmod(rest, 3600)
     minutes = rest // 60
     if days:
-        return f"{days} д {hours} ч"
-    return f"{hours} ч {minutes} мин"
+        return tr("{d} д {h} ч", d=days, h=hours)
+    return tr("{h} ч {m} мин", h=hours, m=minutes)
 
 
 def sanitize_config(raw):
@@ -270,7 +313,7 @@ def sanitize_config(raw):
 
 # key -> allowed values
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
-                  "alert_battery": (10, 15, 20, 30)}
+                  "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de")}
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
@@ -890,7 +933,8 @@ class FpsReader(threading.Thread):
         super().__init__(daemon=True, name="fps")
         self.frames = {}       # pid -> list of present times (QPC seconds), last few seconds
         self.lock = threading.Lock()
-        self.error = None      # why it doesn't work, for the log / menu
+        self.error = None      # why it doesn't work, shown in a toast
+        self.needs_admin = False
         self.running = False
         self.session = None
         self._first_logged = False
@@ -931,7 +975,7 @@ class FpsReader(threading.Thread):
             self._run()
         except Exception:
             log.exception("FPS counter failed")
-            self.error = self.error or "ошибка, см. лог"
+            self.error = self.error or tr("ошибка, см. лог")
         finally:
             self.running = False
 
@@ -955,7 +999,8 @@ class FpsReader(threading.Thread):
             buf, _ = self._props()
             rc = adv.StartTraceW(ctypes.byref(handle), FPS_SESSION, buf)
         if rc != 0:
-            self.error = "нужны права администратора" if rc == 5 else f"ошибка ETW {rc}"
+            self.needs_admin = rc == 5
+            self.error = tr("нужны права администратора") if rc == 5 else tr("ошибка ETW {rc}", rc=rc)
             log.warning("FPS: StartTrace failed with %d", rc)
             return
         self.session = handle.value
@@ -964,7 +1009,7 @@ class FpsReader(threading.Thread):
         rc = adv.EnableTraceEx2(handle.value, ctypes.byref(guid), 1, 4,  # ENABLE, INFORMATION
                                 0xFFFFFFFFFFFFFFFF, 0, 0, None)
         if rc != 0:
-            self.error = f"ошибка ETW {rc}"
+            self.error = tr("ошибка ETW {rc}", rc=rc)
             log.warning("FPS: EnableTraceEx2 failed with %d", rc)
             self.stop_session()
             return
@@ -996,7 +1041,7 @@ class FpsReader(threading.Thread):
         logfile.EventRecordCallback = self._callback
         trace = adv.OpenTraceW(ctypes.byref(logfile))
         if trace == 0xFFFFFFFFFFFFFFFF:
-            self.error = "ошибка ETW (OpenTrace)"
+            self.error = tr("ошибка ETW {rc}", rc="OpenTrace")
             log.warning("FPS: OpenTrace failed")
             self.stop_session()
             return
@@ -1459,12 +1504,12 @@ class LhmReader(threading.Thread):
         if any(s[k] is not None for k in ("cpu", "gpu", "ssd")):
             return None
         if self.native_ok and not self.admin:
-            return "Температуры включаются в меню (ПКМ)"
+            return tr("Температуры включаются в меню (ПКМ)")
         if self.native_ok:
-            return "Нет доступа к датчикам: нужен PawnIO"
+            return tr("Нет доступа к датчикам: нужен PawnIO")
         if self.online:
-            return "Запусти LibreHardwareMonitor от админа"
-        return "Нужен LibreHardwareMonitor с веб-сервером"
+            return tr("Запусти LibreHardwareMonitor от админа")
+        return tr("Нужен LibreHardwareMonitor с веб-сервером")
 
     def run(self):
         native = None
@@ -2037,10 +2082,10 @@ class Renderer:
 
         load = data.get("gpu_load")
         disk_pct = data["disks"][0][3] if data["disks"] else None
-        row1 = [chip("Память", f"{data['ram_pct']:.0f}%", scale(data["ram_pct"] / 100)),
-                chip("Видео", None if load is None else f"{load:.0f}%",
+        row1 = [chip(tr("Память"), f"{data['ram_pct']:.0f}%", scale(data["ram_pct"] / 100)),
+                chip(tr("Видео"), None if load is None else f"{load:.0f}%",
                      scale((load or 0) / 100)),
-                chip("Диск", None if disk_pct is None else f"{disk_pct:.0f}%",
+                chip(tr("Диск"), None if disk_pct is None else f"{disk_pct:.0f}%",
                      scale((disk_pct or 0) / 100))]
         cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
@@ -2048,7 +2093,7 @@ class Renderer:
         ping, ready = data.get("ping"), data.get("ping_ready")
         row2 = [chip("CPU", None if cpu_t is None else f"{cpu_t:.0f}°", scale(((cpu_t or 30) - 30) / 70)),
                 chip("GPU", None if g is None else f"{g:.0f}°", scale(((g or 30) - 30) / 70), shared),
-                chip("Пинг", None if not ready else ("нет" if ping is None else f"{ping} мс"),
+                chip(tr("Пинг"), None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
                      ping_color(scale, ping))]
         for row, by in ((row1, y + 14), (row2, y + 34)):
             texts.append(("rich_left", P, by, row[0]))
@@ -2076,10 +2121,10 @@ class Renderer:
 
         # header; after one click on the cross it asks for a second one
         if close_armed:
-            texts.append((P, 28, "Нажми ещё раз — закрыть", self.f_value, CLOSE_HOVER, "ls"))
+            texts.append((P, 28, tr("Нажми ещё раз — закрыть"), self.f_value, CLOSE_HOVER, "ls"))
             self._rrect(d, Wl - P - 13, 14, Wl - P + 5, 32, 5, lerp(CARD, CLOSE_HOVER, 0.25))
         else:
-            texts.append((P, 28, "Система", self.f_title, TEXT, "ls"))
+            texts.append((P, 28, tr("Система"), self.f_title, TEXT, "ls"))
         self._close_icon(d, Wl - P - 4, 23, CLOSE_HOVER if close_hover or close_armed else DIM)
         self.close_box = (self.px(Wl - P - 14), self.px(11), self.px(Wl - P + 6), self.px(35))
         pin_x = Wl - P - 28
@@ -2107,7 +2152,7 @@ class Renderer:
         texts.append((P - 1, hero_base, num, self.f_hero, scale(cpu / 100), "ls"))
         texts.append((P + num_w + 2, hero_base, "%", self.f_hero_unit, DIM, "ls"))
         procs = data.get("procs")
-        texts.append((P, hero_base + 18, "Процессор", self.f_small, DIM, "ls"))
+        texts.append((P, hero_base + 18, tr("Процессор"), self.f_small, DIM, "ls"))
         hx0 = P + 82
         self._histogram(d, hx0, 50, Wl - P, 100, data["cpu_hist"], scale)
         extra = cpu_extra_text(data)
@@ -2117,7 +2162,7 @@ class Renderer:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
             self._compact_rows(texts, data, scale, HERO_H)
             return self._compose(card, layer, texts)
-        chev_x = P + self.f_small.getlength("Процессор ") / self.s
+        chev_x = P + self.f_small.getlength(tr("Процессор") + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
@@ -2135,8 +2180,8 @@ class Renderer:
         version, _ = data["update"]
         accent = scale(0.0)
         self._rrect(d, P - 6, y - 2, Wl - P + 6, y + 22, 8, lerp(CARD, accent, 0.18))
-        texts.append((P, y + 14, f"Вышла версия {version}", self.f_value, TEXT, "ls"))
-        texts.append(("rich", Wl - P, y + 14, [("скачать ", self.f_small, accent),
+        texts.append((P, y + 14, tr("Вышла версия {v}", v=version), self.f_value, TEXT, "ls"))
+        texts.append(("rich", Wl - P, y + 14, [(tr("скачать") + " ", self.f_small, accent),
                                                 ("↗", self.f_sym, accent)]))
         self.update_box = (self.px(P - 6), self.px(y - 2), self.px(Wl - P + 6), self.px(y + 22))
 
@@ -2146,48 +2191,50 @@ class Renderer:
         y0, y1 = y - 4, y + 108
         self._rrect(d, P - 6, y0, Wl - P + 6, y1, 8, (34, 40, 52))
         col_mem, col_cpu = Wl - P, Wl - P - 58
-        texts.append((P, y0 + 17, "Программа", self.f_small, FAINT, "ls"))
+        texts.append((P, y0 + 17, tr("Программа"), self.f_small, FAINT, "ls"))
         texts.append(("rich", col_cpu, y0 + 17, [("CPU", self.f_small, FAINT)]))
-        texts.append(("rich", col_mem, y0 + 17, [("Память", self.f_small, FAINT)]))
+        texts.append(("rich", col_mem, y0 + 17, [(tr("Память"), self.f_small, FAINT)]))
         name_w = self.px(col_cpu - 42 - P)
         for i, (name, cpu_p, mem) in enumerate(procs):
             by = y0 + 36 + i * 17
             texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
-            cpu_txt = f"{cpu_p:.1f}".replace(".", ",") if cpu_p < 10 else f"{cpu_p:.0f}"
+            cpu_txt = dec(f"{cpu_p:.1f}") if cpu_p < 10 else f"{cpu_p:.0f}"
             texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
                                                  scale(min(1.0, cpu_p / 50)))]))
             texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
         if not procs:
-            texts.append((P, y0 + 36, "собираю данные…", self.f_small, FAINT, "ls"))
+            texts.append((P, y0 + 36, tr("собираю данные…"), self.f_small, FAINT, "ls"))
 
     def _draw_ram(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 14, "Память", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 14, tr("Память"), self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 14, [
-            (f"{fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ   ", self.f_small, DIM),
+            (tr("{used} из {total} ГБ", used=fmt_gb(data['ram_used']),
+                total=fmt_gb(data['ram_total'])) + "   ", self.f_small, DIM),
             (f"{data['ram_pct']:.0f}%", self.f_value, TEXT)]))
         self._segment_meter(d, P, y + 22, Wl - P, data["ram_pct"], scale)
 
     def _draw_gpu(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
         load, gname = data.get("gpu_load"), data.get("gpu_name")
-        texts.append((P, y + 14, "Видеокарта", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 14, tr("Видеокарта"), self.f_label, TEXT, "ls"))
         if load is not None:
             value = f"{load:.0f}%"
-            room = (self.px(Wl - P) - self.px(P) - self.f_label.getlength("Видеокарта")
+            room = (self.px(Wl - P) - self.px(P) - self.f_label.getlength(tr("Видеокарта"))
                     - self.f_value.getlength(value) - self.px(24))
             parts = ([(ellipsize(gname, self.f_small, room) + "   ", self.f_small, DIM)] if gname else [])
             texts.append(("rich", Wl - P, y + 14, parts + [(value, self.f_value, TEXT)]))
         else:
-            texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
+            texts.append(("rich", Wl - P, y + 14, [(tr("нет данных"), self.f_small, FAINT)]))
         self._segment_meter(d, P, y + 22, Wl - P, load or 0, scale)
 
     def _draw_disk(self, d, texts, y, disk, scale):
         P, Wl = self.PAD, self.WIDTH
         name, used, total, pct = disk
-        texts.append((P, y + 14, f"Диск {name}", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 14, tr("Диск {name}", name=name), self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 14, [
-            (f"{fmt_gb(used)} из {fmt_gb(total)} ГБ   ", self.f_small, DIM),
+            (tr("{used} из {total} ГБ", used=fmt_gb(used), total=fmt_gb(total)) + "   ",
+             self.f_small, DIM),
             (f"{pct:.0f}%", self.f_value, TEXT)]))
         self._segment_meter(d, P, y + 22, Wl - P, pct, scale)
 
@@ -2197,9 +2244,9 @@ class Renderer:
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         online = self._temps_online(data)
         self.temps_box = (self.px(P - 4), self.px(y), self.px(Wl - P + 4), self.px(y + 58))
-        texts.append((P, y + 14, "Температура", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 14, tr("Температура"), self.f_label, TEXT, "ls"))
         if not online:
-            texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
+            texts.append(("rich", Wl - P, y + 14, [(tr("нет данных"), self.f_small, FAINT)]))
         self._temp_strip(d, P, y + 26, Wl - P, cpu_t, gpu_t, scale, online)
         y += 40
         if online:
@@ -2215,7 +2262,7 @@ class Renderer:
                           chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
             texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
         else:
-            hint = ellipsize(data.get("sensor_hint") or "Нет данных о температуре", self.f_small,
+            hint = ellipsize(data.get("sensor_hint") or tr("Нет данных о температуре"), self.f_small,
                              self.px(Wl - 2 * P))
             texts.append((P, y + 8, hint, self.f_small, FAINT, "ls"))
 
@@ -2226,12 +2273,13 @@ class Renderer:
         batt = data.get("battery")
         rate = data.get("battery_rate")
         if batt is not None and not batt[1] and rate:
-            info = f"расход {rate:.1f} Вт   ".replace(".", ",")
+            info = tr("расход {v} Вт", v=dec(f"{rate:.1f}")) + "   "
         else:
-            info = f"{fmt_wh(data['battery_full'])} из {fmt_wh(data['battery_design'])} Вт·ч   "
-        texts.append((P, y + 14, "Батарея", self.f_label, TEXT, "ls"))
+            info = tr("{full} из {design} Вт·ч", full=fmt_wh(data['battery_full']),
+                      design=fmt_wh(data['battery_design'])) + "   "
+        texts.append((P, y + 14, tr("Батарея"), self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 14, [
-            (info, self.f_small, DIM), ("износ ", self.f_small, DIM),
+            (info, self.f_small, DIM), (tr("износ") + " ", self.f_small, DIM),
             (f"{wear:.0f}%", self.f_value, scale(min(1.0, wear / 40)))]))
         self._segment_meter(d, P, y + 22, Wl - P, wear, scale)
 
@@ -2242,7 +2290,7 @@ class Renderer:
     def _draw_net(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
         down_c, up_c = scale(0.0), scale(0.75)
-        texts.append((P, y + 12, "Сеть", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 12, tr("Сеть"), self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 12, [
             ("↓ ", self.f_sym, down_c), (fmt_speed(data["net_down"]), self.f_small, TEXT),
             ("     ↑ ", self.f_sym, up_c), (fmt_speed(data["net_up"]), self.f_small, TEXT)]))
@@ -2270,27 +2318,29 @@ class Renderer:
 
     def _draw_ping(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 12, "Пинг", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 12, tr("Пинг"), self.f_label, TEXT, "ls"))
         ping = data.get("ping")
         if not data.get("ping_ready"):
             parts = [("…", self.f_small, FAINT)]
         elif ping is None:
-            parts = [("нет ответа", self.f_value, ping_color(scale, None))]
+            parts = [(tr("нет ответа"), self.f_value, ping_color(scale, None))]
         else:
             host = data.get("ping_host") or PING_HOST
-            parts = [(f"до {ellipsize(host, self.f_small, self.px(120))}   ", self.f_small, FAINT),
-                     (f"{ping} мс", self.f_value, ping_color(scale, ping))]
+            parts = [(tr("до {host}", host=ellipsize(host, self.f_small, self.px(120))) + "   ",
+                      self.f_small, FAINT),
+                     (tr("{v} мс", v=ping), self.f_value, ping_color(scale, ping))]
         texts.append(("rich", Wl - P, y + 12, parts))
 
     def _draw_disk_io(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 12, "Диск", self.f_label, TEXT, "ls"))
+        texts.append((P, y + 12, tr("Диск"), self.f_label, TEXT, "ls"))
         texts.append(("rich", Wl - P, y + 12, [
-            ("чтение ", self.f_small, DIM), (fmt_speed(data["io_read"]), self.f_small, TEXT),
-            ("   запись ", self.f_small, DIM), (fmt_speed(data["io_write"]), self.f_small, TEXT)]))
+            (tr("чтение") + " ", self.f_small, DIM), (fmt_speed(data["io_read"]), self.f_small, TEXT),
+            ("   " + tr("запись") + " ", self.f_small, DIM),
+            (fmt_speed(data["io_write"]), self.f_small, TEXT)]))
 
     def _draw_footer(self, d, texts, y, data, scale):
-        texts.append((self.PAD, y + 18, f"Без перезагрузки {fmt_uptime(data['uptime'])}",
+        texts.append((self.PAD, y + 18, tr("Без перезагрузки {t}", t=fmt_uptime(data['uptime'])),
                       self.f_small, FAINT, "ls"))
 
     def _compose(self, card, layer, texts):
@@ -2328,14 +2378,8 @@ class TaskbarPanel:
         self.key = (232, 232, 234) if self.light else (22, 22, 24)
         key_hex = "#%02x%02x%02x" % self.key
 
-        f, fv, fs = self.font, self.font_val, self.font_sym
-        speed_w = max(f.getlength("1023 КБ/с"), f.getlength("99,9 МБ/с"))
-        self.col_a = max(f.getlength("CPU "), f.getlength("RAM ")) + fv.getlength("100%")
-        self.col_b = fs.getlength("↓ ") + speed_w
-        self.col_c = (max(f.getlength("CPU "), f.getlength("GPU ")) + fs.getlength("≈")
-                      + fv.getlength("100°"))
-        self.col_d = max(f.getlength("пинг"), fv.getlength("999 мс"))
         self.col_gap = px(14)
+        self.measure()
 
         self.top = top = tk.Toplevel(widget.root)
         top.overrideredirect(True)
@@ -2361,6 +2405,16 @@ class TaskbarPanel:
         self.bar_h = None
         self.pos = None
         self.tasks = self.rebar = None
+
+    def measure(self):
+        """Column widths for the widest values (again after a language change)."""
+        f, fv, fs = self.font, self.font_val, self.font_sym
+        speed_w = max(f.getlength(fmt_speed(1023 * 1024)), f.getlength(fmt_speed(99.9 * 1024**2)))
+        self.col_a = max(f.getlength("CPU "), f.getlength("RAM ")) + fv.getlength("100%")
+        self.col_b = fs.getlength("↓ ") + speed_w
+        self.col_c = (max(f.getlength("CPU "), f.getlength("GPU ")) + fs.getlength("≈")
+                      + fv.getlength("100°"))
+        self.col_d = max(f.getlength(tr("пинг")), fv.getlength(tr("{v} мс", v=999)))
 
     # --- drawing ---
     def draw(self, data, theme):
@@ -2406,13 +2460,13 @@ class TaskbarPanel:
             d.text((x_b + self.col_b, y), fmt_speed(speed), font=f, fill=text_c, anchor="rm")
 
         ping = data.get("ping")
-        d.text((x_d + self.col_d, rows[0]), "пинг", font=f, fill=label_c, anchor="rm")
+        d.text((x_d + self.col_d, rows[0]), tr("пинг"), font=f, fill=label_c, anchor="rm")
         if not data.get("ping_ready"):
             value, color = "…", label_c
         elif ping is None:
-            value, color = "нет", tone(1.0)
+            value, color = tr("нет"), tone(1.0)
         else:
-            value, color = f"{ping} мс", tone(0.05 if ping < 50 else 0.55 if ping < 100 else 0.95)
+            value, color = tr("{v} мс", v=ping), tone(0.05 if ping < 50 else 0.55 if ping < 100 else 0.95)
         d.text((x_d + self.col_d, rows[1]), value, font=fv, fill=color, anchor="rm")
 
         if temps:
@@ -2656,39 +2710,42 @@ class InfoCard(PopupCard):
 
         cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
-        rows = [("Процессор", [(f"{data['cpu']:.0f}%", fv, scale(data["cpu"] / 100))] + temp(cpu_t)),
-                ("Память", [(f"{fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ   ", f, DIM),
+        rows = [(tr("Процессор"), [(f"{data['cpu']:.0f}%", fv, scale(data["cpu"] / 100))] + temp(cpu_t)),
+                (tr("Память"), [(tr("{used} из {total} ГБ", used=fmt_gb(data['ram_used']),
+                                    total=fmt_gb(data['ram_total'])) + "   ", f, DIM),
                             (f"{data['ram_pct']:.0f}%", fv, scale(data["ram_pct"] / 100))])]
         if data.get("gpu_load") is not None:
-            rows.append(("Видеокарта",
+            rows.append((tr("Видеокарта"),
                          [(f"{data['gpu_load']:.0f}%", fv, scale(data["gpu_load"] / 100))]
                          + temp(cpu_t if shared else gpu_t, approx=shared)))
         for name, _, _, pct in data["disks"][:1]:
-            rows.append((f"Диск {name}", [(f"{pct:.0f}%", fv, TEXT)] + temp(data.get("temp_ssd"))))
-        rows.append(("Сеть", [("↓ ", fs, scale(0.0)), (fmt_speed(data["net_down"]), f, TEXT),
+            rows.append((tr("Диск {name}", name=name), [(f"{pct:.0f}%", fv, TEXT)] + temp(data.get("temp_ssd"))))
+        rows.append((tr("Сеть"), [("↓ ", fs, scale(0.0)), (fmt_speed(data["net_down"]), f, TEXT),
                               ("   ↑ ", fs, scale(0.75)), (fmt_speed(data["net_up"]), f, TEXT)]))
         ping, ready = data.get("ping"), data.get("ping_ready")
-        ping_text = "…" if not ready else "нет ответа" if ping is None else f"{ping} мс"
-        rows.append(("Пинг", [(ping_text, fv, ping_color(scale, ping) if ready else FAINT)]))
+        ping_text = "…" if not ready else tr("нет ответа") if ping is None else tr("{v} мс", v=ping)
+        rows.append((tr("Пинг"), [(ping_text, fv, ping_color(scale, ping) if ready else FAINT)]))
         batt = data.get("battery")
         if batt is not None:
             level, plugged = batt
             left = data.get("battery_left")
-            rows.append(("Батарея", ([(f"{fmt_left(left)}   ", f, DIM)] if left else [])
+            rows.append((tr("Батарея"), ([(f"{fmt_left(left)}   ", f, DIM)] if left else [])
                          + [(f"{level:.0f}%", fv, scale(1 - level / 100) if not plugged else scale(0))]
                          + ([(" ⚡", fs, DIM)] if plugged else [])))
         top = top_processes(1)
         if top:
             name, cpu_p, _ = top[0]
-            rows.append(("Больше всех", [(ellipsize(name, f, px(110)) + "  ", f, TEXT),
+            rows.append((tr("Больше всех"), [(ellipsize(name, f, px(110)) + "  ", f, TEXT),
                                          (f"{cpu_p:.0f}%", fv, scale(min(1.0, cpu_p / 50)))]))
 
         W = px(self.WIDTH)
         H = px(40 + 20 * len(rows) + 22)
         img = card_image(px, W, H)
         d = ImageDraw.Draw(img)
-        d.text((px(16), px(26)), "Система", font=self.f_title, fill=TEXT, anchor="ls")
-        d.text((W - px(16), px(26)), f"без перезагрузки {fmt_uptime(data['uptime'])}",
+        d.text((px(16), px(26)), tr("Система"), font=self.f_title, fill=TEXT, anchor="ls")
+        room = W - px(42) - self.f_title.getlength(tr("Система"))
+        d.text((W - px(16), px(26)), ellipsize(tr("без перезагрузки {t}", t=fmt_uptime(data['uptime'])),
+                                               self.f_small, room),
                font=self.f_small, fill=FAINT, anchor="rs")
         for i, (label, parts) in enumerate(rows):
             y = px(50 + 20 * i)
@@ -2697,7 +2754,7 @@ class InfoCard(PopupCard):
             for t, font, color in parts:
                 d.text((x, y), t, font=font, fill=color, anchor="ls")
                 x += font.getlength(t)
-        d.text((px(16), H - px(14)), "Нажми, чтобы открыть виджет", font=self.f_small,
+        d.text((px(16), H - px(14)), tr("Нажми, чтобы открыть виджет"), font=self.f_small,
                fill=FAINT, anchor="ls")
         return img
 
@@ -2757,8 +2814,9 @@ class HistoryCard(PopupCard):
             return None
         peak, avg = max(values), sum(values) / len(values)
         color = lambda v: scale(max(0.0, min(1.0, (v - lo) / (hi - lo))))
-        return [("макс ", self.f_small, DIM), (f"{peak:.0f}{unit}", self.fv, color(peak)),
-                ("   средн. ", self.f_small, DIM), (f"{avg:.0f}{unit}", self.fv, color(avg))]
+        return [(tr("макс") + " ", self.f_small, DIM), (f"{peak:.0f}{unit}", self.fv, color(peak)),
+                ("   " + tr("средн.") + " ", self.f_small, DIM),
+                (f"{avg:.0f}{unit}", self.fv, color(avg))]
 
     def render(self, rows, theme, now):
         px = self.px
@@ -2770,12 +2828,12 @@ class HistoryCard(PopupCard):
         L, R = 16, self.WIDTH - 16
         rows = [r for r in rows if r[0] >= now - seconds]
 
-        d.text((px(L), px(28)), "История", font=self.f_title, fill=TEXT, anchor="ls")
+        d.text((px(L), px(28)), tr("История"), font=self.f_title, fill=TEXT, anchor="ls")
         # period switch in the top-right corner; tab_boxes[i] = click area of PERIODS[i]
         self.tab_boxes = [None] * len(self.PERIODS)
         x = R
         for i in reversed(range(len(self.PERIODS))):
-            label = self.PERIODS[i][0]
+            label = tr(self.PERIODS[i][0])
             w = self.f.getlength(label) / self.px(1) + 16
             tx0, tx1 = x - w, x
             x -= w + 4
@@ -2792,7 +2850,7 @@ class HistoryCard(PopupCard):
                 ("Температура CPU", 2, "°", 30, 100, 60, 116,
                  "нет данных: нужны права администратора"),
                 ("Загрузка CPU", 1, "%", 0, 100, 152, 208, "нет данных")):
-            d.text((px(L), px(cy0 - 8)), label, font=self.f, fill=TEXT, anchor="ls")
+            d.text((px(L), px(cy0 - 8)), tr(label), font=self.f, fill=TEXT, anchor="ls")
             summary = self._summary(rows, index, unit, lo, hi, scale)
             if summary:
                 xr = px(R)
@@ -2802,15 +2860,15 @@ class HistoryCard(PopupCard):
             cols = history_buckets(rows, start, now, self.COLUMNS, index)
             self._chart(d, L, cy0, R, cy1, cols, lo, hi, scale)
             if not summary:
-                d.text((px((L + R) / 2), px((cy0 + cy1) / 2 + 4)), empty, font=self.f_small,
+                d.text((px((L + R) / 2), px((cy0 + cy1) / 2 + 4)), tr(empty), font=self.f_small,
                        fill=FAINT, anchor="ms")
 
         fmt = (lambda t: time.strftime("%H:%M", time.localtime(t)))
         d.text((px(L), px(226)), fmt(start), font=self.f_small, fill=FAINT, anchor="ls")
         d.text((px((L + R) / 2), px(226)), fmt(start + seconds / 2), font=self.f_small,
                fill=FAINT, anchor="ms")
-        d.text((px(R), px(226)), "сейчас", font=self.f_small, fill=FAINT, anchor="rs")
-        d.text((px(L), px(250)), "Нажми, чтобы закрыть", font=self.f_small, fill=FAINT, anchor="ls")
+        d.text((px(R), px(226)), tr("сейчас"), font=self.f_small, fill=FAINT, anchor="rs")
+        d.text((px(L), px(250)), tr("Нажми, чтобы закрыть"), font=self.f_small, fill=FAINT, anchor="ls")
         return img
 
     def show_near(self, rect):
@@ -2924,6 +2982,7 @@ class Widget:
             pass
 
         self.cfg = load_config()
+        set_language(self.cfg["lang"])
         self.root = root = tk.Tk()
         root.report_callback_exception = lambda *exc: log.error("Tk callback failed", exc_info=exc)
         root.title("PC Monitor")
@@ -3077,9 +3136,9 @@ class Widget:
         """Tell why the counter can't work (after switching it on)."""
         if self.fps is not None and self.fps.error and self.toast is not None:
             scale = Scale(THEMES[self.cfg["theme"]][1])
-            hint = (" Включи в меню «Права администратора (температуры)»."
-                    if "администратора" in self.fps.error else "")
-            self.toast.show("FPS недоступен", f"Windows отказала: {self.fps.error}.{hint}",
+            hint = (" " + tr("Включи в меню «Права администратора (температуры)».")
+                    if self.fps.needs_admin else "")
+            self.toast.show(tr("FPS недоступен"), tr("Windows отказала: {error}.", error=self.fps.error) + hint,
                             scale(0.75))
 
     def _update_fps_overlay(self):
@@ -3226,40 +3285,40 @@ class Widget:
         self.theme_var = tk.StringVar(value=self.cfg["theme"])
         menu = tk.Menu(self.root, tearoff=0)
         self.taskbar_var = tk.BooleanVar(value=bool(self.cfg["taskbar"]))
-        menu.add_checkbutton(label="Закрепить на рабочем столе", variable=self.pinned_var,
+        menu.add_checkbutton(label=tr("Закрепить на рабочем столе"), variable=self.pinned_var,
                              command=self._toggle_pin)
-        menu.add_checkbutton(label="Мини-панель на панели задач", variable=self.taskbar_var,
+        menu.add_checkbutton(label=tr("Мини-панель на панели задач"), variable=self.taskbar_var,
                              command=self._toggle_taskbar)
         self.tray_var = tk.BooleanVar(value=bool(self.cfg["tray"]))
-        menu.add_checkbutton(label="Значок в трее", variable=self.tray_var,
+        menu.add_checkbutton(label=tr("Значок в трее"), variable=self.tray_var,
                              command=self._toggle_tray)
         self.fps_var = tk.BooleanVar(value=bool(self.cfg["fps"]))
-        menu.add_checkbutton(label="FPS в играх",
+        menu.add_checkbutton(label=tr("FPS в играх"),
                              variable=self.fps_var, command=self._toggle_fps)
         self.procs_var = tk.BooleanVar(value=False)
-        menu.add_checkbutton(label="Список процессов", variable=self.procs_var,
+        menu.add_checkbutton(label=tr("Список процессов"), variable=self.procs_var,
                              command=lambda: self._set_procs(self.procs_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg["compact"]))
-        menu.add_checkbutton(label="Компактный режим", variable=self.compact_var,
+        menu.add_checkbutton(label=tr("Компактный режим"), variable=self.compact_var,
                              command=self._toggle_compact)
         self.autostart_var = tk.BooleanVar(value=autostart_enabled() or admin_task_enabled())
-        menu.add_checkbutton(label="Запускать вместе с Windows", variable=self.autostart_var,
+        menu.add_checkbutton(label=tr("Запускать вместе с Windows"), variable=self.autostart_var,
                              command=self._toggle_autostart)
         self.admin_var = tk.BooleanVar(value=bool(self.cfg["run_as_admin"]))
         if lhm_dir():
-            menu.add_checkbutton(label="Права администратора (температуры)",
+            menu.add_checkbutton(label=tr("Права администратора (температуры)"),
                                  variable=self.admin_var, command=self._toggle_admin)
         menu.add_separator()
         show_menu = tk.Menu(menu, tearoff=0)
         self.section_vars = {}
         for key, title in SECTIONS.items():
             var = self.section_vars[key] = tk.BooleanVar(value=key not in self.cfg["hidden"])
-            show_menu.add_checkbutton(label=title, variable=var,
+            show_menu.add_checkbutton(label=tr(title), variable=var,
                                       command=lambda k=key: self._toggle_section(k))
-        menu.add_cascade(label="Показывать", menu=show_menu)
+        menu.add_cascade(label=tr("Показывать"), menu=show_menu)
         alerts_menu = tk.Menu(menu, tearoff=0)
         self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
-        alerts_menu.add_checkbutton(label="Показывать предупреждения", variable=self.alerts_var,
+        alerts_menu.add_checkbutton(label=tr("Показывать предупреждения"), variable=self.alerts_var,
                                     command=self._toggle_alerts)
         alerts_menu.add_separator()
         self.limit_vars = {}
@@ -3271,38 +3330,48 @@ class Widget:
             for value in CONFIG_CHOICES[key]:
                 sub.add_radiobutton(label=f"{value}{unit}", value=value, variable=var,
                                     command=lambda k=key: self._set_limit(k))
-            alerts_menu.add_cascade(label=title, menu=sub)
-        menu.add_cascade(label="Предупреждения", menu=alerts_menu)
+            alerts_menu.add_cascade(label=tr(title), menu=sub)
+        menu.add_cascade(label=tr("Предупреждения"), menu=alerts_menu)
         theme_menu = tk.Menu(menu, tearoff=0)
         for key, (title, _) in THEMES.items():
-            theme_menu.add_radiobutton(label=title, value=key, variable=self.theme_var,
+            theme_menu.add_radiobutton(label=tr(title), value=key, variable=self.theme_var,
                                        command=self._set_theme)
-        menu.add_cascade(label="Цвета", menu=theme_menu)
+        menu.add_cascade(label=tr("Цвета"), menu=theme_menu)
         alpha_menu = tk.Menu(menu, tearoff=0)
         for pct in (100, 97, 90, 80, 70):
             alpha_menu.add_radiobutton(label=f"{pct}%", value=pct / 100,
                                        variable=self.alpha_var, command=self._set_alpha)
-        menu.add_cascade(label="Непрозрачность", menu=alpha_menu)
-        menu.add_checkbutton(label="Поверх всех окон", variable=self.topmost_var,
+        menu.add_cascade(label=tr("Непрозрачность"), menu=alpha_menu)
+        menu.add_checkbutton(label=tr("Поверх всех окон"), variable=self.topmost_var,
                              command=self._toggle_topmost)
         self.topmost_index = menu.index("end")
-        menu.add_command(label="В правый верхний угол", command=self._reset_position)
-        menu.add_command(label="История за час и сутки", command=self._show_history)
+        menu.add_command(label=tr("В правый верхний угол"), command=self._reset_position)
+        menu.add_command(label=tr("История за час и сутки"), command=self._show_history)
         self.ping_menu = tk.Menu(menu, tearoff=0)
         self.ping_var = tk.StringVar(value=self.cfg["ping_host"])
         self._fill_ping_menu()
-        menu.add_cascade(label="Пинг до", menu=self.ping_menu)
+        menu.add_cascade(label=tr("Пинг до"), menu=self.ping_menu)
         about = tk.Menu(menu, tearoff=0)
         about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
         self.updates_var = tk.BooleanVar(value=bool(self.cfg["check_updates"]))
-        about.add_checkbutton(label="Проверять обновления", variable=self.updates_var,
+        about.add_checkbutton(label=tr("Проверять обновления"), variable=self.updates_var,
                               command=self._toggle_updates)
-        about.add_command(label="Проверить сейчас", command=self._check_updates_now)
-        about.add_command(label="Страница программы", command=lambda: open_in_browser(RELEASES_URL))
-        menu.add_cascade(label="О программе", menu=about)
+        about.add_command(label=tr("Проверить сейчас"), command=self._check_updates_now)
+        about.add_command(label=tr("Страница программы"), command=lambda: open_in_browser(RELEASES_URL))
+        menu.add_cascade(label=tr("О программе"), menu=about)
+        lang_menu = tk.Menu(menu, tearoff=0)
+        self.lang_var = tk.StringVar(value=self.cfg["lang"])
+        lang_menu.add_radiobutton(label=tr("Как в Windows"), value="auto", variable=self.lang_var,
+                                  command=self._set_language)
+        lang_menu.add_separator()
+        for code, name in LANGS.items():
+            lang_menu.add_radiobutton(label=name, value=code, variable=self.lang_var,
+                                      command=self._set_language)
+        menu.add_cascade(label="Язык / Language", menu=lang_menu)
         menu.add_separator()
-        menu.add_command(label=f"Скрыть  ({HOTKEY_TEXT} — показать)", command=self.hide_widget)
-        menu.add_command(label="Закрыть", command=self.quit)
+        menu.add_command(label=tr("Скрыть  ({hotkey} — показать)", hotkey=HOTKEY_TEXT),
+                         command=self.hide_widget)
+        menu.add_command(label=tr("Закрыть"), command=self.quit)
         self.menu = menu
 
     def _show_menu(self, event):
@@ -3445,6 +3514,22 @@ class Widget:
             self.data["procs"] = top_processes() if show else None
             self._draw()
 
+    # --- language ---
+    def _set_language(self):
+        self.cfg["lang"] = self.lang_var.get()
+        save_config(self.cfg)
+        set_language(self.cfg["lang"])
+        old = self.menu
+        self._build_menu()
+        self._apply_pin()  # also re-disables "always on top" in the new menu when pinned
+        old.destroy()
+        if self.taskbar is not None:
+            self.taskbar.measure()
+        self.data = self._collect() if self.data is not None else None
+        self._draw()
+        if self.taskbar is not None and self.data:
+            self.taskbar.draw(self.data, self.cfg["theme"])
+
     # --- ping target ---
     def _fill_ping_menu(self):
         m = self.ping_menu
@@ -3456,7 +3541,7 @@ class Widget:
             m.add_radiobutton(label=label, value=host, variable=self.ping_var,
                               command=lambda h=host: self._set_ping_host(h))
         m.add_separator()
-        m.add_command(label="Свой адрес…", command=self._ask_ping_host)
+        m.add_command(label=tr("Свой адрес…"), command=self._ask_ping_host)
 
     def _set_ping_host(self, host):
         self.cfg["ping_host"] = host
@@ -3468,14 +3553,15 @@ class Widget:
     def _ask_ping_host(self):
         from tkinter import simpledialog, messagebox
         text = simpledialog.askstring(
-            "Пинг до", "Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
-                       "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа».",
+            tr("Пинг до"), tr("Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
+                              "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа»."),
             initialvalue=self.cfg["ping_host"], parent=self.root)
         if text is None:
             return
         host = clean_host(text)
         if host is None:
-            messagebox.showwarning("Пинг до", f"«{text}» не похоже на адрес.", parent=self.root)
+            messagebox.showwarning(tr("Пинг до"), tr("«{text}» не похоже на адрес.", text=text),
+                                   parent=self.root)
             return
         self._set_ping_host(host)
 
@@ -3521,15 +3607,15 @@ class Widget:
             version, url = found
             self.cfg["update_seen"] = version
             save_config(self.cfg)
-            self.toast.show(f"Вышла версия {version}",
-                            f"У тебя {APP_VERSION}. Нажми, чтобы открыть страницу загрузки.",
+            self.toast.show(tr("Вышла версия {v}", v=version),
+                            tr("У тебя {v}. Нажми, чтобы открыть страницу загрузки.", v=APP_VERSION),
                             scale(0.0), on_click=lambda: open_in_browser(url))
         elif manual:
             if self.updates.failed:
-                self.toast.show("Не удалось проверить", "Нет связи с GitHub. Попробуй позже.",
+                self.toast.show(tr("Не удалось проверить"), tr("Нет связи с GitHub. Попробуй позже."),
                                 scale(0.75))
             else:
-                self.toast.show("Обновлений нет", f"У тебя последняя версия, {APP_VERSION}.",
+                self.toast.show(tr("Обновлений нет"), tr("У тебя последняя версия, {v}.", v=APP_VERSION),
                                 scale(0.0))
 
     def _toggle_alerts(self):
@@ -3576,24 +3662,26 @@ class Widget:
         t = data["temp_cpu"]
         if t is not None:
             self._alert("cpu_temp", t >= limit, t < limit - ALERT_HYST, 5,
-                        "Процессор перегревается",
-                        f"CPU {t:.0f}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.",
+                        tr("Процессор перегревается"),
+                        tr("CPU {t}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.",
+                           t=f"{t:.0f}"),
                         hot)
         t = data["temp_gpu"]
         if t is not None:
             self._alert("gpu_temp", t >= limit - 3, t < limit - 3 - ALERT_HYST, 5,
-                        "Видеокарта перегревается",
-                        f"GPU {t:.0f}°. Понизь настройки графики или ограничь FPS.", hot)
+                        tr("Видеокарта перегревается"),
+                        tr("GPU {t}°. Понизь настройки графики или ограничь FPS.", t=f"{t:.0f}"), hot)
         pct = data["ram_pct"]
 
         def ram_body():
             name, _, mem = (top_processes(1, key="mem") or [("?", 0, 0)])[0]
-            return (f"Занято {pct:.0f}% ({fmt_gb(data['ram_used'])} из {fmt_gb(data['ram_total'])} ГБ). "
-                    f"Больше всех: {name} — {fmt_mem(mem)}.")
+            return (tr("Занято {pct}% ({used} из {total} ГБ).", pct=f"{pct:.0f}",
+                       used=fmt_gb(data['ram_used']), total=fmt_gb(data['ram_total'])) + " "
+                    + tr("Больше всех: {name} — {mem}.", name=name, mem=fmt_mem(mem)))
 
         ram_limit = self.cfg["alert_ram"]
         self._alert("ram", pct >= ram_limit, pct < ram_limit - ALERT_HYST, 10,
-                    "Память почти закончилась", ram_body, hot)
+                    tr("Память почти закончилась"), ram_body, hot)
         batt = data["battery"]
         if batt is not None:
             level, plugged = batt
@@ -3601,9 +3689,10 @@ class Widget:
             left = data.get("battery_left")
             self._alert("battery", not plugged and level <= low,
                         plugged or level > low + ALERT_HYST, 0,
-                        "Батарея садится",
-                        f"Осталось {level:.0f}%" + (f", примерно на {fmt_left(left)}" if left else "")
-                        + ". Подключи зарядку.",
+                        tr("Батарея садится"),
+                        tr("Осталось {level}%", level=f"{level:.0f}")
+                        + (tr(", примерно на {left}", left=fmt_left(left)) if left else "")
+                        + ". " + tr("Подключи зарядку."),
                         scale(0.75))
 
     def _leave(self, event):

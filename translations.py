@@ -1,0 +1,206 @@
+"""Interface texts in English, Ukrainian and German.
+
+Keys are the Russian texts used in widget.pyw (Russian is the source language,
+so a missing translation shows the Russian text instead of nothing).
+Texts with {name} fields are .format() templates: keep the fields as they are.
+"""
+
+LANGS = {"ru": "Русский", "en": "English", "uk": "Українська", "de": "Deutsch"}
+
+# Russian text -> (English, Ukrainian, German)
+TEXTS = {
+    # colour themes
+    "Тепло": ("Warm", "Тепло", "Warm"),
+    "Неон": ("Neon", "Неон", "Neon"),
+    "Лёд": ("Ice", "Лід", "Eis"),
+
+    # units
+    "{v} Б/с": ("{v} B/s", "{v} Б/с", "{v} B/s"),
+    "{v} КБ/с": ("{v} KB/s", "{v} КБ/с", "{v} KB/s"),
+    "{v} МБ/с": ("{v} MB/s", "{v} МБ/с", "{v} MB/s"),
+    "{v} МБ": ("{v} MB", "{v} МБ", "{v} MB"),
+    "{v} ГБ": ("{v} GB", "{v} ГБ", "{v} GB"),
+    "{v} ГГц": ("{v} GHz", "{v} ГГц", "{v} GHz"),
+    "{v} Вт": ("{v} W", "{v} Вт", "{v} W"),
+    "{v} мс": ("{v} ms", "{v} мс", "{v} ms"),
+    "{h} ч {m} мин": ("{h} h {m} min", "{h} год {m} хв", "{h} Std. {m} Min."),
+    "{m} мин": ("{m} min", "{m} хв", "{m} Min."),
+    "{d} д {h} ч": ("{d} d {h} h", "{d} д {h} год", "{d} T. {h} Std."),
+
+    # widget
+    "Система": ("System", "Система", "System"),
+    "Нажми ещё раз — закрыть": ("Click again to close", "Натисни ще раз — закрити",
+                                "Nochmal klicken zum Schließen"),
+    "Процессор": ("Processor", "Процесор", "Prozessor"),
+    "Программа": ("Program", "Програма", "Programm"),
+    "собираю данные…": ("collecting data…", "збираю дані…", "sammle Daten…"),
+    "Память": ("Memory", "Пам'ять", "RAM"),
+    "Видео": ("GPU", "Відео", "GPU"),
+    "Видеокарта": ("Graphics", "Відеокарта", "Grafikkarte"),
+    "Диск": ("Disk", "Диск", "Disk"),
+    "Диски": ("Disks", "Диски", "Laufwerke"),
+    "Диск {name}": ("Disk {name}", "Диск {name}", "Laufwerk {name}"),
+    "{used} из {total} ГБ": ("{used} of {total} GB", "{used} з {total} ГБ", "{used} von {total} GB"),
+    "нет данных": ("no data", "немає даних", "keine Daten"),
+    "Температура": ("Temperature", "Температура", "Temperatur"),
+    "Нет данных о температуре": ("No temperature data", "Немає даних про температуру",
+                                 "Keine Temperaturdaten"),
+    "Батарея": ("Battery", "Батарея", "Akku"),
+    "износ": ("wear", "знос", "Verschleiß"),
+    "расход {v} Вт": ("draw {v} W", "витрата {v} Вт", "Verbrauch {v} W"),
+    "{full} из {design} Вт·ч": ("{full} of {design} Wh", "{full} з {design} Вт·год",
+                                "{full} von {design} Wh"),
+    "Сеть": ("Network", "Мережа", "Netzwerk"),
+    "График сети": ("Network graph", "Графік мережі", "Netzwerkgrafik"),
+    "Пинг": ("Ping", "Пінг", "Ping"),
+    "пинг": ("ping", "пінг", "Ping"),
+    "нет": ("none", "нема", "keine"),
+    "нет ответа": ("no reply", "немає відповіді", "keine Antwort"),
+    "до {host}": ("to {host}", "до {host}", "zu {host}"),
+    "чтение": ("read", "читання", "lesen"),
+    "запись": ("write", "запис", "schreiben"),
+    "Чтение и запись диска": ("Disk read and write", "Читання і запис диска",
+                              "Laufwerk lesen/schreiben"),
+    "Износ батареи": ("Battery wear", "Знос батареї", "Akkuverschleiß"),
+    "Время без перезагрузки": ("Uptime", "Час без перезавантаження", "Laufzeit seit Neustart"),
+    "Без перезагрузки {t}": ("Up {t}", "Без перезавантаження {t}", "Seit Neustart {t}"),
+    "без перезагрузки {t}": ("up {t}", "працює {t}", "seit Neustart {t}"),  # short: card header
+    "Вышла версия {v}": ("Version {v} is out", "Вийшла версія {v}", "Version {v} ist da"),
+    "скачать": ("download", "завантажити", "herunterladen"),
+
+    # sensor hints
+    "Температуры включаются в меню (ПКМ)": ("Temperatures: turn on in the menu",
+                                            "Температури вмикаються в меню (ПКМ)",
+                                            "Temperaturen im Menü einschalten"),
+    "Нет доступа к датчикам: нужен PawnIO": ("No sensor access: PawnIO needed",
+                                             "Немає доступу до датчиків: треба PawnIO",
+                                             "Kein Sensorzugriff: PawnIO nötig"),
+    "Запусти LibreHardwareMonitor от админа": ("Run LibreHardwareMonitor as admin",
+                                               "Запусти LibreHardwareMonitor від адміна",
+                                               "LibreHardwareMonitor als Admin starten"),
+    "Нужен LibreHardwareMonitor с веб-сервером": ("LibreHardwareMonitor web server needed",
+                                                  "Потрібен LibreHardwareMonitor з веб-сервером",
+                                                  "LibreHardwareMonitor-Webserver nötig"),
+
+    # hover card on the taskbar
+    "Больше всех": ("Top process", "Найбільше", "Top-Prozess"),
+    "Нажми, чтобы открыть виджет": ("Click to open the widget", "Натисни, щоб відкрити віджет",
+                                    "Klicken, um das Widget zu öffnen"),
+
+    # history
+    "История": ("History", "Історія", "Verlauf"),
+    "час": ("hour", "година", "Stunde"),
+    "сутки": ("day", "доба", "Tag"),
+    "макс": ("max", "макс", "max"),
+    "средн.": ("avg", "серед.", "Ø"),
+    "Температура CPU": ("CPU temperature", "Температура CPU", "CPU-Temperatur"),
+    "Загрузка CPU": ("CPU load", "Завантаження CPU", "CPU-Auslastung"),
+    "нет данных: нужны права администратора": ("no data: admin rights needed",
+                                               "немає даних: потрібні права адміністратора",
+                                               "keine Daten: Administratorrechte nötig"),
+    "сейчас": ("now", "зараз", "jetzt"),
+    "Нажми, чтобы закрыть": ("Click to close", "Натисни, щоб закрити", "Klicken zum Schließen"),
+
+    # FPS
+    "ошибка, см. лог": ("error, see the log", "помилка, див. лог", "Fehler, siehe Protokoll"),
+    "нужны права администратора": ("admin rights needed", "потрібні права адміністратора",
+                                   "Administratorrechte nötig"),
+    "ошибка ETW {rc}": ("ETW error {rc}", "помилка ETW {rc}", "ETW-Fehler {rc}"),
+    "FPS недоступен": ("FPS unavailable", "FPS недоступний", "FPS nicht verfügbar"),
+    "Windows отказала: {error}.": ("Windows refused: {error}.", "Windows відмовила: {error}.",
+                                   "Windows hat abgelehnt: {error}."),
+    "Включи в меню «Права администратора (температуры)».": (
+        "Turn on “Admin rights (temperatures)” in the menu.",
+        "Увімкни в меню «Права адміністратора (температури)».",
+        "Schalte im Menü „Administratorrechte (Temperaturen)“ ein."),
+
+    # menu
+    "Закрепить на рабочем столе": ("Pin to desktop", "Закріпити на робочому столі",
+                                   "Auf dem Desktop fixieren"),
+    "Мини-панель на панели задач": ("Mini panel on the taskbar", "Міні-панель на панелі завдань",
+                                    "Mini-Leiste in der Taskleiste"),
+    "Значок в трее": ("Tray icon", "Значок у треї", "Symbol im Infobereich"),
+    "FPS в играх": ("FPS in games", "FPS в іграх", "FPS in Spielen"),
+    "Список процессов": ("Process list", "Список процесів", "Prozessliste"),
+    "Компактный режим": ("Compact mode", "Компактний режим", "Kompaktmodus"),
+    "Запускать вместе с Windows": ("Start with Windows", "Запускати разом з Windows",
+                                   "Mit Windows starten"),
+    "Права администратора (температуры)": ("Admin rights (temperatures)",
+                                           "Права адміністратора (температури)",
+                                           "Administratorrechte (Temperaturen)"),
+    "Показывать": ("Show", "Показувати", "Anzeigen"),
+    "Показывать предупреждения": ("Show alerts", "Показувати попередження", "Warnungen anzeigen"),
+    "Перегрев CPU от": ("CPU overheating from", "Перегрів CPU від", "CPU-Überhitzung ab"),
+    "Память занята от": ("Memory used from", "Пам'ять зайнята від", "RAM belegt ab"),
+    "Батарея ниже": ("Battery below", "Батарея нижче", "Akku unter"),
+    "Предупреждения": ("Alerts", "Попередження", "Warnungen"),
+    "Цвета": ("Colours", "Кольори", "Farben"),
+    "Непрозрачность": ("Opacity", "Непрозорість", "Deckkraft"),
+    "Поверх всех окон": ("Always on top", "Поверх усіх вікон", "Immer im Vordergrund"),
+    "В правый верхний угол": ("Move to the top right corner", "У правий верхній кут",
+                              "In die obere rechte Ecke"),
+    "История за час и сутки": ("History (hour and day)", "Історія за годину і добу",
+                               "Verlauf (Stunde und Tag)"),
+    "Пинг до": ("Ping to", "Пінг до", "Ping zu"),
+    "Свой адрес…": ("Custom address…", "Своя адреса…", "Eigene Adresse…"),
+    "О программе": ("About", "Про програму", "Über"),
+    "Проверять обновления": ("Check for updates", "Перевіряти оновлення", "Nach Updates suchen"),
+    "Проверить сейчас": ("Check now", "Перевірити зараз", "Jetzt prüfen"),
+    "Страница программы": ("Program page", "Сторінка програми", "Programmseite"),
+    "Как в Windows": ("Same as Windows", "Як у Windows", "Wie Windows"),
+    "Скрыть  ({hotkey} — показать)": ("Hide  ({hotkey} to show)", "Сховати  ({hotkey} — показати)",
+                                      "Ausblenden  ({hotkey} zum Anzeigen)"),
+    "Закрыть": ("Close", "Закрити", "Schließen"),
+
+    # ping address dialog
+    "Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
+    "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа».": (
+        "Server or site address (e.g. eu.battle.net or 192.168.1.1).\n"
+        "Some game servers don't answer pings — then it shows “no reply”.",
+        "Адреса сервера або сайту (наприклад, eu.battle.net або 192.168.1.1).\n"
+        "Деякі ігрові сервери не відповідають на пінг — тоді буде «немає відповіді».",
+        "Server- oder Website-Adresse (z. B. eu.battle.net oder 192.168.1.1).\n"
+        "Manche Spielserver antworten nicht auf Ping – dann steht dort „keine Antwort“."),
+    "«{text}» не похоже на адрес.": ("“{text}” doesn't look like an address.",
+                                     "«{text}» не схоже на адресу.",
+                                     "„{text}“ sieht nicht wie eine Adresse aus."),
+
+    # updates
+    "У тебя {v}. Нажми, чтобы открыть страницу загрузки.": (
+        "You have {v}. Click to open the download page.",
+        "У тебе {v}. Натисни, щоб відкрити сторінку завантаження.",
+        "Du hast {v}. Klicken, um die Download-Seite zu öffnen."),
+    "Не удалось проверить": ("Couldn't check", "Не вдалося перевірити", "Prüfung fehlgeschlagen"),
+    "Нет связи с GitHub. Попробуй позже.": ("No connection to GitHub. Try again later.",
+                                            "Немає зв'язку з GitHub. Спробуй пізніше.",
+                                            "Keine Verbindung zu GitHub. Versuch es später."),
+    "Обновлений нет": ("No updates", "Оновлень немає", "Keine Updates"),
+    "У тебя последняя версия, {v}.": ("You have the latest version, {v}.",
+                                      "У тебе остання версія, {v}.",
+                                      "Du hast die neueste Version, {v}."),
+
+    # alerts
+    "Процессор перегревается": ("The processor is overheating", "Процесор перегрівається",
+                                "Der Prozessor überhitzt"),
+    "CPU {t}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.": (
+        "CPU {t}°. Close heavy programs or check that the vents aren't clogged.",
+        "CPU {t}°. Закрий важкі програми або перевір, чи не забиті решітки.",
+        "CPU {t}°. Schließe schwere Programme oder prüfe, ob die Lüftungsgitter verstopft sind."),
+    "Видеокарта перегревается": ("The graphics card is overheating", "Відеокарта перегрівається",
+                                 "Die Grafikkarte überhitzt"),
+    "GPU {t}°. Понизь настройки графики или ограничь FPS.": (
+        "GPU {t}°. Lower the graphics settings or cap the FPS.",
+        "GPU {t}°. Знизь налаштування графіки або обмеж FPS.",
+        "GPU {t}°. Senke die Grafikeinstellungen oder begrenze die FPS."),
+    "Занято {pct}% ({used} из {total} ГБ).": ("{pct}% used ({used} of {total} GB).",
+                                              "Зайнято {pct}% ({used} з {total} ГБ).",
+                                              "{pct}% belegt ({used} von {total} GB)."),
+    "Больше всех: {name} — {mem}.": ("Uses the most: {name} — {mem}.",
+                                     "Найбільше: {name} — {mem}.", "Am meisten: {name} – {mem}."),
+    "Память почти закончилась": ("Memory is almost full", "Пам'ять майже закінчилася",
+                                 "Der Arbeitsspeicher ist fast voll"),
+    "Батарея садится": ("Battery is running low", "Батарея сідає", "Akku wird schwach"),
+    "Осталось {level}%": ("{level}% left", "Залишилось {level}%", "Noch {level}%"),
+    ", примерно на {left}": (", about {left}", ", приблизно на {left}", ", etwa {left}"),
+    "Подключи зарядку.": ("Plug in the charger.", "Підключи зарядку.", "Schließ das Ladegerät an."),
+}
