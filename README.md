@@ -36,6 +36,8 @@ Compact mode, the hover card of the mini panel and the panel itself:
 - **Battery** — charge and how long it will last (Windows' estimate), wear
   (how much capacity is lost since new) and the power draw in watts when
   unplugged.
+- **Fans** — fan speeds, when the PC reports them (board fans need admin
+  rights; many laptops don't report fans at all).
 - **Show** (menu) — hide the rows you don't need: graphics, disks, network
   graph, ping and so on.
 - **Mini panel on the taskbar**, left of the tray icons: CPU/RAM, network,

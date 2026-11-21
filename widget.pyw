@@ -317,7 +317,7 @@ CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
-            "disk_io": "Чтение и запись диска", "battery": "Износ батареи",
+            "disk_io": "Чтение и запись диска", "battery": "Износ батареи", "fans": "Вентиляторы",
             "uptime": "Время без перезагрузки"}
 
 
@@ -1326,13 +1326,15 @@ def read_lhm(tree):
                 hw["powers"].append((low, value))
             elif group in ("Energy", "Levels"):
                 hw["energy"].append((low, value))
+            elif group == "Fans":
+                hw["fans"].append((low, value))
             return
         if text in SENSOR_GROUPS:
             for kid in kids:
                 walk(kid, hw, text)
             return
         new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
-                  "clocks": [], "powers": [], "energy": [], "integrated": False}
+                  "clocks": [], "powers": [], "energy": [], "fans": [], "integrated": False}
         hardware.append(new_hw)
         for kid in kids:
             walk(kid, new_hw, None)
@@ -1365,6 +1367,8 @@ def read_lhm(tree):
     ssd = max((t for t in ssds if t is not None), default=None)
 
     battery = read_battery(next((hw for hw in hardware if hw["kind"] == "battery"), None))
+    # spinning fans of any device (0 RPM = a stopped fan or an empty header), fastest first
+    fans = sorted((v for hw in hardware for _, v in hw["fans"] if 0 < v < 30000), reverse=True)
 
     cpu_clock = cpu_power = None
     cpu_hw = next((hw for hw in hardware if hw["kind"] == "cpu"), None)
@@ -1375,7 +1379,7 @@ def read_lhm(tree):
         cpu_power = power if power and 0 < power < 1000 else None
     return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
             "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power,
-            **battery}
+            "fans": fans[:3] or None, **battery}
 
 
 def read_battery(hw):
@@ -1405,7 +1409,7 @@ def extract_temps(tree):
 EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None,
                  "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None,
                  "battery_design": None, "battery_full": None, "battery_wear": None,
-                 "battery_rate": None}
+                 "battery_rate": None, "fans": None}
 
 
 def is_admin():
@@ -1432,7 +1436,7 @@ class NativeSensors:
              "Storage": "hdd", "Battery": "battery"}
     GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %"),
               "Clock": ("Clocks", " MHz"), "Power": ("Powers", " W"),
-              "Energy": ("Energy", " mWh"), "Level": ("Levels", " %")}
+              "Energy": ("Energy", " mWh"), "Level": ("Levels", " %"), "Fan": ("Fans", " RPM")}
 
     def __init__(self, path):
         from pythonnet import load
@@ -1447,6 +1451,7 @@ class NativeSensors:
         self.computer.IsGpuEnabled = True
         self.computer.IsStorageEnabled = True
         self.computer.IsBatteryEnabled = True  # wear and power draw, no admin rights needed
+        self.computer.IsMotherboardEnabled = True  # fans on the board (with admin rights)
         self.computer.Open()
 
     def _node(self, hw):
@@ -2179,6 +2184,8 @@ class Renderer:
             secs.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
         if "battery" not in hidden and data.get("battery_wear") is not None:
             secs.append((38, self._draw_battery))
+        if "fans" not in hidden and data.get("fans"):
+            secs.append((24, self._draw_fans))
         lower = []
         if "net" not in hidden:
             lower.append((22, self._draw_net))
@@ -2421,6 +2428,18 @@ class Renderer:
             (info, self.f_small, DIM), (tr("износ") + " ", self.f_small, DIM),
             (f"{wear:.0f}%", self.f_value, scale(min(1.0, wear / 40)))]))
         self._segment_meter(d, P, y + 22, Wl - P, wear, scale)
+
+    def _draw_fans(self, d, texts, y, data, scale):
+        """Fan speeds (only when the sensors report any), coloured by how fast they spin."""
+        P, Wl = self.PAD, self.WIDTH
+        texts.append((P, y + 14, tr("Вентиляторы"), self.f_label, TEXT, "ls"))
+        parts = []
+        for i, rpm in enumerate(data["fans"]):
+            if i:
+                parts.append(("  ·  ", self.f_small, FAINT))
+            parts.append((f"{rpm:.0f}", self.f_value, scale(min(1.0, rpm / 5000))))
+        parts.append((" " + tr("об/мин"), self.f_small, DIM))
+        texts.append(("rich", Wl - P, y + 14, parts))
 
     def _draw_divider(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
@@ -3972,6 +3991,7 @@ class Widget:
             "battery_design": sensors.get("battery_design"),
             "battery_full": sensors.get("battery_full"),
             "battery_rate": sensors.get("battery_rate"),
+            "fans": sensors.get("fans"),
             "lhm_online": self.lhm.online,
             "sensor_hint": self.lhm.hint(),
             "ping": self.ping.ms,

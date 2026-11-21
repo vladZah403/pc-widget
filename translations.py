@@ -50,6 +50,8 @@ TEXTS = {
     "расход {v} Вт": ("draw {v} W", "витрата {v} Вт", "Verbrauch {v} W"),
     "{full} из {design} Вт·ч": ("{full} of {design} Wh", "{full} з {design} Вт·год",
                                 "{full} von {design} Wh"),
+    "Вентиляторы": ("Fans", "Вентилятори", "Lüfter"),
+    "об/мин": ("RPM", "об/хв", "U/min"),
     "Сеть": ("Network", "Мережа", "Netzwerk"),
     "График сети": ("Network graph", "Графік мережі", "Netzwerkgrafik"),
     "Пинг": ("Ping", "Пінг", "Ping"),
