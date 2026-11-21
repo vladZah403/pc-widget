@@ -15,7 +15,11 @@ mod render;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+/// When main() started, for the time to the first frame.
+static STARTED: OnceLock<Instant> = OnceLock::new();
 
 use eframe::egui;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, RichText, Stroke, Vec2};
@@ -252,6 +256,10 @@ impl Dashboard {
 impl eframe::App for Dashboard {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.frames += 1;
+        if self.frames == 1 {
+            let ms = STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
+            println!("first frame {ms:.0} ms after start");
+        }
         if let Some(path) = self.screenshot.clone()
             && !self.shot_requested
             && self.opened.elapsed() >= Duration::from_secs(8)
@@ -344,6 +352,7 @@ fn parse_args() -> Result<(Option<u64>, bool, Option<String>), String> {
 }
 
 fn main() {
+    STARTED.get_or_init(Instant::now);
     let (measure, reopen, screenshot) = parse_args().unwrap_or_else(|e| {
         eprintln!("{e}\nusage: pcm-proto-dashboard [--measure N] [--reopen] [--screenshot FILE]");
         std::process::exit(2);
@@ -359,6 +368,11 @@ fn main() {
                 .with_inner_size([760.0, 330.0])
                 .with_min_inner_size([560.0, 300.0])
                 .with_title("PC Monitor 2.0 — прототип дашборда"),
+            // `--features wgpu` compares Direct3D 12 (wgpu) with OpenGL (glow)
+            #[cfg(feature = "wgpu")]
+            renderer: eframe::Renderer::Wgpu,
+            #[cfg(not(feature = "wgpu"))]
+            renderer: eframe::Renderer::Glow,
             ..Default::default()
         };
         let result = eframe::run_native(
