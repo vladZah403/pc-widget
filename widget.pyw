@@ -179,12 +179,13 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
                   "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
-                  "size": 100, "alert_disk": 10,
+                  "size": 100, "width": 264, "stretch": 0, "alert_disk": 10,
                   "fps_panel": True, "fps_corner": "tl", "fps_size": 100,
                   "profile": "work", "profiles": {}, "auto_game": True, "quiet_games": True}
 
 # what a profile ("work" / "game") remembers: how the widget looks
-PROFILE_KEYS = ("compact", "hidden", "size", "theme", "alpha", "taskbar", "pinned", "topmost")
+PROFILE_KEYS = ("compact", "hidden", "size", "width", "stretch", "theme", "alpha", "taskbar", "pinned",
+                "topmost")
 # widget size in % (dragging its corner, Ctrl + mouse wheel, the slider in the settings)
 SIZE_MIN, SIZE_MAX, SIZE_STEP = 80, 200, 5
 
@@ -192,6 +193,26 @@ SIZE_MIN, SIZE_MAX, SIZE_STEP = 80, 200, 5
 def clean_size(value):
     """Any number -> a size the widget can take: SIZE_MIN..SIZE_MAX in SIZE_STEP steps."""
     return int(min(SIZE_MAX, max(SIZE_MIN, round(float(value) / SIZE_STEP) * SIZE_STEP)))
+
+
+# its shape (dragging the right edge, the bottom edge or the corner), in logical px:
+# wider than the standard 264 px and taller by up to STRETCH_MAX, never smaller (the
+# text would overlap; smaller is the size slider's job)
+WIDTH_STD, WIDTH_MAX, STRETCH_MAX = 264, 640, 600
+
+
+def clean_width(value):
+    try:
+        return int(min(WIDTH_MAX, max(WIDTH_STD, round(float(value)))))
+    except (TypeError, ValueError, OverflowError):
+        return WIDTH_STD
+
+
+def clean_stretch(value):
+    try:
+        return int(min(STRETCH_MAX, max(0, round(float(value)))))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 GAME_ON_S, GAME_OFF_S = 3, 10  # a game in front this long switches to / back from "game"
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
@@ -351,9 +372,9 @@ def sanitize_config(raw):
             if (isinstance(v, list) and len(v) == 2
                     and all(isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) for c in v)):
                 cfg[key] = [c.lower() for c in v]
-        elif key == "size":
+        elif key in ("size", "width", "stretch"):
             if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
-                cfg[key] = clean_size(v)
+                cfg[key] = {"size": clean_size, "width": clean_width, "stretch": clean_stretch}[key](v)
         elif isinstance(default, bool):
             if isinstance(v, bool):
                 cfg[key] = v
@@ -2572,6 +2593,7 @@ class DriveHealth(threading.Thread):
 # rows that open the history card on a click: row key -> HistoryCard.SUBJECTS index
 HISTORY_ROWS = {"cores": 0, "temps": 0, "gpu": 1, "ram": 2, "net": 3}
 GRIP = 22  # the resize corner, logical px
+EDGE = 6   # the right and bottom edges are this wide for dragging the shape, logical px
 SNAP_GAP, SNAP_REACH = 10, 16  # a dragged widget sticks 10 px off a screen edge within 16 px
 
 
@@ -2582,9 +2604,9 @@ class Renderer:
     WIDTH = 264
     RADIUS = 14
 
-    def __init__(self, scale):
+    def __init__(self, scale, width=None, stretch=0):
         self.s = scale
-        self.W = self.px(self.WIDTH)
+        self.set_shape(width, stretch)
         self.f_title = load_font(self.px(14), "SemiBold")
         self.f_hero = load_font(self.px(46), "SemiBold Condensed")
         self.f_hero_unit = load_font(self.px(20), "SemiBold Condensed")
@@ -2604,7 +2626,24 @@ class Renderer:
     def px(self, v):
         return int(round(v * self.s))
 
-    # --- static card (cached per height) ---
+    def set_shape(self, width=None, stretch=0):
+        """Width (logical px, at least the standard WIDTH) and extra height (logical
+        px) that the CPU and network graphs grow by; the text keeps its size."""
+        self.WIDTH = clean_width(width)
+        self.W = self.px(self.WIDTH)
+        self.stretch = clean_stretch(stretch)
+        self._card_cache = {}
+
+    def _extras(self, data, hidden, compact=False):
+        """How the extra height is shared: (CPU graph, network graph), logical px."""
+        if not self.stretch:
+            return 0, 0
+        if compact or "net" in hidden or "net_graph" in hidden:
+            return self.stretch, 0
+        hero = round(self.stretch * 0.6)
+        return hero, self.stretch - hero
+
+    # --- static card (cached per size) ---
     def _card(self, H):
         """The empty card, supersampled: every frame draws its shapes on a copy and
         shrinks it once (an RGB image, so no alpha layer to convert back and forth)."""
@@ -2627,7 +2666,9 @@ class Renderer:
     def _rrect(self, d, x0, y0, x1, y1, r, fill):
         d.rounded_rectangle(self._ss(x0, y0, x1, y1), radius=r * self.s * SS, fill=fill)
 
-    def _segment_meter(self, d, x0, y, x1, pct, scale, segments=24, h=6, gap=2):
+    def _segment_meter(self, d, x0, y, x1, pct, scale, segments=None, h=6, gap=2):
+        if segments is None:  # 24 on the standard width; a wider widget gets more, not fatter ones
+            segments = max(24, round(24 * (x1 - x0) / (WIDTH_STD - 2 * self.PAD)))
         seg_w = (x1 - x0 - gap * (segments - 1)) / segments
         lit = int(round(pct / 100 * segments))
         for i in range(segments):
@@ -2754,7 +2795,9 @@ class Renderer:
         if "net" not in hidden:
             lower.append((22, self._draw_net, "net"))
             if "net_graph" not in hidden:
-                lower.append((26, self._draw_net_graph, "net"))
+                gh = 26 + self._extras(data, hidden)[1]  # taller when the widget is stretched
+                lower.append((gh, lambda d, texts, y, data, scale, gh=gh:
+                              self._draw_net_graph(d, texts, y, data, scale, gh), "net"))
         if "ping" not in hidden:
             lower.append((22, self._draw_ping, "ping"))
         if "disk_io" not in hidden:
@@ -2765,15 +2808,19 @@ class Renderer:
         secs.append((30, self._draw_footer, "uptime") if "uptime" not in hidden else (10, None, None))
         return secs
 
+    def hero_h(self, data, hidden=(), compact=False):
+        """Header + CPU block, logical px: its graph takes its share of the stretch."""
+        return HERO_H + self._extras(data, hidden, compact)[0]
+
     def layout_height(self, data, compact=False, hidden=()):
         if compact:
-            return self.px(178)
-        return self.px(HERO_H + sum(h for h, _, _ in self._sections(data, hidden)))
+            return self.px(self.hero_h(data, hidden, True) + 178 - HERO_H)
+        return self.px(self.hero_h(data, hidden) + sum(h for h, _, _ in self._sections(data, hidden)))
 
     def _row_spans(self, data, hidden):
         """[(history subject, top, bottom)] in logical px for the rows a click opens
         the history of; a row and its graph (network) make one span."""
-        spans, y = [], HERO_H
+        spans, y = [], self.hero_h(data, hidden)
         for h, _, key in self._sections(data, hidden):
             subject = HISTORY_ROWS.get(key)
             if subject is not None:
@@ -2866,9 +2913,11 @@ class Renderer:
                           + [(f"{pct:.0f}%", self.f_small, DIM)]
                           + ([(" ⚡", self.f_sym, DIM)] if plugged else [])))
 
-        # hero: CPU number + histogram (+ clock and power when the sensors give them)
+        # hero: CPU number + histogram (+ clock and power when the sensors give them);
+        # a stretched widget gets a taller histogram, the number stays at its foot
+        grow = self._extras(data, hidden, compact)[0]
         cpu = data["cpu"]
-        hero_base = 92
+        hero_base = 92 + grow
         num = f"{cpu:.0f}"
         num_w = self.f_hero.getlength(num) / self.s
         texts.append((P - 1, hero_base, num, self.f_hero, scale(cpu / 100), "ls"))
@@ -2878,18 +2927,18 @@ class Renderer:
         cpu_label = ellipsize(cpu_label, self.f_small, self.px(118))
         texts.append((P, hero_base + 18, cpu_label, self.f_small, DIM, "ls"))
         hx0 = P + 82
-        self._histogram(d, hx0, 50, Wl - P, 100, data["cpu_hist"], scale)
+        self._histogram(d, hx0, 50, Wl - P, 100 + grow, data["cpu_hist"], scale)
         extra = cpu_extra_text(data)
         if extra:
             texts.append(("rich", Wl - P, hero_base + 18, [(extra, self.f_small, DIM)]))
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
-            self._compact_rows(d, texts, data, scale, HERO_H)
+            self._compact_rows(d, texts, data, scale, HERO_H + grow)
             self._grip(d, H, grip)
             return self._compose(layer, texts)
         chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
-        self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
+        self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118 + grow))
 
         # rows that open their history: a soft highlight under the one the mouse is on
         for subject, top, bottom in self._row_spans(data, hidden):
@@ -2897,7 +2946,7 @@ class Renderer:
                 self._rrect(d, P - 7, top + 1, Wl - P + 7, bottom - 3, 8, ROW_HOVER)
             self.row_boxes.append((subject, (self.px(P - 7), self.px(top + 1),
                                              self.px(Wl - P + 7), self.px(bottom - 3))))
-        y = HERO_H
+        y = HERO_H + grow
         for h, draw, _ in self._sections(data, hidden):
             if draw is not None:
                 draw(d, texts, y, data, scale)
@@ -3193,13 +3242,15 @@ class Renderer:
             ("↓ ", self.f_sym, down_c), (fmt_speed(data["net_down"]), self.f_small, TEXT),
             ("     ↑ ", self.f_sym, up_c), (fmt_speed(data["net_up"]), self.f_small, TEXT)]))
 
-    def _draw_net_graph(self, d, texts, y, data, scale):
+    def _draw_net_graph(self, d, texts, y, data, scale, h=26):
         """Last minute of traffic: download bars up from the line, upload bars down.
-        Square-root scale, so a small upload is still visible next to a big download."""
+        Square-root scale, so a small upload is still visible next to a big download.
+        h: the section's height (more when the widget is stretched)."""
         P, Wl = self.PAD, self.WIDTH
         down_c, up_c = scale(0.0), scale(0.75)
         hist = data.get("net_hist") or []
-        top, mid, bottom = y + 1, y + 13, y + 21
+        top, bottom = y + 1, y + h - 5
+        mid = top + (bottom - top) * 0.6  # download gets 3/5 of the height, upload 2/5
         peak = max([max(a, b) for a, b in hist] + [NET_GRAPH_FLOOR])
         pitch = (Wl - 2 * P) / HISTORY_LEN
         bar_w = pitch * 0.62
@@ -4250,8 +4301,12 @@ class SettingsWindow:
         ttk.Scale(box, from_=SIZE_MIN, to=SIZE_MAX, variable=w.size_var,
                   command=lambda v: w._set_size(float(v))).pack(side="left", fill="x", expand=True,
                                                                 padx=(0, 10))
-        ttk.Label(p, text=tr("Или потяни за уголок виджета, или Ctrl + колёсико над ним"),
-                  foreground="#888").pack(anchor="w", padx=(12, 0), pady=(2, 0))
+        row = ttk.Frame(p)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Button(row, text=tr("Обычная форма"), command=w._reset_shape).pack(side="right")
+        ttk.Label(row, text=tr("Размер — ещё Ctrl + колёсико над виджетом.\nФорма — тяни виджет "
+                               "за правый край, низ или уголок."),
+                  foreground="#888", justify="left").pack(side="left", padx=(12, 0))
 
         def show(*_):
             try:
@@ -4378,7 +4433,8 @@ class Widget:
             root.iconphoto(True, self._icon)
         self.dpi_scale = root.winfo_fpixels("1i") / 96
         self.ui_renderer = Renderer(self.dpi_scale)  # cards, panel, overlay: Windows' scale
-        self.renderer = Renderer(self.dpi_scale * self.cfg["size"] / 100)  # the widget: + its size
+        self.renderer = Renderer(self.dpi_scale * self.cfg["size"] / 100,  # the widget: + its size
+                                 self.cfg["width"], self.cfg["stretch"])  # and shape
         self.view = tk.Label(root, bg=KEY_HEX, bd=0, highlightthickness=0)
         self.view.pack()
         self.photo = None
@@ -4615,7 +4671,7 @@ class Widget:
         self.cfg["size"] = size
         if save:
             save_config(self.cfg)
-        self.renderer = Renderer(self.dpi_scale * size / 100)
+        self.renderer = self._new_renderer()
         self.height = None  # force the new window size
         self._draw(force=True)
         self.root.update_idletasks()
@@ -4623,34 +4679,73 @@ class Widget:
             self._place()
             self._keep_inside()
 
+    def _new_renderer(self):
+        """The widget's renderer: Windows' scale x its size, and its shape."""
+        return Renderer(self.dpi_scale * self.cfg["size"] / 100, self.cfg["width"], self.cfg["stretch"])
+
     def _wheel_size(self, event):
         """Ctrl + mouse wheel over the widget: bigger or smaller in 10% steps."""
         self.tip.cancel()
         step = 10 if event.delta > 0 else -10
         self._set_size(self.cfg["size"] + step)
 
-    # --- resize corner ---
-    def _start_resize(self, event):
-        self.resizing = (event.x_root, event.y_root, self.cfg["size"],
-                         self.root.winfo_width(), self.root.winfo_height())
-        self.row_hover = None  # no row stays lit while (and after) the corner is dragged
+    # --- shape: the right edge, the bottom edge, the corner ---
+    def _edge_at(self, event):
+        """'xy' on the resize corner, 'x' on the right edge, 'y' on the bottom edge,
+        else None."""
+        if self._in_box(self.renderer.grip_box, event):
+            return "xy"
+        if not self.mouse_in and not self.resizing:
+            return None
+        zone = self.renderer.px(EDGE)
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        if w - zone <= event.x <= w + 1 and 0 <= event.y <= h:
+            return "x"
+        if h - zone <= event.y <= h + 1 and 0 <= event.x <= w:
+            return "y"
+        return None
+
+    def _start_resize(self, event, axes="xy"):
+        self.resizing = (event.x_root, event.y_root, self.cfg["width"], self.cfg["stretch"], axes)
+        self.row_hover = None  # no row stays lit while (and after) the widget is reshaped
         self._draw(force=True)
 
     def _resize_move(self, event):
-        """The corner follows the mouse along the widget's diagonal (it keeps its
-        proportions); redrawn only when the size reaches the next step."""
-        x0, y0, size0, w0, h0 = self.resizing
-        dx, dy = event.x_root - x0, event.y_root - y0
-        factor = 1 + (dx * w0 + dy * h0) / float(w0 * w0 + h0 * h0)
-        size = clean_size(size0 * factor)
-        if size != self.cfg["size"]:
-            self._set_size(size, save=False, keep_on_screen=False)
+        """Width follows the mouse on the right edge, extra height on the bottom one,
+        both on the corner; redrawn once per idle moment, not per mouse event."""
+        x0, y0, width0, stretch0, axes = self.resizing
+        s = self.renderer.s
+        width, stretch = self.cfg["width"], self.cfg["stretch"]
+        if "x" in axes:
+            width = clean_width(width0 + (event.x_root - x0) / s)
+        if "y" in axes:
+            stretch = clean_stretch(stretch0 + (event.y_root - y0) / s)
+        if (width, stretch) != (self.cfg["width"], self.cfg["stretch"]):
+            self.cfg["width"], self.cfg["stretch"] = width, stretch
+            if getattr(self, "_shape_job", None) is None:
+                self._shape_job = self.root.after_idle(self._apply_shape)
+
+    def _apply_shape(self):
+        self._shape_job = None
+        self.renderer.set_shape(self.cfg["width"], self.cfg["stretch"])
+        self._draw(force=True)
 
     def _finish_resize(self):
         self.resizing = None
+        if getattr(self, "_shape_job", None) is not None:
+            self.root.after_cancel(self._shape_job)
+            self._apply_shape()
         save_config(self.cfg)
         self._draw(force=True)
         self._place()
+        self._keep_inside()
+
+    def _reset_shape(self):
+        """The standard shape (the size stays)."""
+        self.cfg["width"], self.cfg["stretch"] = WIDTH_STD, 0
+        save_config(self.cfg)
+        self.renderer.set_shape(WIDTH_STD, 0)
+        self._draw(force=True)
         self._keep_inside()
 
     def _keep_inside(self):
@@ -4673,7 +4768,7 @@ class Widget:
         if self._in_box(self.renderer.grip_box, event):
             self.resizing = None
             self.grip_pressed = True  # nothing else happens on its release
-            self._set_size(100)  # double click on the corner: back to 100%
+            self._reset_shape()  # double click on the corner: the standard shape
         else:
             self._press(event)  # elsewhere it is an ordinary click (two quick ones on × close)
 
@@ -5003,9 +5098,10 @@ class Widget:
 
     def _press(self, event):
         self.tip.cancel()
-        self.grip_pressed = self._in_box(self.renderer.grip_box, event)
-        if self.grip_pressed:
-            self._start_resize(event)
+        edge = self._edge_at(event)
+        self.grip_pressed = edge is not None
+        if edge:
+            self._start_resize(event, edge)
         self.proc_pressed = self._proc_at(event)
         self.close_pressed = self._in_close(event)
         self.pin_pressed = self._in_box(self.renderer.pin_box, event)
@@ -5077,8 +5173,9 @@ class Widget:
     def _hover(self, event):
         self._set_hover(self._in_close(event))
         on_pin = self._in_box(self.renderer.pin_box, event)
-        on_grip = self._in_box(self.renderer.grip_box, event)
-        row = None if on_grip else self._row_at(event)
+        edge = self._edge_at(event)
+        on_grip = edge == "xy"
+        row = None if edge else self._row_at(event)
         if (on_pin, on_grip, row) != (self.pin_hover, self.grip_hover, self.row_hover) or not self.mouse_in:
             self.pin_hover, self.grip_hover, self.row_hover = on_pin, on_grip, row
             self.mouse_in = True
@@ -5086,13 +5183,15 @@ class Widget:
         hand = (self._in_close(event) or on_pin or self._proc_at(event) or row is not None
                 or self._in_box(self.renderer.hero_box, event)
                 or self._in_box(self.renderer.update_box, event))
-        cursor = "size_nw_se" if on_grip else ("hand2" if hand else "")
+        cursor = ({"xy": "size_nw_se", "x": "size_we", "y": "size_ns"}.get(edge)
+                  or ("hand2" if hand else ""))
         if self.view.cget("cursor") != cursor:
             self.view.configure(cursor=cursor)
         # a hint after the mouse rests on a control
         if on_grip:
-            self.tip.request("grip", tr("Потяни за уголок, чтобы изменить размер (или Ctrl + "
-                                        "колёсико). Двойной клик — 100%."), event.x_root, event.y_root)
+            self.tip.request("grip", tr("Тяни за уголок, правый край или низ — меняется форма. "
+                                        "Ctrl + колёсико — размер. Двойной клик по уголку — "
+                                        "обычная форма."), event.x_root, event.y_root)
         elif on_pin:
             self.tip.request("pin", tr("Открепить от рабочего стола") if self.cfg["pinned"]
                              else tr("Закрепить на рабочем столе"), event.x_root, event.y_root)
@@ -5318,7 +5417,7 @@ class Widget:
             var.set(cfg[key])
         for key, var in self.section_vars.items():
             var.set(key not in cfg["hidden"])
-        self.renderer = Renderer(self.dpi_scale * cfg["size"] / 100)
+        self.renderer = self._new_renderer()
         self.height = None
         self.root.attributes("-alpha", float(cfg["alpha"]))
         self._alpha_now = float(cfg["alpha"])

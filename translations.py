@@ -163,14 +163,18 @@ TEXTS = {
     "ничего": ("nothing", "нічого", "nichts"),
     "Размер": ("Size", "Розмір", "Größe"),
     # resize corner and hints
-    "Потяни за уголок, чтобы изменить размер (или Ctrl + колёсико). Двойной клик — 100%.": (
-        "Drag the corner to resize (or Ctrl + mouse wheel). Double-click: 100%.",
-        "Потягни за куточок, щоб змінити розмір (або Ctrl + коліщатко). Подвійний клік — 100%.",
-        "Ziehe an der Ecke, um die Größe zu ändern (oder Strg + Mausrad). Doppelklick: 100 %."),
-    "Или потяни за уголок виджета, или Ctrl + колёсико над ним": (
-        "Or drag the widget's corner, or Ctrl + mouse wheel over it",
-        "Або потягни за куточок віджета, або Ctrl + коліщатко над ним",
-        "Oder an der Ecke des Widgets ziehen oder Strg + Mausrad darüber"),
+    "Тяни за уголок, правый край или низ — меняется форма. Ctrl + колёсико — размер. Двойной клик по уголку — обычная форма.": (
+        "Drag the corner, the right edge or the bottom to change the shape. Ctrl + mouse wheel: size. "
+        "Double-click the corner: the standard shape.",
+        "Тягни за куточок, правий край або низ — змінюється форма. Ctrl + коліщатко — розмір. "
+        "Подвійний клік по куточку — звичайна форма.",
+        "Ecke, rechten Rand oder Unterkante ziehen: Form ändern. Strg + Mausrad: Größe. "
+        "Doppelklick auf die Ecke: Standardform."),
+    "Размер — ещё Ctrl + колёсико над виджетом.\nФорма — тяни виджет за правый край, низ или уголок.": (
+        "Size: also Ctrl + mouse wheel over the widget.\nShape: drag the widget's right edge, bottom or corner.",
+        "Розмір — ще Ctrl + коліщатко над віджетом.\nФорма — тягни віджет за правий край, низ або куточок.",
+        "Größe: auch Strg + Mausrad über dem Widget.\nForm: rechten Rand, Unterkante oder Ecke ziehen."),
+    "Обычная форма": ("Standard shape", "Звичайна форма", "Standardform"),
     "Открепить от рабочего стола": ("Unpin from desktop", "Відкріпити від робочого столу",
                                     "Vom Desktop lösen"),
     "Закрыть: нажми два раза": ("Close: click twice", "Закрити: натисни двічі",

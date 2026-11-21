@@ -74,25 +74,52 @@ def test_snap_to_screen_edges(w):
     assert w.snap_position(800, 1040 - 700 - 25, 264, 700, area, 10, 16) == (800, 1040 - 700 - 10)
 
 
-def test_drag_the_corner_to_resize(w, ui):
+def test_shape_sanitized_and_drawn(w):
+    for raw, want in ((400, 400), (100, 264), (5000, 640), ("x", 264), (True, 264)):
+        assert w.sanitize_config({"width": raw})["width"] == want, raw
+    for raw, want in ((120, 120), (-3, 0), (9999, 600), (math.inf, 0)):
+        assert w.sanitize_config({"stretch": raw})["stretch"] == want, raw
+    data = fake_data()
+    std, shaped = w.Renderer(1.0), w.Renderer(1.0, 400, 200)
+    a, b = std.render(data, "heat"), shaped.render(data, "heat", grip=1)
+    assert a.size == (264, std.layout_height(data)) and b.size == (400, a.height + 200)
+    assert shaped.hero_h(data) == w.HERO_H + 120  # the CPU graph gets 3/5, the network graph 2/5
+    net = lambda r: [bottom - top for s, top, bottom in r._row_spans(data, ()) if s == 3][0]
+    assert net(shaped) == net(std) + 80
+    assert shaped.layout_height(data, compact=True) == std.layout_height(data, compact=True) + 200
+    assert shaped.layout_height(data, hidden=("net_graph",)) - std.layout_height(data, hidden=("net_graph",)) == 200
+
+
+def drag(ui, start, delta, root):
+    ui._press(Ev(*start, root))
+    ui._drag_move(Ev(start[0] + delta[0], start[1] + delta[1], root))
+    ui.root.update()  # the new shape is drawn when Tk is idle
+    ui._release(Ev(start[0] + delta[0], start[1] + delta[1], root))
+    ui.root.update()
+
+
+def test_drag_edges_and_corner_to_change_the_shape(w, ui):
     root = (ui.root.winfo_x(), ui.root.winfo_y())
     ui._enter(Ev(10, 10, root))
-    gx, gy = center(ui.renderer.grip_box)
-    assert ui.renderer.grip_box != (0, 0, 0, 0)
-    width0 = ui.root.winfo_width()
-    ui._press(Ev(gx, gy, root))
-    assert ui.resizing
-    ui._drag_move(Ev(gx + 60, gy + 150, root))  # down and right: bigger
-    ui._drag_move(Ev(gx + 132, gy + 330, root))
-    ui._release(Ev(gx + 132, gy + 330, root))
     ui.root.update()
-    assert ui.resizing is None and 140 <= ui.cfg["size"] <= 160
-    assert ui.saved and ui.saved[-1]["size"] == ui.cfg["size"]
-    assert ui.root.winfo_width() > width0 * 1.3 and (ui.root.winfo_x(), ui.root.winfo_y()) == root
-    ui._press(Ev(*center(ui.renderer.grip_box), root))
-    ui._drag_move(Ev(-2000, -2000, root))  # far up-left: the smallest size
-    ui._release(Ev(-2000, -2000, root))
-    assert ui.cfg["size"] == w.SIZE_MIN
+    vw, vh = ui.root.winfo_width(), ui.root.winfo_height()
+    assert ui._edge_at(Ev(vw - 2, vh // 2)) == "x" and ui._edge_at(Ev(vw // 2, vh - 2)) == "y"
+    assert ui._edge_at(Ev(*center(ui.renderer.grip_box))) == "xy" and ui._edge_at(Ev(vw // 2, 50)) is None
+    drag(ui, (vw - 2, vh // 2), (100, 40), root)  # right edge: only the width
+    assert (ui.cfg["width"], ui.cfg["stretch"], ui.cfg["size"]) == (364, 0, 100)
+    assert ui.root.winfo_width() == 364 and ui.root.winfo_height() == vh
+    drag(ui, (ui.root.winfo_width() // 2, vh - 2), (30, 120), root)  # bottom edge: only the height
+    assert (ui.cfg["width"], ui.cfg["stretch"]) == (364, 120) and ui.root.winfo_height() == vh + 120
+    assert ui.saved[-1]["width"] == 364 and ui.saved[-1]["stretch"] == 120
+    drag(ui, center(ui.renderer.grip_box), (-2000, -2000), root)  # never below the standard shape
+    assert (ui.cfg["width"], ui.cfg["stretch"]) == (w.WIDTH_STD, 0)
+    drag(ui, center(ui.renderer.grip_box), (50, 60), root)  # the corner: both
+    assert (ui.cfg["width"], ui.cfg["stretch"]) == (314, 60) and ui.renderer.s == 1.0  # text as it was
+    assert (ui.root.winfo_x(), ui.root.winfo_y()) == root
+    ui._hover(Ev(ui.root.winfo_width() - 2, 200, root))
+    assert ui.view.cget("cursor") == "size_we"
+    ui._hover(Ev(100, ui.root.winfo_height() - 2, root))
+    assert ui.view.cget("cursor") == "size_ns"
 
 
 def test_a_grown_widget_moves_back_above_the_taskbar(w, ui, monkeypatch):
@@ -127,12 +154,15 @@ def test_ctrl_wheel_and_double_click(w, ui):
     assert ui.cfg["size"] == w.SIZE_MAX
     ui._wheel_size(Ev(5, 5, delta=-120))
     assert ui.cfg["size"] == 190
+    ui.cfg.update(width=500, stretch=150)
+    ui.renderer.set_shape(500, 150)
     ui.mouse_in = True
     ui._draw()
-    ui._double_click(Ev(*center(ui.renderer.grip_box)))
-    assert ui.cfg["size"] == 100 and ui.resizing is None
+    ui._double_click(Ev(*center(ui.renderer.grip_box)))  # the standard shape, the size stays
+    assert (ui.cfg["width"], ui.cfg["stretch"], ui.cfg["size"]) == (w.WIDTH_STD, 0, 190)
+    assert ui.resizing is None
     ui._release(Ev(*center(ui.renderer.grip_box)))  # the second release does nothing else
-    assert ui.cfg["size"] == 100
+    assert (ui.cfg["width"], ui.cfg["stretch"]) == (w.WIDTH_STD, 0)
 
 
 def test_dragging_sticks_to_the_edges_unless_shift(w, ui, monkeypatch):
