@@ -176,7 +176,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
-                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto"}
+                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "dim": True}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -184,6 +184,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
 ALERT_HYST = 5
 ALERT_COOLDOWN_S = 600
 CLOSE_CONFIRM_MS = 3000
+DIM_ALPHA = 0.3  # widget opacity while a game or a fullscreen video is in front
 
 
 # ---------- helpers ----------
@@ -3373,6 +3374,25 @@ class Widget:
             self.toast.show(tr("FPS недоступен"), tr("Windows отказала: {error}.", error=self.fps.error) + hint,
                             scale(0.75))
 
+    def _apply_dim(self):
+        """Fade the widget while a game (FPS shown) or a fullscreen window is in front,
+        so it doesn't distract; back to the chosen opacity afterwards."""
+        if _user32 is None:
+            return
+        overlay = getattr(self, "fps_overlay", None)
+        busy = (overlay is not None and overlay.visible) or fullscreen_app_active()
+        alpha = float(self.cfg["alpha"])
+        if self.cfg["dim"] and busy and _user32.GetForegroundWindow() != self.hwnd:
+            alpha = min(alpha, DIM_ALPHA)
+        if alpha != getattr(self, "_alpha_now", None):
+            self._alpha_now = alpha
+            self.root.attributes("-alpha", alpha)
+
+    def _toggle_dim(self):
+        self.cfg["dim"] = self.dim_var.get()
+        save_config(self.cfg)
+        self._apply_dim()
+
     def _update_fps_overlay(self):
         """Show the counter over the window in front if it is a game: not ignored, and
         fullscreen or drawing 25+ frames a second for 3 seconds in a row."""
@@ -3575,6 +3595,9 @@ class Widget:
             alpha_menu.add_radiobutton(label=f"{pct}%", value=pct / 100,
                                        variable=self.alpha_var, command=self._set_alpha)
         menu.add_cascade(label=tr("Непрозрачность"), menu=alpha_menu)
+        self.dim_var = tk.BooleanVar(value=bool(self.cfg["dim"]))
+        menu.add_checkbutton(label=tr("Тускнеть в играх и видео"), variable=self.dim_var,
+                             command=self._toggle_dim)
         menu.add_checkbutton(label=tr("Поверх всех окон"), variable=self.topmost_var,
                              command=self._toggle_topmost)
         self.topmost_index = menu.index("end")
@@ -3629,6 +3652,7 @@ class Widget:
     def _set_alpha(self):
         self.cfg["alpha"] = self.alpha_var.get()
         self.root.attributes("-alpha", self.cfg["alpha"])
+        self._alpha_now = self.cfg["alpha"]
         save_config(self.cfg)
 
     def quit(self):
@@ -4096,6 +4120,7 @@ class Widget:
             self._tray_tip(self.data)
         if getattr(self, "fps_overlay", None) is not None:
             self._update_fps_overlay()
+        self._apply_dim()
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()

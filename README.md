@@ -59,6 +59,8 @@ Compact mode, the hover card of the mini panel and the panel itself:
   seen, and Windows doesn't let anything draw over exclusive fullscreen — use
   windowed or borderless. Usually needs admin rights. Browsers, chats and
   players don't count as games.
+- **Dims itself** to 30% while a game (FPS shown) or a fullscreen video is in
+  front, back to normal afterwards (menu "Dim during games and videos").
 - **Tray icon** next to the clock: left click shows/hides the widget, right
   click opens the menu, hover shows CPU, RAM and temperature. Can be switched
   off in the menu.
