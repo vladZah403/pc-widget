@@ -192,9 +192,14 @@ To run from source, put the DLLs from a LibreHardwareMonitor release
 `pythonnet` (`pip install -r requirements.txt`).
 
 ## Windows 11
-Windows 11 has a different taskbar: the task buttons can't be moved aside, so
-the mini panel may cover icons. That's why it's off there by default — switch
-it on in Settings → "Mini panel on the taskbar". Tested only on Windows 10.
+- Windows 11 has a different taskbar: the task buttons can't be moved aside, so
+  the mini panel may cover icons. That's why it's off there by default — switch
+  it on in Settings → "Mini panel on the taskbar".
+- **Smart App Control** (on on many fresh Windows 11 installs) blocks programs
+  that aren't signed: the setup stops with "error 4551: an Application Control
+  policy has blocked this file". Until the releases are signed (see the code
+  signing policy below), it runs only with Smart App Control off: Windows
+  Security → App & browser control → Smart App Control.
 
 ## How it works
 - `widget.pyw` (+ translations in `translations.py`): a borderless tkinter
@@ -208,3 +213,30 @@ it on in Settings → "Mini panel on the taskbar". Tested only on Windows 10.
   mini panel by the taskbar (`Shell_TrayWnd`).
 
 Tested on Windows 10 (1600×900, 100%).
+
+## Code signing policy
+Windows builds are to be signed through SignPath's free program for open
+source: free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org) (application in
+progress). Until then the releases are unsigned.
+
+- Committers, reviewers and approvers: [vladZah403](https://github.com/vladZah403)
+- Every release is built by GitHub Actions from this repository
+  (`.github/workflows/build.yml`), from a tagged commit; nothing is built or
+  signed by hand.
+
+### Privacy
+PC Monitor sends nothing about you or your PC anywhere. It connects to the
+network only to:
+- ask GitHub whether a new release is out (`api.github.com`, every 6 hours;
+  off in "About → Check for updates");
+- download a new release, when you click "update" (`github.com`);
+- ping the address you chose (1.1.1.1 by default; Settings → Network and games);
+- read LibreHardwareMonitor's web server on this computer (`127.0.0.1`), if you
+  run it.
+
+Settings, the log and the day of history stay in `%APPDATA%\PC-Monitor`.
+
+## License
+[MIT](LICENSE). The bundled LibreHardwareMonitorLib is under the
+[MPL-2.0](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/master/LICENSE).

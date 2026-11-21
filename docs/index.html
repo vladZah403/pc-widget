@@ -228,6 +228,9 @@
   ol.steps b { font-weight: 600; }
   ol.steps span { color: var(--mute); display: block; }
 
+  .policy h2 { font-size: clamp(30px, 3.6vw, 38px); }
+  .policy p { font-size: 16px; margin-bottom: 18px; }
+  .policy p strong { color: var(--ink); font-weight: 500; }
   footer { border-top: 1px solid var(--line); color: var(--mute); font-size: 15px; }
   footer .inner { max-width: var(--wide); margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }
 
@@ -389,9 +392,17 @@
   <h2>Install</h2>
   <ol class="steps">
     <li><div><b>Download PC-Monitor-Setup.exe</b><span>It installs for your user only — no admin rights needed.</span></div></li>
-    <li><div><b>Run it.</b><span>The program isn't signed yet, so Windows may say "Windows protected your PC": click "More info", then "Run anyway". The source code is all on GitHub.</span></div></li>
+    <li><div><b>Run it.</b><span>The program isn't signed yet (see the <a href="#code-signing-policy">code signing policy</a>), so Windows may say "Windows protected your PC": click "More info", then "Run anyway". On a fresh Windows 11, Smart App Control may block it outright until the releases are signed. The source code is all on GitHub.</span></div></li>
     <li><div><b>Turn on temperatures if you want them.</b><span>Right-click the widget → Settings → "Admin rights (temperatures)": Windows gives temperatures only to programs running as administrator. On some PCs the processor also needs the free PawnIO driver.</span></div></li>
   </ol>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section class="policy" id="code-signing-policy">
+  <h2>Code signing policy</h2>
+  <p>Windows builds are to be signed through SignPath's free program for open source: free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a> (application in progress; until then the releases are unsigned). Every release is built by GitHub Actions from a tagged commit of the public repository — nothing is built or signed by hand. Committers, reviewers and approvers: <a href="https://github.com/vladZah403">vladZah403</a>.</p>
+  <p><strong>Privacy.</strong> PC Monitor sends nothing about you or your PC anywhere. It goes online only to ask GitHub whether a new release is out (every 6 hours, can be switched off), to download one when you click "update", and to ping the address you chose (1.1.1.1 by default). Settings, the log and the day of history stay on your PC.</p>
 </section>
 
 <footer>
