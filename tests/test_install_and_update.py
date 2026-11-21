@@ -121,3 +121,26 @@ def test_leave_program_folder(w, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     w.leave_program_folder()
     assert os.path.normcase(os.getcwd()) == os.path.normcase(w.DATA_DIR)
+
+
+def test_updater_keeps_the_uninstaller(w, tmp_path, monkeypatch):
+    """A setup install has unins000.exe/.dat in the program folder: an update keeps them."""
+    data = _zip({"PC-Monitor/PC-Monitor.exe": b"new", "PC-Monitor/_internal/a.dll": b"d"})
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None: _Resp(data))
+    app = tmp_path / "App"
+    app.mkdir()
+    (app / "unins000.exe").write_bytes(b"u")
+    (app / "unins000.dat").write_bytes(b"d")
+    asset = {"url": "https://example.invalid/PC-Monitor.zip",
+             "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+    up = w.Updater(asset, (str(app), str(tmp_path / "App.new")))
+    up.run()
+    assert up.state == "ready", up.error
+    assert {"unins000.exe", "unins000.dat", "PC-Monitor.exe"} <= set(os.listdir(up.staging))
+
+
+def test_short_cpu_name(w):
+    assert w.short_cpu_name("AMD Ryzen 5 5500U with Radeon Graphics") == "Ryzen 5 5500U"
+    assert w.short_cpu_name("Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz") == "Core i5-10400F"
+    assert w.short_cpu_name("12th Gen Intel(R) Core(TM) i7-12700H") == "Core i7-12700H"
+    assert w.short_cpu_name("AMD Ryzen 7 7800X3D 8-Core Processor") == "Ryzen 7 7800X3D"
