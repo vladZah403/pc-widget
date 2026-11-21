@@ -239,3 +239,23 @@ def test_settings_slider_follows_the_size(w, ui, monkeypatch):
     ui.size_var.set(150)  # no error from a label that is gone
     ui.root.update()
     assert isinstance(ui.size_var, tk.DoubleVar)
+
+
+def test_wide_widget_puts_rows_in_columns(w):
+    procs = [("chrome", 12.0, 2**30), ("game", 30.0, 3 * 2**30)]
+    data = fake_data(procs=procs)
+    one, two, three = w.Renderer(1.0, 500), w.Renderer(1.0, 560), w.Renderer(1.0, 820)
+    assert (one.columns(), two.columns(), three.columns()) == (1, 2, 3)
+    for r in (one, two, three):
+        assert r.render(data, "heat").size == (r.px(r.WIDTH), r.layout_height(data))
+    # 2 columns: resources left, sensors + network right; the widget gets shorter
+    spans = [(s, x0) for s, x0, _, _, _ in two._row_spans(data, ())]
+    assert spans == [(0, 0), (2, 0), (1, 0), (0, 280), (3, 280)]  # cores, memory, GPU | temps, network
+    assert two.layout_height(data) < one.layout_height(data)
+    # 3 columns: one group each; the × of the process list stays in the first column
+    assert sorted({round(x0) for _, x0, _, _, _ in three._row_spans(data, ())}) == [0, 273, 547]
+    assert all(b[2] <= three.px(820 / 3) for _, b in three.proc_boxes)
+    # fewer groups than columns: as many columns as there are groups
+    only = ("temps", "battery", "ssd", "fans", "net", "ping", "disk_io")
+    cols = three._plan(fake_data(), only)[1]
+    assert len(cols) == 1 and cols[0][1] == 820
