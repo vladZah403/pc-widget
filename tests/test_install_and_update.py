@@ -144,3 +144,11 @@ def test_short_cpu_name(w):
     assert w.short_cpu_name("Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz") == "Core i5-10400F"
     assert w.short_cpu_name("12th Gen Intel(R) Core(TM) i7-12700H") == "Core i7-12700H"
     assert w.short_cpu_name("AMD Ryzen 7 7800X3D 8-Core Processor") == "Ryzen 7 7800X3D"
+
+
+def test_short_gpu_name(w):
+    assert w.short_gpu_name("NVIDIA GeForce RTX 3060 Laptop GPU") == "GeForce RTX 3060 Laptop GPU"
+    assert w.short_gpu_name("AMD Radeon(TM) Graphics") == "Radeon Graphics"
+    assert w.short_gpu_name("Intel(R) UHD Graphics 620") == "UHD Graphics 620"
+    assert w.short_gpu_name("Intel(R) Arc(TM) Graphics") == "Arc Graphics"
+    assert w.short_gpu_name("Intel(R) Graphics") == "Intel Graphics"  # Core Ultra without Arc

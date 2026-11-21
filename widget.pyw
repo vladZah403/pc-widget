@@ -509,6 +509,29 @@ def find_taskbar():
     return bar, notify, tasks, rebar
 
 
+def describe_taskbar(max_lines=60):
+    """The taskbar's windows (class, screen rect, visible), a few levels deep, for the
+    log: the newer Windows 11 taskbar is built differently from the classic one."""
+    if _user32 is None:
+        return "no user32"
+    bar = _user32.FindWindowW("Shell_TrayWnd", None)
+    if not bar:
+        return "no Shell_TrayWnd"
+    lines = [f"Shell_TrayWnd {window_rect(bar)}"]
+
+    def walk(parent, depth):
+        child = _user32.FindWindowExW(parent, None, None, None)
+        while child and len(lines) < max_lines:
+            lines.append("  " * depth + f"{class_name(child)} {window_rect(child)}"
+                         f"{'' if _user32.IsWindowVisible(child) else ' hidden'}")
+            if depth < 3:
+                walk(child, depth + 1)
+            child = _user32.FindWindowExW(parent, child, None, None)
+
+    walk(bar, 1)
+    return "\n".join(lines)
+
+
 def set_child_right(child, parent, right_screen):
     """Resize a child window so its right edge is at right_screen (screen px)."""
     left, top, _, bottom = window_rect(child)
@@ -1462,6 +1485,15 @@ def _pick(sensors, prefs):
     return max((v for _, v in sensors), default=None)
 
 
+def short_gpu_name(name):
+    """'NVIDIA GeForce RTX 3060' -> 'GeForce RTX 3060', 'AMD Radeon(TM) Graphics' ->
+    'Radeon Graphics'; the maker stays when the rest is only 'Graphics' (Intel's
+    'Intel(R) Graphics' on Core Ultra), or the row would just say 'Graphics'."""
+    name = re.sub(r"\s+", " ", re.sub(r"\((tm|r)\)", "", name or "", flags=re.I)).strip()
+    rest = re.sub(r"^(AMD|NVIDIA|Intel) ", "", name, flags=re.I)
+    return name if rest.lower() == "graphics" else rest
+
+
 def read_lhm(tree):
     """Summarise LHM data.json: {"cpu", "gpu", "gpu_shared", "gpu_load", "gpu_name", "ssd"}.
     gpu_shared = integrated graphics without its own sensor (shares the CPU die)."""
@@ -1521,9 +1553,7 @@ def read_lhm(tree):
         main = [loads[k] for k in ("gpu core", "d3d 3d") if k in loads]
         gpu_load = max(main) if main else max(
             (v for n, v in primary["loads"] if n.startswith("gpu")), default=None)
-        gpu_name = re.sub(r"\((tm|r)\)", "", primary["name"], flags=re.I)
-        gpu_name = re.sub(r"^\s*(AMD|NVIDIA|Intel)\s+", "", gpu_name, flags=re.I)  # the model says enough
-        gpu_name = re.sub(r"\s+", " ", gpu_name).strip()
+        gpu_name = short_gpu_name(primary["name"])
         integrated = primary["integrated"] or bool(INTEGRATED_GPU.search(primary["name"]))
         gpu_shared = gpu is None and integrated and cpu is not None
         clock = dict(primary["clocks"]).get("gpu core")
@@ -1593,6 +1623,14 @@ def is_admin():
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except (AttributeError, OSError):
         return False
+
+
+def windows_build():
+    """Windows build number (22000 and up = Windows 11), or None off Windows."""
+    try:
+        return sys.getwindowsversion().build
+    except AttributeError:
+        return None
 
 
 def lhm_dir():
@@ -2382,16 +2420,19 @@ def _drive_model(h):
     return " ".join(n for n in names if n)
 
 
+# STORAGE_PROPERTY_QUERY (StorageDeviceProtocolSpecificProperty) + STORAGE_PROTOCOL_SPECIFIC_DATA
+# asking for NVMe log page 2, then room for the 512-byte page
+NVME_HEALTH_QUERY = (struct.pack("<II", 50, 0) + struct.pack("<11I", 3, 2, 2, 0, 44, 512, 0, 0, 0, 0, 0)
+                     + bytes(512))
+
+
 def nvme_health(n):
     """Health of \\\\.\\PhysicalDrive<n> if it is an NVMe drive, else None."""
     h = _open_device(f"\\\\.\\PhysicalDrive{n}")
     if h is None:
         return None
     try:
-        # STORAGE_PROPERTY_QUERY (StorageDeviceProtocolSpecificProperty) + STORAGE_PROTOCOL_SPECIFIC_DATA
-        # asking for NVMe log page 2, then room for the 512-byte page
-        query = (struct.pack("<II", 50, 0) + struct.pack("<11I", 3, 2, 2, 0, 44, 512, 0, 0, 0, 0, 0)
-                 + bytes(512))
+        query = NVME_HEALTH_QUERY
         data = _query(h, IOCTL_STORAGE_QUERY_PROPERTY, query, len(query))
         if not data or len(data) < 8 + 44:
             return None
@@ -2402,6 +2443,28 @@ def nvme_health(n):
         return health
     finally:
         _kernel32().CloseHandle(h)
+
+
+def probe_drives():
+    """Why there is (or isn't) a health row: what each physical drive answers, for the
+    log. Drives behind Intel RST / VMD or a USB bridge often refuse the NVMe query."""
+    k, lines = _kernel32(), []
+    for n in range(16):
+        h = _open_device(f"\\\\.\\PhysicalDrive{n}")
+        if h is None:
+            error = ctypes.get_last_error()
+            if error != 2:  # 2 = no such drive
+                lines.append(f"PhysicalDrive{n}: open failed, error {error}")
+            continue
+        try:
+            model = _drive_model(h) or "?"
+            data = _query(h, IOCTL_STORAGE_QUERY_PROPERTY, NVME_HEALTH_QUERY, len(NVME_HEALTH_QUERY))
+            state = (f"NVMe health log {len(data)} bytes" if data
+                     else f"NVMe query refused, error {ctypes.get_last_error()}")
+            lines.append(f"PhysicalDrive{n}: {model}: {state}")
+        finally:
+            k.CloseHandle(h)
+    return "; ".join(lines) or "no physical drives found"
 
 
 def volume_drive(letter):
@@ -2447,11 +2510,15 @@ class DriveHealth(threading.Thread):
         self.drives = drives
 
     def run(self):
+        first = True
         while True:
             try:
                 self.poll()
+                if first and not self.drives:
+                    log.info("no SSD health: %s", probe_drives())
             except Exception:
                 log_error("reading the drive health")
+            first = False
             time.sleep(DRIVES_POLL_S)
 
 
@@ -3258,7 +3325,8 @@ class TaskbarPanel:
         if nr - nl <= 0:  # tray area without a size (newer Windows 11 taskbar): nowhere to dock
             if not getattr(self, "_warned_tray", False):
                 self._warned_tray = True
-                log.warning("taskbar tray area has no size; mini panel hidden")
+                log.warning("taskbar tray area has no size; mini panel hidden. Windows %s:\n%s",
+                            windows_build(), describe_taskbar())
             self._hide()
             return
         bl, bt, br, bb = window_rect(bar)
@@ -5265,8 +5333,13 @@ def release_instance():
 
 def write_diagnostics():
     """`PC-Monitor.exe --diag`: write what the sensors give into pc-monitor-diag.txt."""
-    lines = [f"admin: {is_admin()}", f"frozen: {getattr(sys, 'frozen', False)}",
-             f"lhm dir: {lhm_dir()}"]
+    lines = [f"version: {APP_VERSION}", f"windows build: {windows_build()}", f"admin: {is_admin()}",
+             f"frozen: {getattr(sys, 'frozen', False)}", f"lhm dir: {lhm_dir()}"]
+    for name, part in (("drives", probe_drives), ("taskbar", describe_taskbar)):
+        try:
+            lines.append(f"{name}: {part()}")
+        except Exception as exc:
+            lines.append(f"{name} failed: {exc!r}")
     try:
         native = NativeSensors(lhm_dir())
         lines.append(f"native: {read_lhm(native.tree())}")
@@ -5337,6 +5410,6 @@ if __name__ == "__main__":
                 if start_installed():
                     sys.exit(0)
                 already_running()
-        log.info("start %s: admin=%s frozen=%s dir=%s", APP_VERSION, is_admin(),
-                 getattr(sys, "frozen", False), APP_DIR)
+        log.info("start %s: windows=%s admin=%s frozen=%s dir=%s", APP_VERSION, windows_build(),
+                 is_admin(), getattr(sys, "frozen", False), APP_DIR)
         Widget().run()
