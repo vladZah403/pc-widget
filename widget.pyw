@@ -253,6 +253,35 @@ def ellipsize(text, font, max_w):
     return text + "…"
 
 
+_cpu_model = None
+
+
+def cpu_model():
+    """'Ryzen 5 5500U' / 'Core i5-12400F' from the registry (read once), or ''."""
+    global _cpu_model
+    if _cpu_model is None:
+        _cpu_model = ""
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+                _cpu_model = short_cpu_name(winreg.QueryValueEx(key, "ProcessorNameString")[0])
+        except OSError:
+            pass
+    return _cpu_model
+
+
+def short_cpu_name(name):
+    """'AMD Ryzen 5 5500U with Radeon Graphics' -> 'Ryzen 5 5500U';
+    'Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz' -> 'Core i5-10400F'."""
+    name = re.sub(r"\((R|TM|tm)\)", "", name or "")
+    name = re.sub(r"\s+@.*$", "", name)
+    name = re.sub(r"\b\d+(st|nd|rd|th) Gen\b", "", name, flags=re.I)
+    name = re.sub(r"\b(with|w/)\s+Radeon.*$", "", name, flags=re.I)
+    name = re.sub(r"\b(AMD|Intel|CPU|Processor|\d+-Core|[A-Za-z]+-Core)\b", "", name, flags=re.I)
+    return re.sub(r"\s+", " ", name).strip()
+
+
 def fmt_wh(wh):
     return dec(f"{wh:.1f}")
 
@@ -1458,6 +1487,7 @@ def read_lhm(tree):
         gpu_load = max(main) if main else max(
             (v for n, v in primary["loads"] if n.startswith("gpu")), default=None)
         gpu_name = re.sub(r"\((tm|r)\)", "", primary["name"], flags=re.I)
+        gpu_name = re.sub(r"^\s*(AMD|NVIDIA|Intel)\s+", "", gpu_name, flags=re.I)  # the model says enough
         gpu_name = re.sub(r"\s+", " ", gpu_name).strip()
         integrated = primary["integrated"] or bool(INTEGRATED_GPU.search(primary["name"]))
         gpu_shared = gpu is None and integrated and cpu is not None
@@ -1816,6 +1846,12 @@ class Updater(threading.Thread):
         if not (os.path.isfile(os.path.join(self.staging, EXE_NAME))
                 and os.path.isdir(os.path.join(self.staging, "_internal"))):
             raise OSError(tr("в архиве нет программы"))
+        # the setup's uninstaller (unins000.exe/.dat) lives in the program folder:
+        # take it along, or "Apps & features" couldn't remove the program any more
+        for name in (os.listdir(self.app_dir) if os.path.isdir(self.app_dir) else ()):
+            src = os.path.join(self.app_dir, name)
+            if name.lower().startswith("unins") and os.path.isfile(src):
+                shutil.copy2(src, os.path.join(self.staging, name))
 
 
 def swap_and_restart(app_dir, staging):
@@ -2325,12 +2361,16 @@ class Renderer:
             for disk in data["disks"]:
                 secs.append((38, lambda d, texts, y, data, scale, disk=disk:
                              self._draw_disk(d, texts, y, disk, scale)))
+        sensors = []
         if "temps" not in hidden:
-            secs.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
+            sensors.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
         if "battery" not in hidden and data.get("battery_wear") is not None:
-            secs.append((38, self._draw_battery))
+            sensors.append((38, self._draw_battery))
         if "fans" not in hidden and data.get("fans"):
-            secs.append((24, self._draw_fans))
+            sensors.append((24, self._draw_fans))
+        if sensors and secs:
+            secs.append((16, self._draw_divider))
+        secs += sensors
         lower = []
         if "net" not in hidden:
             lower.append((22, self._draw_net))
@@ -2433,7 +2473,9 @@ class Renderer:
         texts.append((P - 1, hero_base, num, self.f_hero, scale(cpu / 100), "ls"))
         texts.append((P + num_w + 2, hero_base, "%", self.f_hero_unit, DIM, "ls"))
         procs = data.get("procs")
-        texts.append((P, hero_base + 18, tr("Процессор"), self.f_small, DIM, "ls"))
+        cpu_label = data.get("cpu_name") or tr("Процессор")
+        cpu_label = ellipsize(cpu_label, self.f_small, self.px(118))
+        texts.append((P, hero_base + 18, cpu_label, self.f_small, DIM, "ls"))
         hx0 = P + 82
         self._histogram(d, hx0, 50, Wl - P, 100, data["cpu_hist"], scale)
         extra = cpu_extra_text(data)
@@ -2443,7 +2485,7 @@ class Renderer:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
             self._compact_rows(texts, data, scale, HERO_H)
             return self._compose(card, layer, texts)
-        chev_x = P + self.f_small.getlength(tr("Процессор") + " ") / self.s
+        chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
@@ -2453,6 +2495,77 @@ class Renderer:
                 draw(d, texts, y, data, scale)
             y += h
         return self._compose(card, layer, texts)
+
+    # --- section icons: small line drawings, so a row is recognised before it is read ---
+    ICON_W = 16  # icon + gap before the label, logical px
+
+    def _icon(self, d, kind, x, cy, color):
+        """Draw a ~11 px icon with its left edge at x, centred on cy (logical px)."""
+        ss = self._ss
+        lw = max(1, round(1.15 * self.s * SS))
+
+        def box(x0, y0, x1, y1, r=1.2):
+            d.rounded_rectangle(ss(x0, y0, x1, y1), radius=r * self.s * SS, outline=color, width=lw)
+
+        def line(*pts):
+            d.line(ss(*pts), fill=color, width=lw)
+
+        if kind == "cpu":
+            box(x + 2.5, cy - 3.5, x + 9.5, cy + 3.5)
+            d.rectangle(ss(x + 4.6, cy - 1.4, x + 7.4, cy + 1.4), fill=color)
+            for k in (-2, 0, 2):
+                line(x + 6 + k, cy - 5.5, x + 6 + k, cy - 3.5)
+                line(x + 6 + k, cy + 3.5, x + 6 + k, cy + 5.5)
+                line(x + 0.5, cy + k, x + 2.5, cy + k)
+                line(x + 9.5, cy + k, x + 11.5, cy + k)
+        elif kind == "cores":
+            for gx in (0, 6):
+                for gy in (-5, 1):
+                    d.rounded_rectangle(ss(x + 0.5 + gx, cy + gy, x + 5 + gx, cy + gy + 4.5),
+                                        radius=0.8 * self.s * SS, fill=color)
+        elif kind == "ram":
+            box(x, cy - 4, x + 12, cy + 2)
+            for k in (2.5, 6, 9.5):
+                line(x + k, cy + 2, x + k, cy + 4.5)
+            d.rectangle(ss(x + 2.5, cy - 2, x + 9.5, cy), fill=color)
+        elif kind == "gpu":
+            box(x, cy - 4, x + 12, cy + 3.5)
+            d.ellipse(ss(x + 4.2, cy - 2.9, x + 9.8, cy + 2.7), outline=color, width=lw)
+            line(x + 2, cy + 3.5, x + 2, cy + 5.5)
+        elif kind == "disk":
+            box(x, cy - 4, x + 12, cy + 4, r=2)
+            line(x + 2.5, cy + 1.2, x + 7, cy + 1.2)
+            d.ellipse(ss(x + 8.5, cy + 0.2, x + 10.3, cy + 2), fill=color)
+        elif kind == "temp":
+            box(x + 4.3, cy - 5.5, x + 7.7, cy + 1.5, r=1.7)
+            d.ellipse(ss(x + 3, cy + 0.5, x + 9, cy + 6), fill=color)
+        elif kind == "battery":
+            box(x, cy - 3.5, x + 10.5, cy + 3.5)
+            d.rectangle(ss(x + 10.8, cy - 1.5, x + 12, cy + 1.5), fill=color)
+            d.rectangle(ss(x + 2, cy - 1.5, x + 6.5, cy + 1.5), fill=color)
+        elif kind == "fan":
+            d.ellipse(ss(x + 0.5, cy - 5.5, x + 11.5, cy + 5.5), outline=color, width=lw)
+            for ang in (90, 210, 330):
+                a = math.radians(ang)
+                line(x + 6, cy, x + 6 + 4 * math.cos(a), cy - 4 * math.sin(a))
+        elif kind == "net":
+            line(x + 3.5, cy + 5, x + 3.5, cy - 4.5)
+            line(x + 1, cy - 2, x + 3.5, cy - 4.5, x + 6, cy - 2)
+            line(x + 8.5, cy - 5, x + 8.5, cy + 4.5)
+            line(x + 6, cy + 2, x + 8.5, cy + 4.5, x + 11, cy + 2)
+        elif kind == "ping":
+            for i, hgt in enumerate((3.5, 6.5, 10)):
+                bx = x + 0.5 + i * 4.2
+                d.rounded_rectangle(ss(bx, cy + 5 - hgt, bx + 2.8, cy + 5), radius=0.7 * self.s * SS,
+                                    fill=color)
+        elif kind == "clock":
+            d.ellipse(ss(x + 0.5, cy - 5.5, x + 11.5, cy + 5.5), outline=color, width=lw)
+            line(x + 6, cy - 3, x + 6, cy, x + 8.5, cy + 1.5)
+
+    def _label(self, d, texts, baseline, text, icon, font=None, color=TEXT):
+        """A section label with its icon in front of it."""
+        self._icon(d, icon, self.PAD, baseline - 4.4, DIM)
+        texts.append((self.PAD + self.ICON_W, baseline, text, font or self.f_label, color, "ls"))
 
     # --- sections: draw(d, texts, y, data, scale) ---
     def _draw_update(self, d, texts, y, data, scale):
@@ -2502,7 +2615,7 @@ class Renderer:
         P, Wl = self.PAD, self.WIDTH
         cores = data["cores"]
         top = max(cores)
-        texts.append((P, y + 14, tr("Ядра"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Ядра"), "cores")
         texts.append(("rich", Wl - P, y + 14, [(tr("макс") + " ", self.f_small, DIM),
                                                (f"{top:.0f}%", self.f_value, scale(top / 100))]))
         n = len(cores)
@@ -2518,7 +2631,7 @@ class Renderer:
 
     def _draw_ram(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 14, tr("Память"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Память"), "ram")
         texts.append(("rich", Wl - P, y + 14, [
             (tr("{used} из {total} ГБ", used=fmt_gb(data['ram_used']),
                 total=fmt_gb(data['ram_total'])) + "   ", self.f_small, DIM),
@@ -2528,10 +2641,10 @@ class Renderer:
     def _draw_gpu(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
         load, gname = data.get("gpu_load"), data.get("gpu_name")
-        texts.append((P, y + 14, tr("Видеокарта"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Видеокарта"), "gpu")
         if load is not None:
             value = f"{load:.0f}%"
-            room = (self.px(Wl - P) - self.px(P) - self.f_label.getlength(tr("Видеокарта"))
+            room = (self.px(Wl - P) - self.px(P + self.ICON_W) - self.f_label.getlength(tr("Видеокарта"))
                     - self.f_value.getlength(value) - self.px(24))
             parts = ([(ellipsize(gname, self.f_small, room) + "   ", self.f_small, DIM)] if gname else [])
             texts.append(("rich", Wl - P, y + 14, parts + [(value, self.f_value, TEXT)]))
@@ -2542,7 +2655,7 @@ class Renderer:
     def _draw_disk(self, d, texts, y, disk, scale):
         P, Wl = self.PAD, self.WIDTH
         name, used, total, pct = disk
-        texts.append((P, y + 14, tr("Диск {name}", name=name), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Диск {name}", name=name), "disk")
         texts.append(("rich", Wl - P, y + 14, [
             (tr("{used} из {total} ГБ", used=fmt_gb(used), total=fmt_gb(total)) + "   ",
              self.f_small, DIM),
@@ -2555,7 +2668,7 @@ class Renderer:
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         online = self._temps_online(data)
         self.temps_box = (self.px(P - 4), self.px(y), self.px(Wl - P + 4), self.px(y + 58))
-        texts.append((P, y + 14, tr("Температура"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Температура"), "temp")
         if not online:
             texts.append(("rich", Wl - P, y + 14, [(tr("нет данных"), self.f_small, FAINT)]))
         self._temp_strip(d, P, y + 26, Wl - P, cpu_t, gpu_t, scale, online)
@@ -2588,7 +2701,7 @@ class Renderer:
         else:
             info = tr("{full} из {design} Вт·ч", full=fmt_wh(data['battery_full']),
                       design=fmt_wh(data['battery_design'])) + "   "
-        texts.append((P, y + 14, tr("Батарея"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Батарея"), "battery")
         texts.append(("rich", Wl - P, y + 14, [
             (info, self.f_small, DIM), (tr("износ") + " ", self.f_small, DIM),
             (f"{wear:.0f}%", self.f_value, scale(min(1.0, wear / 40)))]))
@@ -2597,7 +2710,7 @@ class Renderer:
     def _draw_fans(self, d, texts, y, data, scale):
         """Fan speeds (only when the sensors report any), coloured by how fast they spin."""
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 14, tr("Вентиляторы"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 14, tr("Вентиляторы"), "fan")
         parts = []
         for i, rpm in enumerate(data["fans"]):
             if i:
@@ -2613,7 +2726,7 @@ class Renderer:
     def _draw_net(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
         down_c, up_c = scale(0.0), scale(0.75)
-        texts.append((P, y + 12, tr("Сеть"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 12, tr("Сеть"), "net")
         texts.append(("rich", Wl - P, y + 12, [
             ("↓ ", self.f_sym, down_c), (fmt_speed(data["net_down"]), self.f_small, TEXT),
             ("     ↑ ", self.f_sym, up_c), (fmt_speed(data["net_up"]), self.f_small, TEXT)]))
@@ -2641,7 +2754,7 @@ class Renderer:
 
     def _draw_ping(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 12, tr("Пинг"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 12, tr("Пинг"), "ping")
         ping = data.get("ping")
         if not data.get("ping_ready"):
             parts = [("…", self.f_small, FAINT)]
@@ -2656,15 +2769,16 @@ class Renderer:
 
     def _draw_disk_io(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
-        texts.append((P, y + 12, tr("Диск"), self.f_label, TEXT, "ls"))
+        self._label(d, texts, y + 12, tr("Диск"), "disk")
         texts.append(("rich", Wl - P, y + 12, [
             (tr("чтение") + " ", self.f_small, DIM), (fmt_speed(data["io_read"]), self.f_small, TEXT),
             ("   " + tr("запись") + " ", self.f_small, DIM),
             (fmt_speed(data["io_write"]), self.f_small, TEXT)]))
 
     def _draw_footer(self, d, texts, y, data, scale):
-        texts.append((self.PAD, y + 18, tr("Без перезагрузки {t}", t=fmt_uptime(data['uptime'])),
-                      self.f_small, FAINT, "ls"))
+        self._icon(d, "clock", self.PAD, y + 14, FAINT)
+        texts.append((self.PAD + self.ICON_W, y + 18,
+                      tr("Без перезагрузки {t}", t=fmt_uptime(data['uptime'])), self.f_small, FAINT, "ls"))
 
     def _compose(self, card, layer, texts):
         img = card.convert("RGBA")
@@ -4388,6 +4502,7 @@ class Widget:
             "cpu": cpu,
             "cpu_hist": list(self.cpu_hist),
             "cores": cores,
+            "cpu_name": cpu_model(),
             "ram_pct": mem.percent,
             "ram_used": mem.used,
             "ram_total": mem.total,
@@ -4515,6 +4630,23 @@ def write_diagnostics():
         f.write("\n".join(lines) + "\n")
 
 
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F0D6F2A-6C1B-4E9B-9D5E-2B7C3A1F4E11}_is1"
+
+
+def sync_uninstall_version():
+    """After an in-app update, show the new version in "Apps & features" too
+    (the entry the setup made for this user, if there is one)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY, 0,
+                            winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+            if winreg.QueryValueEx(key, "DisplayVersion")[0] != APP_VERSION:
+                winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, APP_VERSION)
+                winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "PC Monitor")
+    except OSError:
+        pass
+
+
 def leave_program_folder():
     """Work from the data folder in %APPDATA%, not the program folder: a process whose
     current folder is inside it (and children that inherit that) would block
@@ -4534,6 +4666,7 @@ def leave_program_folder():
 if __name__ == "__main__":
     setup_logging()
     leave_program_folder()
+    sync_uninstall_version()
     if "--diag" in sys.argv:
         write_diagnostics()
         sys.exit(0)
