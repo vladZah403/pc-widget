@@ -133,7 +133,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
-                  "ping_host": "1.1.1.1"}
+                  "ping_host": "1.1.1.1", "fps": True}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -762,6 +762,264 @@ class HotkeyListener(threading.Thread):
                     self.pressed.set()
         except (AttributeError, OSError):
             self.ok = False
+
+
+# ---------- FPS (admin mode) ----------
+# Frames are counted the way PresentMon does at its simplest: every DXGI
+# Present call (Direct3D 10/11/12) raises a Present_Start event in the
+# Microsoft-Windows-DXGI ETW provider. A real-time ETW session needs admin
+# rights. Vulkan and OpenGL games don't go through DXGI and show no FPS.
+
+from ctypes import wintypes as _w
+
+FPS_SESSION = "PCMonitorFPS"
+DXGI_PROVIDER = "{CA11C036-0102-4A2D-A6AD-F03CFED5D3C9}"
+DXGI_PRESENT_IDS = (42, 55)  # Present_Start, PresentMultiplaneOverlay_Start
+FPS_WINDOW_S = 2.0           # frames are averaged over this much of the latest events
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class _WNODE_HEADER(ctypes.Structure):
+    _fields_ = [("BufferSize", ctypes.c_ulong), ("ProviderId", ctypes.c_ulong),
+                ("HistoricalContext", ctypes.c_uint64), ("TimeStamp", ctypes.c_int64),
+                ("Guid", _GUID), ("ClientContext", ctypes.c_ulong), ("Flags", ctypes.c_ulong)]
+
+
+class _EVENT_TRACE_PROPERTIES(ctypes.Structure):
+    _fields_ = [("Wnode", _WNODE_HEADER), ("BufferSize", ctypes.c_ulong),
+                ("MinimumBuffers", ctypes.c_ulong), ("MaximumBuffers", ctypes.c_ulong),
+                ("MaximumFileSize", ctypes.c_ulong), ("LogFileMode", ctypes.c_ulong),
+                ("FlushTimer", ctypes.c_ulong), ("EnableFlags", ctypes.c_ulong),
+                ("AgeLimit", ctypes.c_long), ("NumberOfBuffers", ctypes.c_ulong),
+                ("FreeBuffers", ctypes.c_ulong), ("EventsLost", ctypes.c_ulong),
+                ("BuffersWritten", ctypes.c_ulong), ("LogBuffersLost", ctypes.c_ulong),
+                ("RealTimeBuffersLost", ctypes.c_ulong), ("LoggerThreadId", _w.HANDLE),
+                ("LogFileNameOffset", ctypes.c_ulong), ("LoggerNameOffset", ctypes.c_ulong)]
+
+
+class _EVENT_TRACE_HEADER(ctypes.Structure):
+    _fields_ = [("Size", ctypes.c_ushort), ("FieldTypeFlags", ctypes.c_ushort),
+                ("Version", ctypes.c_ulong), ("ThreadId", ctypes.c_ulong),
+                ("ProcessId", ctypes.c_ulong), ("TimeStamp", ctypes.c_int64), ("Guid", _GUID),
+                ("ProcessorTime", ctypes.c_uint64)]
+
+
+class _EVENT_TRACE(ctypes.Structure):
+    _fields_ = [("Header", _EVENT_TRACE_HEADER), ("InstanceId", ctypes.c_ulong),
+                ("ParentInstanceId", ctypes.c_ulong), ("ParentGuid", _GUID),
+                ("MofData", ctypes.c_void_p), ("MofLength", ctypes.c_ulong),
+                ("ClientContext", ctypes.c_ulong)]
+
+
+class _SYSTEMTIME(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_ushort) for n in ("wYear", "wMonth", "wDayOfWeek", "wDay", "wHour",
+                                                "wMinute", "wSecond", "wMilliseconds")]
+
+
+class _TIME_ZONE_INFORMATION(ctypes.Structure):
+    _fields_ = [("Bias", ctypes.c_long), ("StandardName", ctypes.c_wchar * 32),
+                ("StandardDate", _SYSTEMTIME), ("StandardBias", ctypes.c_long),
+                ("DaylightName", ctypes.c_wchar * 32), ("DaylightDate", _SYSTEMTIME),
+                ("DaylightBias", ctypes.c_long)]
+
+
+class _TRACE_LOGFILE_HEADER(ctypes.Structure):
+    _fields_ = [("BufferSize", ctypes.c_ulong), ("Version", ctypes.c_ulong),
+                ("ProviderVersion", ctypes.c_ulong), ("NumberOfProcessors", ctypes.c_ulong),
+                ("EndTime", ctypes.c_int64), ("TimerResolution", ctypes.c_ulong),
+                ("MaximumFileSize", ctypes.c_ulong), ("LogFileMode", ctypes.c_ulong),
+                ("BuffersWritten", ctypes.c_ulong), ("LogInstanceGuid", _GUID),
+                ("LoggerName", ctypes.c_void_p), ("LogFileName", ctypes.c_void_p),
+                ("TimeZone", _TIME_ZONE_INFORMATION), ("BootTime", ctypes.c_int64),
+                ("PerfFreq", ctypes.c_int64), ("StartTime", ctypes.c_int64),
+                ("ReservedFlags", ctypes.c_ulong), ("BuffersLost", ctypes.c_ulong)]
+
+
+class _EVENT_DESCRIPTOR(ctypes.Structure):
+    _fields_ = [("Id", ctypes.c_ushort), ("Version", ctypes.c_ubyte), ("Channel", ctypes.c_ubyte),
+                ("Level", ctypes.c_ubyte), ("Opcode", ctypes.c_ubyte), ("Task", ctypes.c_ushort),
+                ("Keyword", ctypes.c_uint64)]
+
+
+class _EVENT_HEADER(ctypes.Structure):
+    """Head of EVENT_RECORD: all the callback needs."""
+    _fields_ = [("Size", ctypes.c_ushort), ("HeaderType", ctypes.c_ushort),
+                ("Flags", ctypes.c_ushort), ("EventProperty", ctypes.c_ushort),
+                ("ThreadId", ctypes.c_ulong), ("ProcessId", ctypes.c_ulong),
+                ("TimeStamp", ctypes.c_int64), ("ProviderId", _GUID),
+                ("EventDescriptor", _EVENT_DESCRIPTOR), ("ProcessorTime", ctypes.c_uint64),
+                ("ActivityId", _GUID)]
+
+
+_EVENT_RECORD_CALLBACK = ctypes.WINFUNCTYPE(None, ctypes.POINTER(_EVENT_HEADER))
+
+
+class _EVENT_TRACE_LOGFILEW(ctypes.Structure):
+    _fields_ = [("LogFileName", ctypes.c_wchar_p), ("LoggerName", ctypes.c_wchar_p),
+                ("CurrentTime", ctypes.c_int64), ("BuffersRead", ctypes.c_ulong),
+                ("ProcessTraceMode", ctypes.c_ulong), ("CurrentEvent", _EVENT_TRACE),
+                ("LogfileHeader", _TRACE_LOGFILE_HEADER), ("BufferCallback", ctypes.c_void_p),
+                ("BufferSize", ctypes.c_ulong), ("Filled", ctypes.c_ulong),
+                ("EventsLost", ctypes.c_ulong), ("EventRecordCallback", _EVENT_RECORD_CALLBACK),
+                ("IsKernelTrace", ctypes.c_ulong), ("Context", ctypes.c_void_p)]
+
+
+def fps_from_times(times, now=None, window=FPS_WINDOW_S, stale=2.5):
+    """Frames per second from QPC-second timestamps of presents (sorted), or None
+    when the process hasn't presented lately."""
+    if len(times) < 2:
+        return None
+    now = time.perf_counter() if now is None else now
+    last = times[-1]
+    if now - last > stale + window:  # events arrive in batches up to ~1 s late
+        return None
+    recent = [t for t in times if t >= last - window]
+    if len(recent) < 2 or recent[-1] <= recent[0]:
+        return None
+    return (len(recent) - 1) / (recent[-1] - recent[0])
+
+
+class FpsReader(threading.Thread):
+    """Real-time ETW session on the DXGI provider; fps(pid) for any process."""
+
+    def __init__(self):
+        super().__init__(daemon=True, name="fps")
+        self.frames = {}       # pid -> list of present times (QPC seconds), last few seconds
+        self.lock = threading.Lock()
+        self.error = None      # why it doesn't work, for the log / menu
+        self.running = False
+        self.session = None
+        self._first_logged = False
+
+    # --- session control ---
+    def _props(self):
+        size = ctypes.sizeof(_EVENT_TRACE_PROPERTIES)
+        buf = ctypes.create_string_buffer(size + 2 * (len(FPS_SESSION) + 1) + 16)
+        props = _EVENT_TRACE_PROPERTIES.from_buffer(buf)
+        props.Wnode.BufferSize = len(buf)
+        props.Wnode.Flags = 0x00020000          # WNODE_FLAG_TRACED_GUID
+        props.Wnode.ClientContext = 1           # timestamps in QPC units
+        props.LogFileMode = 0x00000100          # EVENT_TRACE_REAL_TIME_MODE
+        props.FlushTimer = 1                    # deliver at least once a second
+        props.BufferSize = 16                   # KB
+        props.LoggerNameOffset = size
+        return buf, props
+
+    @staticmethod
+    def stop_session():
+        """Stop our session by name (also one left behind by a crashed run)."""
+        buf = FpsReader._props(None)[0]
+        ctypes.windll.advapi32.ControlTraceW(ctypes.c_uint64(0), FPS_SESSION, buf, 1)  # STOP
+
+    def stop(self):
+        self.running = False
+        if self.session is not None:
+            self.stop_session()
+
+    # --- per-process frame times ---
+    def fps(self, pid):
+        with self.lock:
+            times = list(self.frames.get(pid, ()))
+        return fps_from_times(times)
+
+    def run(self):
+        try:
+            self._run()
+        except Exception:
+            log.exception("FPS counter failed")
+            self.error = self.error or "ошибка, см. лог"
+        finally:
+            self.running = False
+
+    def _run(self):
+        adv = ctypes.windll.advapi32
+        adv.StartTraceW.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_wchar_p, ctypes.c_void_p]
+        adv.EnableTraceEx2.argtypes = [ctypes.c_uint64, ctypes.POINTER(_GUID), ctypes.c_ulong,
+                                       ctypes.c_ubyte, ctypes.c_uint64, ctypes.c_uint64,
+                                       ctypes.c_ulong, ctypes.c_void_p]
+        adv.OpenTraceW.argtypes = [ctypes.POINTER(_EVENT_TRACE_LOGFILEW)]
+        adv.OpenTraceW.restype = ctypes.c_uint64
+        adv.ProcessTrace.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_ulong,
+                                     ctypes.c_void_p, ctypes.c_void_p]
+        adv.CloseTrace.argtypes = [ctypes.c_uint64]
+
+        handle = ctypes.c_uint64()
+        buf, _ = self._props()
+        rc = adv.StartTraceW(ctypes.byref(handle), FPS_SESSION, buf)
+        if rc == 183:  # ERROR_ALREADY_EXISTS: left over from a crash
+            self.stop_session()
+            buf, _ = self._props()
+            rc = adv.StartTraceW(ctypes.byref(handle), FPS_SESSION, buf)
+        if rc != 0:
+            self.error = "нужны права администратора" if rc == 5 else f"ошибка ETW {rc}"
+            log.warning("FPS: StartTrace failed with %d", rc)
+            return
+        self.session = handle.value
+        guid = _GUID()
+        ctypes.oledll.ole32.CLSIDFromString(DXGI_PROVIDER, ctypes.byref(guid))
+        rc = adv.EnableTraceEx2(handle.value, ctypes.byref(guid), 1, 4,  # ENABLE, INFORMATION
+                                0xFFFFFFFFFFFFFFFF, 0, 0, None)
+        if rc != 0:
+            self.error = f"ошибка ETW {rc}"
+            log.warning("FPS: EnableTraceEx2 failed with %d", rc)
+            self.stop_session()
+            return
+
+        freq = ctypes.c_int64()
+        ctypes.windll.kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
+        qpc = float(freq.value)
+        keep = FPS_WINDOW_S + 4
+
+        def on_event(rec):
+            h = rec.contents
+            if h.EventDescriptor.Id not in DXGI_PRESENT_IDS:
+                return
+            t = h.TimeStamp / qpc
+            pid = h.ProcessId
+            with self.lock:
+                times = self.frames.setdefault(pid, [])
+                times.append(t)
+                if len(times) > 64 and times[0] < t - keep:
+                    del times[:len(times) // 2]
+            if not self._first_logged:
+                self._first_logged = True
+                log.info("FPS: first frame seen (pid %d)", pid)
+
+        self._callback = _EVENT_RECORD_CALLBACK(on_event)  # keep a reference
+        logfile = _EVENT_TRACE_LOGFILEW()
+        logfile.LoggerName = FPS_SESSION
+        logfile.ProcessTraceMode = 0x00000100 | 0x10000000  # REAL_TIME | EVENT_RECORD
+        logfile.EventRecordCallback = self._callback
+        trace = adv.OpenTraceW(ctypes.byref(logfile))
+        if trace == 0xFFFFFFFFFFFFFFFF:
+            self.error = "ошибка ETW (OpenTrace)"
+            log.warning("FPS: OpenTrace failed")
+            self.stop_session()
+            return
+        self.running = True
+        log.info("FPS: ETW session started")
+        try:
+            traces = (ctypes.c_uint64 * 1)(trace)
+            adv.ProcessTrace(traces, 1, None, None)  # blocks until the session stops
+        finally:
+            adv.CloseTrace(trace)
+            # forget processes that ended
+            with self.lock:
+                self.frames.clear()
+
+
+# processes whose frames are not a game's (browsers, chats, players, shell)
+FPS_IGNORE = {"chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser", "yandex",
+              "msedgewebview2", "telegram", "discord", "steamwebhelper", "explorer",
+              "applicationframehost", "searchapp", "searchhost", "startmenuexperiencehost",
+              "shellexperiencehost", "textinputhost", "vlc", "mpc-hc64", "mpc-be64",
+              "potplayermini64", "spotify", "code", "devenv", "obs64", "pc-monitor", "python",
+              "pythonw", "dwm", "winword", "excel", "powerpnt", "outlook", "onenote", "teams",
+              "ms-teams", "zoom", "slack", "whatsapp"}
 
 
 # ---------- tray icon ----------
@@ -2573,6 +2831,89 @@ class HistoryCard(PopupCard):
             self._show_image(img, *self.pos)
 
 
+class FpsOverlay:
+    """'FPS 60' in the top-left corner of the game window: topmost, clicks go
+    through it to the game, and it never takes the focus."""
+
+    OFFSCREEN = "1x1+-9000+-9000"
+
+    def __init__(self, widget):
+        self.px = px = widget.renderer.px
+        self.f_label = load_font(px(11), "SemiBold")
+        self.f_value = load_font(px(17), "SemiBold Condensed")
+        self.top = top = tk.Toplevel(widget.root)
+        top.overrideredirect(True)
+        top.configure(bg=KEY_HEX)
+        top.attributes("-transparentcolor", KEY_HEX)
+        top.attributes("-topmost", True)
+        self.view = tk.Label(top, bg=KEY_HEX, bd=0, highlightthickness=0)
+        self.view.pack()
+        top.geometry(self.OFFSCREEN)
+        top.update_idletasks()
+        hwnd = int(top.wm_frame(), 16)
+        u = ctypes.windll.user32
+        u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u.GetWindowLongPtrW.argtypes = [_w.HWND, ctypes.c_int]
+        ex = u.GetWindowLongPtrW(hwnd, -20)  # GWL_EXSTYLE
+        # TRANSPARENT: clicks pass through; TOOLWINDOW: no taskbar button; NOACTIVATE: no focus
+        _user32.SetWindowLongPtrW(hwnd, -20, ex | 0x20 | 0x80000 | 0x80 | 0x08000000)
+        self.hwnd = hwnd
+        self.photo = None
+        self.visible = False
+        self.shown = None  # (text, colour, x, y) on screen now
+
+    def render(self, text, color):
+        px = self.px
+        w = int(self.f_label.getlength("FPS ") + self.f_value.getlength(text)) + px(22)
+        h = px(30)
+        img = card_image(px, w, h)
+        d = ImageDraw.Draw(img)
+        d.text((px(11), px(20)), "FPS", font=self.f_label, fill=DIM, anchor="ls")
+        d.text((w - px(11), px(21)), text, font=self.f_value, fill=color, anchor="rs")
+        return img
+
+    def show(self, fps, rect, scale):
+        text = f"{fps:.0f}"
+        color = scale(0.05 if fps >= 55 else 0.55 if fps >= 30 else 0.95)
+        x, y = rect[0] + self.px(12), rect[1] + self.px(12)
+        if self.shown == (text, color, x, y):
+            return
+        self.shown = (text, color, x, y)
+        img = self.render(text, color)
+        self.photo = ImageTk.PhotoImage(img)
+        self.view.configure(image=self.photo)
+        self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
+        self.top.lift()
+        self.visible = True
+
+    def hide(self):
+        if self.visible:
+            self.top.geometry(self.OFFSCREEN)
+            self.visible = False
+            self.shown = None
+
+
+def window_pid(hwnd):
+    pid = _w.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(_w.HWND(hwnd), ctypes.byref(pid))
+    return pid.value
+
+
+_names = {}
+
+
+def process_name(pid):
+    """'civilizationvi_dx12' for a pid (cached; '' if it can't be read)."""
+    if pid not in _names:
+        try:
+            _names[pid] = psutil.Process(pid).name().lower().removesuffix(".exe")
+        except (psutil.Error, OSError):
+            _names[pid] = ""
+        if len(_names) > 500:
+            _names.clear()
+    return _names[pid]
+
+
 # ---------- window ----------
 
 class Widget:
@@ -2658,6 +2999,11 @@ class Widget:
         self.tray = None
         if _user32 is not None and self.cfg["tray"]:
             self._start_tray()
+        self.fps = None
+        self.fps_streak = (0, 0)  # (pid, seconds in a row with game-like FPS)
+        self.fps_overlay = FpsOverlay(self) if _user32 is not None else None
+        if self.cfg["fps"]:
+            self._start_fps()
         self.hotkey = HotkeyListener()
         self.hotkey.start()
         self._poll_hotkey()
@@ -2707,6 +3053,54 @@ class Widget:
             else:
                 self._tray_menu()
         self.root.after(120, self._poll_hotkey)
+
+    # --- FPS ---
+    def _start_fps(self):
+        """ETW sessions usually need admin rights (some PCs allow them without);
+        if Windows refuses, fps.error says why."""
+        if self.fps is None:
+            self.fps = FpsReader()
+            self.fps.start()
+
+    def _toggle_fps(self):
+        self.cfg["fps"] = self.fps_var.get()
+        save_config(self.cfg)
+        if self.cfg["fps"]:
+            self._start_fps()
+            self.root.after(1500, self._fps_problem)
+        elif self.fps is not None:
+            self.fps.stop()
+            self.fps = None
+            self.fps_overlay.hide()
+
+    def _fps_problem(self):
+        """Tell why the counter can't work (after switching it on)."""
+        if self.fps is not None and self.fps.error and self.toast is not None:
+            scale = Scale(THEMES[self.cfg["theme"]][1])
+            hint = (" Включи в меню «Права администратора (температуры)»."
+                    if "администратора" in self.fps.error else "")
+            self.toast.show("FPS недоступен", f"Windows отказала: {self.fps.error}.{hint}",
+                            scale(0.75))
+
+    def _update_fps_overlay(self):
+        """Show the counter over the window in front if it is a game: not ignored, and
+        fullscreen or drawing 25+ frames a second for 3 seconds in a row."""
+        shown = None
+        fg = _user32.GetForegroundWindow() if self.fps is not None else None
+        own = {self.hwnd, getattr(self.taskbar, "hwnd", None)}
+        if fg and fg not in own and self.fps.running:
+            pid = window_pid(fg)
+            fps = self.fps.fps(pid) if pid != os.getpid() else None
+            if fps is not None and process_name(pid) not in FPS_IGNORE:
+                last_pid, streak = self.fps_streak
+                streak = streak + 1 if (pid == last_pid and fps >= 25) else int(fps >= 25)
+                self.fps_streak = (pid, streak)
+                if fullscreen_app_active() or streak >= 3:
+                    shown = (fps, window_rect(fg))
+        if shown:
+            self.fps_overlay.show(shown[0], shown[1], Scale(THEMES[self.cfg["theme"]][1]))
+        else:
+            self.fps_overlay.hide()
 
     # --- tray icon ---
     def _start_tray(self):
@@ -2839,6 +3233,9 @@ class Widget:
         self.tray_var = tk.BooleanVar(value=bool(self.cfg["tray"]))
         menu.add_checkbutton(label="Значок в трее", variable=self.tray_var,
                              command=self._toggle_tray)
+        self.fps_var = tk.BooleanVar(value=bool(self.cfg["fps"]))
+        menu.add_checkbutton(label="FPS в играх",
+                             variable=self.fps_var, command=self._toggle_fps)
         self.procs_var = tk.BooleanVar(value=False)
         menu.add_checkbutton(label="Список процессов", variable=self.procs_var,
                              command=lambda: self._set_procs(self.procs_var.get()))
@@ -2933,6 +3330,9 @@ class Widget:
         save_config(self.cfg)
 
     def quit(self):
+        if getattr(self, "fps", None) is not None:
+            self.fps.stop()  # an ETW session outlives the process unless stopped
+            self.fps = None
         if getattr(self, "history", None) is not None:
             self.history.flush()
         if getattr(self, "tray", None) is not None:
@@ -3326,6 +3726,8 @@ class Widget:
             card.refresh()
         if getattr(self, "tray", None) is not None:
             self._tray_tip(self.data)
+        if getattr(self, "fps_overlay", None) is not None:
+            self._update_fps_overlay()
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
