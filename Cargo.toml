@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["prototypes/fps"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.0.0"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

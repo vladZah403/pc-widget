@@ -1,0 +1,19 @@
+[package]
+name = "pcm-proto-fps"
+description = "Stage 0 prototype: game FPS from ETW, counted the way PC Monitor 1.8 does"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Performance",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_WindowsAndMessaging",
+]
