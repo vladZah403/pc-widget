@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PC Monitor — a desktop widget for Windows</title>
-<meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in a widget on the Windows desktop, on the taskbar and over your game. Free and open source.">
+<meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in a widget on the Windows desktop that takes any shape, on the taskbar and over your game. Free and open source.">
 <link rel="icon" href="img/compact.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,7 +24,8 @@
     --hot: #f27a3d;
     --max: #e8445a;
     --taskbar: #16161a;
-    --measure: 66ch;
+    --measure: 64ch;
+    --wide: 1160px;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -36,44 +37,57 @@
   }
   img { max-width: 100%; height: auto; display: block; }
   a { color: var(--cool); }
-  a:focus-visible, .button:focus-visible { outline: 2px solid var(--warm); outline-offset: 3px; }
-  h1, h2, h3 { font-family: "Barlow Condensed", "Bahnschrift", sans-serif; font-weight: 600; line-height: 1.1; margin: 0; }
+  a:hover { color: #6fe0d5; }
+  a:focus-visible, .button:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--warm); outline-offset: 3px;
+  }
+  h1, h2, h3 { font-family: "Barlow Condensed", "Bahnschrift", sans-serif; font-weight: 600; line-height: 1.05; margin: 0; }
 
   /* --- hero: a desktop with the widget pinned on it and the taskbar along the bottom --- */
   .desktop {
     position: relative;
     background:
-      radial-gradient(1200px 600px at 78% 30%, #2a3550 0%, transparent 60%),
-      radial-gradient(900px 500px at 10% 90%, #1f2a3d 0%, transparent 65%),
+      radial-gradient(1200px 640px at 80% 28%, #2a3550 0%, transparent 60%),
+      radial-gradient(900px 520px at 8% 92%, #1f2a3d 0%, transparent 65%),
       var(--desk);
-    padding: 72px 24px 0;
+    padding: 64px 24px 0;
     overflow: hidden;
   }
   .desktop-inner {
-    max-width: 1120px;
+    max-width: var(--wide);
     margin: 0 auto;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
-    gap: 48px;
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 56px;
+    align-items: center;
   }
-  .pitch h1 { font-size: clamp(56px, 9vw, 104px); letter-spacing: -0.01em; }
-  .pitch p.lead { font-size: clamp(19px, 2.2vw, 23px); color: var(--ink); max-width: 30ch; margin: 18px 0 30px; }
+  .pitch h1 { font-size: clamp(60px, 9.5vw, 116px); letter-spacing: -0.015em; }
+  .pitch p.lead { font-size: clamp(20px, 2.3vw, 25px); line-height: 1.4; max-width: 26ch; margin: 18px 0 32px; }
   .actions { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
   .button {
     display: inline-block;
-    padding: 14px 24px;
+    padding: 15px 26px;
     border-radius: 10px;
     font: 600 18px/1 "Barlow", sans-serif;
     text-decoration: none;
+    transition: background-color .15s, border-color .15s;
   }
-  .button.primary { background: var(--cool); color: #0f1a1c; }
-  .button.primary:hover { background: #45d3c6; }
+  .button.primary { background: var(--cool); color: #0d1a1b; }
+  .button.primary:hover { background: #4fd6c9; color: #0d1a1b; }
   .button.secondary { color: var(--ink); border: 1px solid var(--line); background: rgba(255,255,255,0.03); }
-  .button.secondary:hover { border-color: var(--mute); }
-  .small { color: var(--mute); font-size: 15px; margin-top: 16px; }
-  .pinned { justify-self: end; width: 340px; filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); }
-  .pinned img { width: 340px; }
+  .button.secondary:hover { border-color: var(--mute); color: var(--ink); }
+  .small { color: var(--mute); font-size: 15px; margin: 18px 0 0; }
+  .news {
+    margin: 34px 0 0;
+    max-width: 44ch;
+    padding: 14px 18px;
+    border-left: 3px solid var(--warm);
+    background: rgba(242, 179, 61, 0.06);
+    border-radius: 0 10px 10px 0;
+    font-size: 16px;
+  }
+  .news b { font-weight: 600; }
+  .pinned { justify-self: end; width: 300px; filter: drop-shadow(0 22px 44px rgba(0,0,0,0.5)); }
   .taskbar {
     margin: 64px -24px 0;
     background: var(--taskbar);
@@ -89,71 +103,155 @@
   .taskbar .clock { color: #d9dade; font-size: 14px; line-height: 1.25; text-align: right; }
 
   /* --- the meter: the widget's segmented scale, used as the divider between sections --- */
-  .meter { display: flex; gap: 4px; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  .meter { display: flex; gap: 4px; max-width: var(--wide); margin: 0 auto; padding: 0 24px; }
   .meter i { flex: 1; height: 6px; border-radius: 2px; background: var(--line); }
   header + .meter { margin-top: 56px; }
 
-  section { max-width: 1120px; margin: 0 auto; padding: 72px 24px; }
-  section h2 { font-size: clamp(36px, 5vw, 52px); margin-bottom: 14px; }
-  section > p { max-width: var(--measure); color: var(--mute); margin: 0 0 36px; }
+  section { max-width: var(--wide); margin: 0 auto; padding: 76px 24px; }
+  section h2 { font-size: clamp(38px, 5.2vw, 56px); margin-bottom: 14px; }
+  section > p, .intro p { max-width: var(--measure); color: var(--mute); margin: 0 0 36px; }
+  .intro p strong { color: var(--ink); font-weight: 500; }
 
-  .groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
-  .groups h3 { font-size: 26px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+  /* everything at a glance: a piece of the real widget over each list */
+  .groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; align-items: start; }
+  .slice {
+    margin: 0 0 22px;
+    aspect-ratio: 524 / 330;  /* all three as tall as the tallest: the headings below line up */
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 8px 0 2px;
+    overflow: hidden;
+    box-shadow: 0 14px 30px rgba(0,0,0,0.25);
+  }
+  .groups h3 { font-size: 27px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
   .groups h3::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--dot); }
   .groups ul { margin: 0; padding-left: 18px; color: var(--mute); }
   .groups li { margin: 6px 0; }
   .groups li strong { color: var(--ink); font-weight: 500; }
 
-  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: center; }
-  .split .shots { display: grid; gap: 18px; justify-items: start; }
-  .fps-pill { width: 275px; filter: drop-shadow(0 10px 24px rgba(0,0,0,0.5)); }
-  .game {
-    border-radius: 12px;
-    padding: 28px;
-    background:
-      linear-gradient(160deg, #3c4a3a 0%, #2b3328 35%, #1e2320 100%);
+  /* any shape: the widget on a little desktop, its right edge can be dragged */
+  .stage {
     position: relative;
-    min-height: 260px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background:
+      radial-gradient(800px 420px at 85% 20%, #2a3550 0%, transparent 62%),
+      radial-gradient(700px 380px at 5% 100%, #1f2a3d 0%, transparent 65%),
+      var(--desk);
+    padding: 28px;
+    min-height: 640px;
+    overflow: hidden;
   }
-  .game::after {
+  .frame {
+    position: relative;
+    width: 264px;
+    max-width: 100%;
+    filter: drop-shadow(0 18px 36px rgba(0,0,0,0.45));
+    transition: width .18s ease-out;
+  }
+  .frame img { width: 100%; }
+  .edge {
+    position: absolute;
+    top: 14px; bottom: 14px; right: -9px;
+    width: 18px;
+    border: 0; padding: 0;
+    background: transparent;
+    cursor: ew-resize;
+    touch-action: none;
+  }
+  .edge::before {
     content: "";
-    position: absolute; inset: 0;
-    border-radius: 12px;
-    background: repeating-linear-gradient(180deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 6px);
-    pointer-events: none;
+    position: absolute; top: 0; bottom: 0; left: 7px;
+    width: 4px; border-radius: 2px;
+    background: var(--mute);
+    opacity: .35;
+    transition: opacity .15s, background-color .15s;
   }
-  .game p { position: absolute; bottom: 18px; left: 28px; margin: 0; color: #c9d1c2; font-size: 15px; }
+  .edge:hover::before, .edge:focus-visible::before, .stage.dragging .edge::before { opacity: 1; background: var(--warm); }
+  .edge::after {
+    content: "";
+    position: absolute; top: 50%; left: 2px;
+    width: 14px; height: 34px; margin-top: -17px;
+    border-radius: 7px;
+    background: var(--warm);
+    box-shadow: 0 0 0 4px rgba(242,179,61,0.18);
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; margin-top: 22px; }
+  .controls label { color: var(--mute); font-size: 15px; display: flex; align-items: center; gap: 14px; }
+  .controls input[type=range] { width: min(320px, 70vw); accent-color: var(--warm); }
+  .readout { font: 600 22px/1 "Barlow Condensed", sans-serif; }
+  .readout span { color: var(--mute); font: 400 16px/1 "Barlow", sans-serif; margin-left: 8px; }
+
+  /* history */
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+  .split .shot { filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); width: 100%; max-width: min(380px, 100%); justify-self: center; }
+
+  /* in games: a dusk landscape (drawn here, no real game) with the counter in its corner */
+  .scene {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+    background: linear-gradient(180deg, #1d2440 0%, #3b3b63 38%, #a5596b 66%, #f0a35c 82%, #f6c67c 100%);
+    border: 1px solid var(--line);
+  }
+  .scene .sun {
+    position: absolute; left: 62%; top: 52%;
+    width: 16%; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle, #ffe2a8 0%, #ffc56f 45%, rgba(255,197,111,0) 70%);
+  }
+  .scene .ridge { position: absolute; inset: auto 0 0 0; }
+  .scene .far  { height: 46%; background: #574766; clip-path: polygon(0 55%, 12% 30%, 24% 48%, 38% 18%, 52% 44%, 63% 26%, 78% 50%, 90% 22%, 100% 40%, 100% 100%, 0 100%); }
+  .scene .mid  { height: 34%; background: #2f2c45; clip-path: polygon(0 40%, 15% 62%, 30% 28%, 46% 58%, 58% 36%, 74% 66%, 88% 34%, 100% 56%, 100% 100%, 0 100%); }
+  .scene .near { height: 20%; background: #15141f; clip-path: polygon(0 30%, 20% 60%, 34% 38%, 55% 70%, 70% 44%, 86% 64%, 100% 36%, 100% 100%, 0 100%); }
+  .scene .pill {
+    position: absolute; left: 3%; top: 4.5%;
+    width: 46%; max-width: 280px;
+    filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5));
+  }
+  .caption { color: var(--mute); font-size: 15px; margin: 12px 0 0; }
 
   .themes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
   .themes figure { margin: 0; }
-  .themes img { width: 100%; }
+  .themes img { width: 100%; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.35)); }
   .themes figcaption { color: var(--mute); font-size: 15px; margin-top: 8px; }
 
   ol.steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; max-width: var(--measure); }
   ol.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 12px; }
   ol.steps li::before {
     content: counter(step);
-    font: 600 26px/1 "Barlow Condensed", sans-serif;
+    font: 600 28px/1 "Barlow Condensed", sans-serif;
     color: var(--warm);
-    padding-top: 2px;
+    padding-top: 1px;
   }
   ol.steps b { font-weight: 600; }
   ol.steps span { color: var(--mute); display: block; }
 
   footer { border-top: 1px solid var(--line); color: var(--mute); font-size: 15px; }
-  footer .inner { max-width: 1120px; margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }
+  footer .inner { max-width: var(--wide); margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }
 
-  @media (max-width: 880px) {
-    .desktop-inner { grid-template-columns: 1fr; }
-    .pinned { justify-self: start; width: min(340px, 100%); }
+  @media (max-width: 900px) {
+    .desktop-inner { grid-template-columns: 1fr; gap: 40px; }
+    .pinned { justify-self: start; width: min(300px, 100%); }
     .groups, .split { grid-template-columns: 1fr; }
+    .groups { gap: 44px; }
+    .split .shot { justify-self: start; }
     .themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .taskbar .clock { display: none; }
     .taskbar { justify-content: flex-start; overflow: hidden; }
+    .stage { min-height: 0; padding: 18px; }
   }
-  @media (max-width: 420px) {
-    .fps-pill { width: 100%; }
-    .themes { grid-template-columns: 1fr; }
+  @media (max-width: 440px) {
+    .themes { gap: 12px; }
+    .themes figcaption { font-size: 14px; }
+    section { padding: 60px 16px; }
+    .desktop { padding: 48px 16px 0; }
+    .taskbar { margin: 48px -16px 0; }
+    .meter { padding: 0 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .frame, .edge::before, .button { transition: none; }
   }
 </style>
 </head>
@@ -169,43 +267,48 @@
         <a class="button secondary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor.zip">Portable zip</a>
       </div>
       <p class="small">Windows 10 and 11. Free and open source. Updates install in one click from the widget.</p>
+      <p class="news"><b>New in 1.7:</b> drag the widget into any shape — wide, it lays its readings out in two or three columns. Click any row for its history. <a href="https://github.com/vladZah403/pc-widget/releases/latest">All changes</a></p>
     </div>
     <div class="pinned">
-      <img src="img/widget.png" width="528" height="1140" alt="The PC Monitor widget: CPU at 45% with a one-minute histogram, cores, memory, graphics, disk, temperatures, SSD health, network graph, ping">
+      <img src="img/widget.png" width="528" height="1140" alt="The PC Monitor widget: CPU at 45% with a one-minute histogram, cores, memory, graphics, disk, temperatures, battery, SSD health, network graph, ping">
     </div>
   </div>
   <div class="taskbar" aria-label="The mini panel on the taskbar">
-    <img src="img/taskbar.png" alt="Taskbar panel: CPU 45%, RAM 40%, download and upload speed, ping 24 ms, CPU and GPU temperature">
+    <img src="img/taskbar.png" width="503" height="80" alt="Taskbar panel: CPU 45%, RAM 40%, download and upload speed, ping 24 ms, CPU and GPU temperature">
     <div class="clock">22:57<br>21.11.2026</div>
   </div>
 </header>
 
-<div class="meter" aria-hidden="true" id="meter"></div>
+<div class="meter" aria-hidden="true"></div>
 
 <section>
-  <h2>Everything at a glance</h2>
-  <p>Every value is coloured on one cool-to-hot scale, so a red number means "look here" whatever it measures.</p>
+  <div class="intro">
+    <h2>Everything at a glance</h2>
+    <p>Every value is coloured on one cool-to-hot scale, so a red number means "look here" whatever it measures. <strong>Click any row</strong> — cores, memory, graphics, temperature, network — for its last hour or day.</p>
+  </div>
   <div class="groups">
     <div style="--dot: var(--cool)">
+      <figure class="slice"><img src="img/glance-load.png" width="524" height="308" alt="Cores, memory, graphics and disk rows of the widget"></figure>
       <h3>Load</h3>
       <ul>
         <li><strong>Processor</strong> with a one-minute histogram, clock and power</li>
         <li><strong>Every core</strong> as its own bar</li>
         <li><strong>Memory, graphics, disks</strong> — USB sticks show up by themselves</li>
-        <li><strong>Top programs</strong> by load, one click on the CPU block — and close one right there</li>
+        <li><strong>Top programs</strong> by load: click the CPU block, and close one right there</li>
       </ul>
     </div>
     <div style="--dot: var(--warm)">
+      <figure class="slice"><img src="img/glance-sensors.png" width="524" height="276" alt="Temperature, battery and SSD rows of the widget"></figure>
       <h3>Sensors</h3>
       <ul>
         <li><strong>CPU, GPU and SSD temperature</strong></li>
-        <li><strong>SSD health</strong>: wear, data written — no admin rights needed</li>
+        <li><strong>SSD health</strong>: wear and data written, no admin rights needed</li>
         <li><strong>Battery</strong>: time left, wear, power draw</li>
         <li><strong>Fans</strong>, when the PC reports them</li>
-        <li><strong>History</strong> of CPU, GPU, memory and network for the last hour or day, saved as CSV</li>
       </ul>
     </div>
     <div style="--dot: var(--max)">
+      <figure class="slice"><img src="img/glance-network.png" width="524" height="188" alt="Network graph, ping and disk activity rows of the widget"></figure>
       <h3>Network</h3>
       <ul>
         <li><strong>Download and upload</strong> with a one-minute graph</li>
@@ -219,27 +322,64 @@
 
 <div class="meter" aria-hidden="true"></div>
 
-<section class="split">
-  <div>
-    <h2>In games</h2>
-    <p>A small counter sits in the corner of the game: FPS, the low (how far it drops in the worst moments), a frame-time graph where every stutter shows up red, and below it the CPU and GPU load and temperature, video memory, GPU clock and your ping. Put it in any corner, make it bigger, or hide it with Ctrl+Alt+F. It works with DirectX 9–12, OpenGL and Vulkan games, and clicks go straight through it. The widget itself hides while you play.</p>
+<section aria-labelledby="shape-title">
+  <div class="intro">
+    <h2 id="shape-title">Any shape</h2>
+    <p>Drag the widget's right edge, its bottom edge or its corner. Taller, the graphs grow; wider, the readings move into <strong>two or three columns</strong>. Ctrl + mouse wheel makes all of it, text included, bigger or smaller. Try it here: drag the bar on the widget's edge.</p>
   </div>
-  <div class="game">
-    <img class="fps-pill" src="img/fps.png" width="527" height="132" alt="In-game counter: FPS 47, low 22, frame-time graph, CPU 45% 66°, GPU 23% 66°, VRAM 1.2 of 2.0 GB, GPU 1800 MHz, ping 24 ms">
-    <p>Windowed or borderless mode — Windows lets nothing draw over exclusive fullscreen.</p>
+  <div class="stage" id="stage">
+    <div class="frame" id="frame">
+      <img id="shape" src="img/shape-264.png" width="528" height="1140" alt="The widget, 264 px wide: one column">
+      <button class="edge" id="edge" type="button" aria-label="Drag to make the widget wider or narrower"></button>
+    </div>
+  </div>
+  <div class="controls">
+    <label>Width <input type="range" id="width" min="0" max="5" step="1" value="0" aria-describedby="readout"></label>
+    <div class="readout" id="readout" aria-live="polite">264 px<span>one column</span></div>
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section class="split">
+  <div class="intro">
+    <h2>History in one click</h2>
+    <p>Click a row and the card beside the widget shows that reading for the last hour or the whole day, with its peak and average: CPU, GPU, memory or network. The day is kept on disk, so it survives restarts, and "Save CSV" hands it to Excel.</p>
+  </div>
+  <img class="shot" src="img/history.png" width="760" height="584" alt="History card: CPU temperature and load for the last hour, with maximum and average">
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section class="split">
+  <div class="intro">
+    <h2>In games</h2>
+    <p>A small counter sits in the corner of the game: FPS, the low (how far it drops in the worst moments), a frame-time graph where every stutter shows up red, and below it the CPU and GPU load and temperature, video memory, GPU clock and your ping. Put it in any corner, make it bigger, or hide it with <strong>Ctrl+Alt+F</strong>. DirectX 9–12, OpenGL and Vulkan games all count, and clicks go straight through it. The widget itself steps aside while you play.</p>
+  </div>
+  <div>
+    <div class="scene" role="img" aria-label="The FPS counter in the top-left corner of a game">
+      <div class="sun"></div>
+      <div class="ridge far"></div>
+      <div class="ridge mid"></div>
+      <div class="ridge near"></div>
+      <img class="pill" src="img/fps.png" width="527" height="132" alt="">
+    </div>
+    <p class="caption">Use windowed or borderless mode: Windows lets nothing draw over exclusive fullscreen.</p>
   </div>
 </section>
 
 <div class="meter" aria-hidden="true"></div>
 
 <section>
-  <h2>Make it yours</h2>
-  <p>Three palettes or two colours of your own, any shape: drag an edge or the corner, and a wide widget lays its readings out in two or three columns; any size from 80 to 200%, a compact mode, any opacity. Pin it to the desktop or keep it on top. Two profiles, Work and Game, each with its own look — Game turns on by itself while you play. The interface speaks English, Ukrainian, German and Russian.</p>
+  <div class="intro">
+    <h2>Make it yours</h2>
+    <p>Three palettes or two colours of your own, any size from 80 to 200%, a compact mode, any opacity. Pin it to the desktop or keep it on top. Two profiles, Work and Game, each with its own look — Game turns on by itself while you play. The interface speaks English, Ukrainian, German and Russian.</p>
+  </div>
   <div class="themes">
-    <figure><img src="img/theme-heat.png" alt="Compact widget, Warm palette"><figcaption>Warm</figcaption></figure>
-    <figure><img src="img/theme-neon.png" alt="Compact widget, Neon palette"><figcaption>Neon</figcaption></figure>
-    <figure><img src="img/theme-ice.png" alt="Compact widget, Ice palette"><figcaption>Ice</figcaption></figure>
-    <figure><img src="img/theme-custom.png" alt="Compact widget, custom colours"><figcaption>Your colours</figcaption></figure>
+    <figure><img src="img/theme-heat.png" width="528" height="356" alt="Compact widget, Warm palette"><figcaption>Warm</figcaption></figure>
+    <figure><img src="img/theme-neon.png" width="528" height="356" alt="Compact widget, Neon palette"><figcaption>Neon</figcaption></figure>
+    <figure><img src="img/theme-ice.png" width="528" height="356" alt="Compact widget, Ice palette"><figcaption>Ice</figcaption></figure>
+    <figure><img src="img/theme-custom.png" width="528" height="356" alt="Compact widget, custom colours"><figcaption>Your colours</figcaption></figure>
   </div>
 </section>
 
@@ -249,8 +389,8 @@
   <h2>Install</h2>
   <ol class="steps">
     <li><div><b>Download PC-Monitor-Setup.exe</b><span>It installs for your user only — no admin rights needed.</span></div></li>
-    <li><div><b>Run it.</b><span>The program isn't signed, so Windows may say "Windows protected your PC": click "More info", then "Run anyway". The source code is all on GitHub.</span></div></li>
-    <li><div><b>Turn on temperatures if you want them.</b><span>Right-click the widget → Settings → "Admin rights (temperatures)". Windows only gives temperatures to programs running as administrator.</span></div></li>
+    <li><div><b>Run it.</b><span>The program isn't signed yet, so Windows may say "Windows protected your PC": click "More info", then "Run anyway". The source code is all on GitHub.</span></div></li>
+    <li><div><b>Turn on temperatures if you want them.</b><span>Right-click the widget → Settings → "Admin rights (temperatures)": Windows gives temperatures only to programs running as administrator. On some PCs the processor also needs the free PawnIO driver.</span></div></li>
   </ol>
 </section>
 
@@ -274,13 +414,77 @@
     return mix(stops[i], stops[i + 1], t * n - i);
   };
   document.querySelectorAll(".meter").forEach((m, k) => {
-    const lit = [16, 9, 20, 13][k % 4];  // each divider shows a different "load"
+    const lit = [16, 9, 20, 13, 18, 11][k % 6];  // each divider shows a different "load"
     for (let i = 0; i < 24; i++) {
       const seg = document.createElement("i");
       if (i < lit) seg.style.background = scale(i / 23);
       m.appendChild(seg);
     }
   });
+
+  // "Any shape": the real widget rendered at six widths; dragging its edge (or the
+  // slider) picks the one that fits, so the readings jump into 2 and 3 columns
+  const widths = [264, 352, 440, 528, 660, 792];
+  const words = ["one column", "one column", "one column", "two columns", "two columns", "three columns"];
+  const stage = document.getElementById("stage"), frame = document.getElementById("frame");
+  const img = document.getElementById("shape"), edge = document.getElementById("edge");
+  const range = document.getElementById("width"), readout = document.getElementById("readout");
+  widths.forEach(w => { const pre = new Image(); pre.src = `img/shape-${w}.png`; });
+  let step = 0, touched = false;
+  const show = i => {
+    step = Math.max(0, Math.min(widths.length - 1, i));
+    const w = widths[step];
+    img.src = `img/shape-${w}.png`;
+    img.alt = `The widget, ${w} px wide: ${words[step]}`;
+    frame.style.width = w + "px";
+    range.value = step;
+    readout.innerHTML = `${w} px<span>${words[step]}</span>`;
+  };
+  const nearest = px => widths.reduce((best, w, i) => (w <= px ? i : best), 0);
+  const room = () => {
+    const cs = getComputedStyle(stage);
+    return stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  };
+  // the mouse's distance from the widget's left side, in the widget's own px; on a
+  // screen narrower than 792 px the six widths are spread over the room there is
+  const widgetPx = x => {
+    const px = x - frame.getBoundingClientRect().left, avail = room();
+    const lo = widths[0], hi = widths[widths.length - 1];
+    if (avail >= hi) return px;
+    const d0 = Math.min(lo, avail);
+    return lo + (px - d0) / Math.max(1, avail - d0) * (hi - lo);
+  };
+  let dragging = false;
+  edge.addEventListener("pointerdown", e => {
+    touched = dragging = true;
+    edge.setPointerCapture(e.pointerId);
+    stage.classList.add("dragging");
+  });
+  edge.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    const i = nearest(widgetPx(e.clientX));
+    if (i !== step) show(i);
+  });
+  const stop = () => { dragging = false; stage.classList.remove("dragging"); };
+  edge.addEventListener("pointerup", stop);
+  edge.addEventListener("pointercancel", stop);
+  edge.addEventListener("keydown", e => {
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") { touched = true; show(step + 1); e.preventDefault(); }
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") { touched = true; show(step - 1); e.preventDefault(); }
+  });
+  range.addEventListener("input", () => { touched = true; show(+range.value); });
+
+  // once, when the demo first comes into view: widen it to three columns and back,
+  // so it's clear what dragging does (not with reduced motion, not after a touch)
+  const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!calm && "IntersectionObserver" in window) {
+    const seen = new IntersectionObserver(entries => {
+      if (!entries.some(e => e.isIntersecting)) return;
+      seen.disconnect();
+      [1, 2, 3, 4, 5, 5, 3, 0].forEach((i, k) => setTimeout(() => { if (!touched) show(i); }, 500 + k * 420));
+    }, { threshold: 0.6 });
+    seen.observe(stage);
+  }
 </script>
 </body>
 </html>
