@@ -1,158 +1,162 @@
-# PC Monitor — виджет для рабочего стола Windows
+# PC Monitor — a desktop widget for Windows
 
-Лёгкий монитор ноутбука/ПК: загрузка процессора, памяти и видеокарты,
-место и активность диска, сеть и пинг, температуры, батарея — в виджете на
-рабочем столе и в мини-панели прямо на панели задач.
+A light monitor for your laptop or PC: CPU, memory and GPU load, disk space
+and activity, network and ping, temperatures and battery. It sits in a widget
+on the desktop and in a mini panel right on the taskbar.
 
-![Виджет и список процессов](docs/widget.png)
+![The widget and the process list](docs/widget.png)
 
-Все значения окрашены по одной шкале «холодно → горячо»: чем краснее, тем
-больше нагрузка или температура. Три палитры на выбор:
+Every value is coloured on one "cool → hot" scale: the redder, the higher the
+load or temperature. Three palettes to choose from:
 
-![Палитры: Тепло, Неон, Лёд](docs/themes.png)
+![Palettes: Warm, Neon, Ice](docs/themes.png)
 
-Компактный режим, карточка при наведении на мини-панель и сама мини-панель:
+Compact mode, the hover card of the mini panel and the panel itself:
 
-![Компактный режим и мини-панель](docs/compact-and-taskbar.png)
+![Compact mode and the mini panel](docs/compact-and-taskbar.png)
 
-## Возможности
-- **Процессор** — число и гистограмма за последнюю минуту, частота и
-  мощность (с правами администратора). Клик по блоку
-  раскрывает топ-5 программ по нагрузке (одноимённые процессы суммируются,
-  память — как в диспетчере задач).
-- **Память, видеокарта, диски** — сегментные шкалы; вставленная флешка
-  появляется сама.
-- **Температуры CPU / GPU / SSD** — с правами администратора (см. ниже).
-  У встроенной графики без своего датчика показывается общая температура
-  кристалла со значком «≈».
-- **Сеть** (↓ ↑) с графиком за минуту (приём — вверх, отдача — вниз),
-  **пинг** (до 1.1.1.1, 8.8.8.8, 9.9.9.9 или своего адреса — меню «Пинг до»),
-  активность диска, время без перезагрузки.
-- **История** — клик по блоку температуры (или меню «История за час и
-  сутки»): графики температуры и загрузки CPU за час или сутки с максимумом
-  и средним. Хранится в `%APPDATA%\PC-Monitor\history.csv` (точка раз в
-  10 с, не больше суток), переживает перезапуск.
-- **Батарея** — заряд и сколько ещё проработает (оценка Windows), износ
-  (сколько ёмкости потеряно с завода) и расход в ваттах без зарядки.
-- **Показывать** (меню) — лишние строки можно убрать: видеокарту, диски,
-  график сети, пинг и т.д.
-- **Мини-панель на панели задач** слева от значков трея: CPU/RAM, сеть, пинг,
-  температуры. Наведение — подробная карточка, клик — открыть виджет.
-  Кнопки приложений сдвигаются и возвращаются при выходе. В полноэкранных
-  играх и при автоскрытии панели задач — прячется.
-- **Предупреждения** карточкой в углу: перегрев CPU (по умолчанию от 90°,
-  GPU — на 3° раньше), память от 90% (с указанием, кто её съел), батарея
-  ниже 15% без зарядки. Пороги меняются в меню «Предупреждения». Каждое —
-  не чаще раза в 10 минут, фокус у игры не отбирают.
-- **Закрепление на рабочем столе** (кнопка 📌): виджет живёт под окнами,
-  не пропадает по Win+D и не двигается. Серая 📌 — можно перетаскивать.
-- **FPS в играх** — маленький «FPS 60» в углу окна игры (клики проходят
-  сквозь него). Считается по событиям Windows о каждом кадре DirectX 10/11/12
-  (как PresentMon), поэтому Vulkan/OpenGL-игры не видны, а поверх
-  эксклюзивного полноэкранного режима Windows рисовать не даёт — нужен
-  оконный или «без рамки». Обычно нужны права администратора. Браузеры,
-  мессенджеры и плееры не считаются играми.
-- **Значок в трее** у часов: левый клик — показать/скрыть виджет, правый —
-  меню, при наведении — CPU, RAM и температура. Выключается в меню.
-- **Языки**: русский, английский, украинский, немецкий — по языку Windows
-  или в меню «Язык / Language».
-- **Горячая клавиша Ctrl+Alt+W** — показать/скрыть виджет.
-- **Автозапуск** с Windows, **компактный режим**, палитры, непрозрачность —
-  всё в меню по правому клику. Повторный запуск не создаёт вторую копию.
-- **Обновления** — раз в 6 часов виджет спрашивает у GitHub, не вышла ли
-  новая версия, и если вышла — показывает строку «Вышла версия …» и одну
-  карточку. Сам ничего не скачивает и не ставит. Выключается в меню
-  «О программе → Проверять обновления».
-- **Крестик** закрывает виджет со второго нажатия (первое — красное
-  «Нажми ещё раз — закрыть»), чтобы не промахнуться мимо 📌.
+*(The screenshots show the Russian interface; the language can be switched.)*
 
-## Установка
-Нужна Windows 10 (на Windows 11 — см. ниже).
+## Features
+- **Processor** — the load and a histogram of the last minute, clock and
+  power (with admin rights). Click the block to see the top 5 programs by
+  load (processes with the same name are added up, memory as in Task Manager).
+- **Memory, graphics, disks** — segment meters; a plugged-in USB stick shows
+  up by itself.
+- **CPU / GPU / SSD temperatures** — with admin rights (see below).
+  Integrated graphics without a sensor of its own shows the shared chip
+  temperature marked with "≈".
+- **Network** (↓ ↑) with a one-minute graph (download up, upload down),
+  **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — menu
+  "Ping to"), disk activity, uptime.
+- **History** — click the temperature block (or the menu "History (hour and
+  day)"): CPU temperature and load charts for the last hour or day with the
+  maximum and average. Kept in `%APPDATA%\PC-Monitor\history.csv` (a point
+  every 10 s, one day at most), so it survives restarts.
+- **Battery** — charge and how long it will last (Windows' estimate), wear
+  (how much capacity is lost since new) and the power draw in watts when
+  unplugged.
+- **Show** (menu) — hide the rows you don't need: graphics, disks, network
+  graph, ping and so on.
+- **Mini panel on the taskbar**, left of the tray icons: CPU/RAM, network,
+  ping, temperatures. Hover for a detailed card, click to open the widget.
+  The task buttons move aside and get their space back on exit. It hides in
+  fullscreen games and when the taskbar auto-hides.
+- **Alerts** as a card in the corner: CPU overheating (from 90° by default,
+  GPU 3° earlier), memory from 90% (with the program that ate it), battery
+  below 15% when unplugged. The limits are in the "Alerts" menu. Each alert at
+  most once in 10 minutes; they never take the focus from a game.
+- **Pin to the desktop** (📌 button): the widget lives under the windows,
+  survives Win+D and can't be moved. Grey 📌 — it can be dragged.
+- **FPS in games** — a small "FPS 60" in the corner of the game window (clicks
+  go through it). Frames are counted from Windows' events for every
+  DirectX 10/11/12 frame (like PresentMon), so Vulkan/OpenGL games aren't
+  seen, and Windows doesn't let anything draw over exclusive fullscreen — use
+  windowed or borderless. Usually needs admin rights. Browsers, chats and
+  players don't count as games.
+- **Tray icon** next to the clock: left click shows/hides the widget, right
+  click opens the menu, hover shows CPU, RAM and temperature. Can be switched
+  off in the menu.
+- **Languages**: Russian, English, Ukrainian, German — as in Windows or from
+  the menu "Язык / Language".
+- **Hotkey Ctrl+Alt+W** — show/hide the widget.
+- **Start with Windows**, **compact mode**, palettes, opacity — all in the
+  right-click menu. Starting it twice doesn't open a second copy.
+- **Updates** — every 6 hours the widget asks GitHub whether a new version is
+  out and, if so, shows a "Version … is out" row and one card. It never
+  downloads or installs anything by itself. Off in "About → Check for updates".
+- **The cross** closes the widget on the second click (the first one turns it
+  red: "Click again to close"), so a slip next to 📌 doesn't quit it.
 
-1. Скачай `PC-Monitor.zip` со страницы
-   [Releases](https://github.com/vladZah403/pc-widget/releases) и распакуй
-   в любую папку.
-2. Запусти `PC-Monitor.exe`.
+## Installation
+Windows 10 is needed (for Windows 11 see below).
 
-**Предупреждение SmartScreen.** Программа не подписана сертификатом
-(он платный), поэтому Windows покажет «Система Windows защитила ваш
-компьютер». Нажми «Подробнее» → «Выполнить в любом случае». Иногда так же
-реагирует антивирус: собранные PyInstaller программы похожи друг на друга,
-и эвристика ошибается. Исходный код весь в этом репозитории — можно
-собрать самому (см. ниже).
+1. Download `PC-Monitor.zip` from
+   [Releases](https://github.com/vladZah403/pc-widget/releases) and unpack it
+   into any folder.
+2. Run `PC-Monitor.exe`.
 
-Настройки, лог ошибок (`pc-monitor.log`) и диагностика лежат в
-`%APPDATA%\PC-Monitor`. Если что-то не работает — пришли `pc-monitor.log`
-и вывод `PC-Monitor.exe --diag` (`pc-monitor-diag.txt` в той же папке).
+**SmartScreen warning.** The program isn't signed with a certificate (that
+costs money), so Windows shows "Windows protected your PC". Click "More info"
+→ "Run anyway". An antivirus may react the same way: programs built with
+PyInstaller look alike and heuristics get it wrong. All the source code is in
+this repository — you can build it yourself (see below).
 
-### Из исходников
-Нужен Python 3.10+:
+Settings, the error log (`pc-monitor.log`) and diagnostics are in
+`%APPDATA%\PC-Monitor`. If something doesn't work, send `pc-monitor.log` and
+the output of `PC-Monitor.exe --diag` (`pc-monitor-diag.txt` in the same
+folder).
+
+### From source
+Python 3.10+ is needed:
 
 ```
 python -m pip install -r requirements.txt
 ```
 
-Запуск — двойной клик по `start.bat` (или по `widget.pyw`). Сборка
-`PC-Monitor.zip` — `build_exe.bat` (нужны пакеты из `requirements-build.txt`
-и DLL LibreHardwareMonitor из `lhm-files.txt` в папке `lhm/`, см. ниже).
+Run `start.bat` (or `widget.pyw`). `build_exe.bat` builds `PC-Monitor.zip`
+(needs the packages from `requirements-build.txt` and the LibreHardwareMonitor
+DLLs listed in `lhm-files.txt` in the `lhm/` folder, see below).
 
-### Выпуск версии
-Сборкой занимается GitHub Actions (`.github/workflows/build.yml`): на каждый
-пуш в `main` он собирает `PC-Monitor.zip` на Windows и проверяет, что программа
-запускается (zip — в артефактах запуска). LibreHardwareMonitorLib берётся из
-официального релиза с проверкой SHA-256.
+### Releasing a version
+GitHub Actions does the build (`.github/workflows/build.yml`): on every push
+to `main` it builds `PC-Monitor.zip` on Windows and checks that the program
+starts (the zip is kept as a run artifact). LibreHardwareMonitorLib comes from
+its official release, checked by SHA-256.
 
-Чтобы выпустить версию: поднять `APP_VERSION` в `widget.pyw`, написать
-описание в `docs/releases/vX.Y.md`, затем
-`git tag -a vX.Y -m "PC Monitor X.Y"` и `git push origin vX.Y` — Actions
-сам создаст Release с zip.
+To release: raise `APP_VERSION` in `widget.pyw`, write the notes in
+`docs/releases/vX.Y.md`, then `git tag -a vX.Y -m "PC Monitor X.Y"` and
+`git push origin vX.Y` — Actions creates the Release with the zip.
 
-## Температура и права администратора
-Настоящие температуры процессора Windows обычным программам не отдаёт —
-их читают через драйвер. Виджет делает это сам с помощью библиотеки
+## Temperatures and admin rights
+Windows doesn't give real CPU temperatures to ordinary programs — they are
+read through a driver. The widget does it itself with
 [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
-(лицензия MPL-2.0), но только с правами администратора. Поэтому:
+(MPL-2.0 license), but only with admin rights. So:
 
-- по умолчанию виджет работает **без** прав администратора: всё, кроме
-  температур, видно сразу;
-- температуры включаются в меню: **«Права администратора (температуры)»**.
-  Нужен драйвер PawnIO (ставится один раз, его же ставит LibreHardwareMonitor);
-- в этом режиме программа копирует себя в `C:\Program Files\PC-Monitor` и
-  дальше с правами администратора запускается только оттуда. Туда без прав
-  администратора ничего не записать — значит, ни одна программа не сможет
-  подменить файлы виджета и получить через него права администратора;
-- автозапуск в этом режиме идёт через Планировщик заданий (без окна UAC при
-  входе) — и тоже только для копии из Program Files. Версия из исходников
-  (`widget.pyw`) такой автозапуск не получает: Python и его пакеты лежат в
-  папках, куда может писать кто угодно.
+- by default the widget runs **without** admin rights: everything but the
+  temperatures is shown right away;
+- temperatures are switched on in the menu: **"Admin rights (temperatures)"**.
+  The PawnIO driver is needed (installed once; LibreHardwareMonitor installs
+  it too);
+- in this mode the program copies itself to `C:\Program Files\PC-Monitor` and
+  from then on runs with admin rights only from there. Nothing can be written
+  there without admin rights — so no program can swap the widget's files to
+  get admin rights through it;
+- autostart in this mode goes through the Task Scheduler (no UAC prompt at
+  logon), also only for the copy in Program Files. The source version
+  (`widget.pyw`) never gets such an autostart: Python and its packages live in
+  folders anyone can write to.
 
-**Удалить** копию из Program Files: выключи в меню «Запускать вместе с
-Windows» и «Права администратора», закрой виджет и удали папку
+**To remove** the copy in Program Files: switch off "Start with Windows" and
+"Admin rights" in the menu, close the widget and delete
 `C:\Program Files\PC-Monitor`.
 
-**LibreHardwareMonitor** как отдельная программа больше не нужна. Если без
-прав администратора виджет видит её веб-сервер (`Options → Remote Web
-Server`), он возьмёт температуры оттуда — но этот сервер работает без пароля
-и, если брандмауэр его пропускает, виден всем в твоей сети. Без надобности
-лучше его не включать. Виджет обращается только к `127.0.0.1`.
+**LibreHardwareMonitor** as a separate program isn't needed any more. If the
+widget, without admin rights, sees its web server (`Options → Remote Web
+Server`), it takes the temperatures from there — but that server has no
+password and, if the firewall lets it through, is visible to everyone on your
+network. Better leave it off unless you need it. The widget only connects to
+`127.0.0.1`.
 
-Для запуска из исходников положи DLL из релиза LibreHardwareMonitor
-(`LibreHardwareMonitorLib.dll` и её зависимости) в папку `lhm/` и поставь
+To run from source, put the DLLs from a LibreHardwareMonitor release
+(`LibreHardwareMonitorLib.dll` and its dependencies) into `lhm/` and install
 `pythonnet` (`pip install -r requirements.txt`).
 
 ## Windows 11
-На Windows 11 другая панель задач: кнопки приложений нельзя сдвинуть, и
-мини-панель может налезть на значки. Поэтому там она по умолчанию
-выключена — включается в меню «Мини-панель на панели задач». Проверено
-только на Windows 10.
+Windows 11 has a different taskbar: the task buttons can't be moved aside, so
+the mini panel may cover icons. That's why it's off there by default — switch
+it on in the menu "Mini panel on the taskbar". Tested only on Windows 10.
 
-## Как это устроено
-- `widget.pyw` (+ переводы в `translations.py`): tkinter-окно без рамки, всё рисуется Pillow
-  (с суперсэмплингом), шрифт Bahnschrift из Windows.
-- Датчики: LibreHardwareMonitorLib через `pythonnet` (или веб-сервер LHM).
-- Данные: `psutil`; процессы — одним вызовом `NtQuerySystemInformation`,
-  как в диспетчере задач; пинг — `IcmpSendEcho` (без прав администратора).
-- Закрепление: окно принадлежит значкам рабочего стола (`SHELLDLL_DefView`);
-  мини-панель — панели задач (`Shell_TrayWnd`).
+## How it works
+- `widget.pyw` (+ translations in `translations.py`): a borderless tkinter
+  window, everything drawn with Pillow (supersampled), the Bahnschrift font
+  from Windows.
+- Sensors: LibreHardwareMonitorLib via `pythonnet` (or the LHM web server).
+- Data: `psutil`; processes with one `NtQuerySystemInformation` call, as Task
+  Manager does; ping via `IcmpSendEcho` (no admin rights needed); FPS from the
+  Microsoft-Windows-DXGI ETW provider.
+- Pinning: the window is owned by the desktop icons (`SHELLDLL_DefView`); the
+  mini panel by the taskbar (`Shell_TrayWnd`).
 
-Проверено на Windows 10 (1600×900, 100%).
+Tested on Windows 10 (1600×900, 100%).
