@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
