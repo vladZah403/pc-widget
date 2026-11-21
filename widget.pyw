@@ -1171,6 +1171,119 @@ class UpdateChecker(threading.Thread):
             self.wake.wait(UPDATE_EVERY_S)
 
 
+# ---------- history ----------
+# A point every HISTORY_STEP_S seconds for the last day, kept in history.csv in
+# %APPDATA%\PC-Monitor, so the charts survive restarts. ~8640 short lines max.
+
+HISTORY_PATH = os.path.join(DATA_DIR, "history.csv")
+HISTORY_STEP_S = 10
+HISTORY_KEEP_S = 24 * 3600
+HISTORY_FLUSH_S = 60
+
+
+def _num(text):
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+class History:
+    """(time, cpu %, cpu °C or None, gpu °C or None) rows for the last 24 hours."""
+
+    def __init__(self, path=HISTORY_PATH):
+        self.path = path
+        self.rows = []
+        self.pending = []  # added since the last write to the file
+        self.last_add = 0.0
+        self.last_flush = self.last_trim = time.time()
+        self._load()
+
+    def _load(self):
+        now = time.time()
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split(",")
+                    if len(parts) != 4:
+                        continue
+                    t, cpu = _num(parts[0]), _num(parts[1])
+                    if t is None or cpu is None or not now - HISTORY_KEEP_S <= t <= now + 60:
+                        continue
+                    self.rows.append((t, cpu, _num(parts[2]), _num(parts[3])))
+        except FileNotFoundError:
+            return
+        except OSError:
+            log_error("reading history")
+        self.rows.sort()
+        self._rewrite()  # drops what is older than a day
+
+    @staticmethod
+    def _line(row):
+        t, cpu, t_cpu, t_gpu = row
+        opt = lambda v: "" if v is None else f"{v:.1f}"
+        return f"{t:.0f},{cpu:.1f},{opt(t_cpu)},{opt(t_gpu)}\n"
+
+    def _rewrite(self):
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(self._line(r) for r in self.rows)
+            os.replace(tmp, self.path)
+        except OSError:
+            log_error("writing history")
+
+    def add(self, cpu, t_cpu, t_gpu, now=None):
+        now = time.time() if now is None else now
+        if now - self.last_add < HISTORY_STEP_S:
+            return
+        self.last_add = now
+        row = (now, cpu, t_cpu, t_gpu)
+        self.rows.append(row)
+        self.pending.append(row)
+        if now - self.last_flush >= HISTORY_FLUSH_S:
+            self.flush(now)
+
+    def flush(self, now=None):
+        """Append new points to the file; once an hour rewrite it without old ones."""
+        now = time.time() if now is None else now
+        self.last_flush = now
+        cutoff = now - HISTORY_KEEP_S
+        if self.rows and self.rows[0][0] < cutoff:
+            self.rows = [r for r in self.rows if r[0] >= cutoff]
+        if now - self.last_trim >= 3600:
+            self.last_trim = now
+            self.pending = []
+            self._rewrite()
+            return
+        if self.pending:
+            try:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.writelines(self._line(r) for r in self.pending)
+            except OSError:
+                log_error("writing history")
+            self.pending = []
+
+    def window(self, seconds, now=None):
+        now = time.time() if now is None else now
+        return [r for r in self.rows if r[0] >= now - seconds]
+
+
+def history_buckets(rows, start, end, n, index):
+    """Average and peak of column `index` in n equal time slices (None = no data)."""
+    sums, counts, peaks = [0.0] * n, [0] * n, [None] * n
+    span = (end - start) / n
+    for row in rows:
+        value = row[index]
+        if value is None or row[0] < start:
+            continue
+        i = min(n - 1, int((row[0] - start) / span))
+        sums[i] += value
+        counts[i] += 1
+        peaks[i] = value if peaks[i] is None else max(peaks[i], value)
+    return [(sums[i] / counts[i], peaks[i]) if counts[i] else None for i in range(n)]
+
+
 # ---------- ping & processes ----------
 
 PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up
@@ -1333,6 +1446,7 @@ class Renderer:
         self.pin_box = (0, 0, 0, 0)
         self.hero_box = (0, 0, 0, 0)
         self.update_box = (0, 0, 0, 0)
+        self.temps_box = (0, 0, 0, 0)
 
     def px(self, v):
         return int(round(v * self.s))
@@ -1524,7 +1638,7 @@ class Renderer:
                compact=False, close_armed=False, hidden=()):
         scale = Scale(THEMES[theme][1])
         P, Wl = self.PAD, self.WIDTH
-        self.update_box = (0, 0, 0, 0)
+        self.update_box = self.temps_box = (0, 0, 0, 0)
         if compact:
             data = dict(data, procs=None, update=None)
         H = self.layout_height(data, compact, hidden)
@@ -1656,6 +1770,7 @@ class Renderer:
         cpu_t, gpu_t, ssd_t = data["temp_cpu"], data["temp_gpu"], data.get("temp_ssd")
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         online = self._temps_online(data)
+        self.temps_box = (self.px(P - 4), self.px(y), self.px(Wl - P + 4), self.px(y + 58))
         texts.append((P, y + 14, "Температура", self.f_label, TEXT, "ls"))
         if not online:
             texts.append(("rich", Wl - P, y + 14, [("нет данных", self.f_small, FAINT)]))
@@ -2167,6 +2282,128 @@ class InfoCard(PopupCard):
         self._show_image(img, x, top - img.height - self.px(8))
 
 
+class HistoryCard(PopupCard):
+    """CPU temperature and load for the last hour or day. The 'час / сутки'
+    switch changes the period, a click anywhere else closes the card."""
+
+    WIDTH = 380
+    HEIGHT = 262
+    PERIODS = (("час", 3600), ("сутки", 24 * 3600))
+    COLUMNS = 120
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        px = self.px
+        self.f_title = load_font(px(14), "SemiBold")
+        self.f = load_font(px(12))
+        self.fv = load_font(px(12), "SemiBold")
+        self.f_small = load_font(px(11))
+        self.period = 0
+        self.tab_boxes = []
+        self.pos = (0, 0)
+        self.view.bind("<ButtonRelease-1>", self._click)
+
+    def _click(self, event):
+        for i, (x0, y0, x1, y1) in enumerate(self.tab_boxes):
+            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                self.period = i
+                self.refresh()
+                return
+        self.hide()
+
+    def _chart(self, d, x0, y0, x1, y1, cols, lo, hi, scale):
+        """Bars of the average per time slice, coloured on the theme scale."""
+        px = self.px
+        pitch = (x1 - x0) / len(cols)
+        for i, col in enumerate(cols):
+            bx = x0 + i * pitch
+            d.rectangle((px(bx), px(y0), px(bx + pitch * 0.7), px(y1)), fill=HIST_TRACK)
+            if col is None:
+                continue
+            t = max(0.0, min(1.0, (col[0] - lo) / (hi - lo)))
+            top = y1 - max(1.0, (y1 - y0) * t)
+            d.rectangle((px(bx), px(top), px(bx + pitch * 0.7), px(y1)), fill=scale(t))
+
+    def _summary(self, rows, index, unit, lo, hi, scale):
+        values = [r[index] for r in rows if r[index] is not None]
+        if not values:
+            return None
+        peak, avg = max(values), sum(values) / len(values)
+        color = lambda v: scale(max(0.0, min(1.0, (v - lo) / (hi - lo))))
+        return [("макс ", self.f_small, DIM), (f"{peak:.0f}{unit}", self.fv, color(peak)),
+                ("   средн. ", self.f_small, DIM), (f"{avg:.0f}{unit}", self.fv, color(avg))]
+
+    def render(self, rows, theme, now):
+        px = self.px
+        scale = Scale(THEMES[theme][1])
+        name, seconds = self.PERIODS[self.period]
+        W, H = px(self.WIDTH), px(self.HEIGHT)
+        img = card_image(px, W, H)
+        d = ImageDraw.Draw(img)
+        L, R = 16, self.WIDTH - 16
+        rows = [r for r in rows if r[0] >= now - seconds]
+
+        d.text((px(L), px(28)), "История", font=self.f_title, fill=TEXT, anchor="ls")
+        # period switch in the top-right corner; tab_boxes[i] = click area of PERIODS[i]
+        self.tab_boxes = [None] * len(self.PERIODS)
+        x = R
+        for i in reversed(range(len(self.PERIODS))):
+            label = self.PERIODS[i][0]
+            w = self.f.getlength(label) / self.px(1) + 16
+            tx0, tx1 = x - w, x
+            x -= w + 4
+            active = i == self.period
+            if active:
+                d.rounded_rectangle((px(tx0), px(12), px(tx1), px(33)), radius=px(7),
+                                    fill=lerp(CARD, scale(0.0), 0.25))
+            d.text((px((tx0 + tx1) / 2), px(27)), label, font=self.f,
+                   fill=TEXT if active else DIM, anchor="ms")
+            self.tab_boxes[i] = (px(tx0), px(8), px(tx1), px(37))
+
+        start = now - seconds
+        for label, index, unit, lo, hi, cy0, cy1, empty in (
+                ("Температура CPU", 2, "°", 30, 100, 60, 116,
+                 "нет данных: нужны права администратора"),
+                ("Загрузка CPU", 1, "%", 0, 100, 152, 208, "нет данных")):
+            d.text((px(L), px(cy0 - 8)), label, font=self.f, fill=TEXT, anchor="ls")
+            summary = self._summary(rows, index, unit, lo, hi, scale)
+            if summary:
+                xr = px(R)
+                for text, font, color in reversed(summary):
+                    xr -= font.getlength(text)
+                    d.text((xr, px(cy0 - 8)), text, font=font, fill=color, anchor="ls")
+            cols = history_buckets(rows, start, now, self.COLUMNS, index)
+            self._chart(d, L, cy0, R, cy1, cols, lo, hi, scale)
+            if not summary:
+                d.text((px((L + R) / 2), px((cy0 + cy1) / 2 + 4)), empty, font=self.f_small,
+                       fill=FAINT, anchor="ms")
+
+        fmt = (lambda t: time.strftime("%H:%M", time.localtime(t)))
+        d.text((px(L), px(226)), fmt(start), font=self.f_small, fill=FAINT, anchor="ls")
+        d.text((px((L + R) / 2), px(226)), fmt(start + seconds / 2), font=self.f_small,
+               fill=FAINT, anchor="ms")
+        d.text((px(R), px(226)), "сейчас", font=self.f_small, fill=FAINT, anchor="rs")
+        d.text((px(L), px(250)), "Нажми, чтобы закрыть", font=self.f_small, fill=FAINT, anchor="ls")
+        return img
+
+    def show_near(self, rect):
+        """Beside the widget: on the left if it fits, else on the right."""
+        img = self.render(self.widget.history.rows, self.widget.cfg["theme"], time.time())
+        wl, wt, wr, wb = work_area()
+        left, top, right, _ = rect
+        gap = self.px(10)
+        x = left - img.width - gap if left - img.width - gap >= wl else right + gap
+        x = max(wl, min(x, wr - img.width))
+        y = max(wt, min(top, wb - img.height))
+        self.pos = (x, y)
+        self._show_image(img, x, y)
+
+    def refresh(self):
+        if self.visible:
+            img = self.render(self.widget.history.rows, self.widget.cfg["theme"], time.time())
+            self._show_image(img, *self.pos)
+
+
 # ---------- window ----------
 
 class Widget:
@@ -2223,6 +2460,7 @@ class Widget:
         self.partitions_t = time.monotonic()
         self.data = None
 
+        self.history = History()
         self.lhm = LhmReader()
         self.lhm.start()
         self.ping = PingReader()
@@ -2245,6 +2483,7 @@ class Widget:
         self.updates.start()
         self.manual_check = None  # checks count when "Проверить сейчас" was clicked
         self.info = InfoCard(self) if _user32 is not None else None
+        self.history_card = HistoryCard(self) if _user32 is not None else None
         self.visible = True
 
         self.hotkey = HotkeyListener()
@@ -2435,6 +2674,7 @@ class Widget:
                              command=self._toggle_topmost)
         self.topmost_index = menu.index("end")
         menu.add_command(label="В правый верхний угол", command=self._reset_position)
+        menu.add_command(label="История за час и сутки", command=self._show_history)
         about = tk.Menu(menu, tearoff=0)
         about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
         self.updates_var = tk.BooleanVar(value=bool(self.cfg["check_updates"]))
@@ -2473,6 +2713,8 @@ class Widget:
         save_config(self.cfg)
 
     def quit(self):
+        if getattr(self, "history", None) is not None:
+            self.history.flush()
         if getattr(self, "taskbar", None) is not None:
             try:
                 self.taskbar.restore()
@@ -2551,6 +2793,8 @@ class Widget:
         if (moved < 5 and self.data and self.data.get("update")
                 and self._in_box(self.renderer.update_box, event)):
             open_in_browser(self.data["update"][1])
+        if moved < 5 and self._in_box(self.renderer.temps_box, event):
+            self._show_history()
         if self.cfg["pinned"]:
             self._back_if_pinned()
             return
@@ -2564,7 +2808,8 @@ class Widget:
             self._draw()
         hand = (self._in_close(event) or on_pin
                 or self._in_box(self.renderer.hero_box, event)
-                or self._in_box(self.renderer.update_box, event))
+                or self._in_box(self.renderer.update_box, event)
+                or self._in_box(self.renderer.temps_box, event))
         cursor = "hand2" if hand else ""
         if self.view.cget("cursor") != cursor:
             self.view.configure(cursor=cursor)
@@ -2576,6 +2821,22 @@ class Widget:
         if self.data is not None:
             self.data["procs"] = top_processes() if show else None
             self._draw()
+
+    def _show_history(self):
+        if self.history_card is None:
+            return
+        if self.history_card.visible:
+            self.history_card.hide()
+            return
+        if self.visible:
+            rect = (self.root.winfo_rootx(), self.root.winfo_rooty(),
+                    self.root.winfo_rootx() + self.root.winfo_width(),
+                    self.root.winfo_rooty() + self.root.winfo_height())
+        else:  # widget hidden: put the card in the middle of the screen
+            wl, wt, wr, wb = work_area()
+            mid_x, mid_y = (wl + wr) // 2, (wt + wb) // 2
+            rect = (mid_x + self.history_card.px(HistoryCard.WIDTH) // 2, mid_y - 150, mid_x, mid_y)
+        self.history_card.show_near(rect)
 
     # --- updates ---
     def _toggle_updates(self):
@@ -2746,6 +3007,11 @@ class Widget:
         self.last_net = net
         self.net_hist = (self.net_hist + [(down, up)])[-HISTORY_LEN:]
 
+        if getattr(self, "history", None) is not None:
+            recent = self.cpu_hist[-HISTORY_STEP_S:]
+            self.history.add(sum(recent) / len(recent), self.lhm.sensors["cpu"],
+                             self.lhm.sensors["gpu"])
+
         batt = psutil.sensors_battery()
         left = None
         if batt is not None and not batt.power_plugged:
@@ -2797,6 +3063,9 @@ class Widget:
         if getattr(self, "toast", None) is not None:
             self._check_alerts(self.data)
             self._update_notice()
+        card = getattr(self, "history_card", None)
+        if card is not None and card.visible and int(time.time()) % 5 == 0:
+            card.refresh()
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
