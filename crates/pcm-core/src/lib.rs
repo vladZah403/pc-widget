@@ -2,6 +2,7 @@
 //! need Windows, so it is tested anywhere. Readers of the real hardware live
 //! in `pcm-win`; they hand raw numbers here.
 
+pub mod config;
 pub mod frames;
 pub mod gpu_engines;
 pub mod merge;

@@ -90,6 +90,82 @@ impl ProcessReader {
     }
 }
 
+/// The user SID of a process's token, as bytes.
+fn token_user(process: windows_sys::Win32::Foundation::HANDLE) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Security::{
+        GetLengthSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::OpenProcessToken;
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        let mut buf = vec![0u64; 64];
+        let mut len = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenUser,
+            buf.as_mut_ptr() as *mut _,
+            (buf.len() * 8) as u32,
+            &mut len,
+        );
+        CloseHandle(token);
+        if ok == 0 {
+            return None;
+        }
+        let sid = (*(buf.as_ptr() as *const TOKEN_USER)).User.Sid;
+        let n = GetLengthSid(sid) as usize;
+        Some(std::slice::from_raw_parts(sid as *const u8, n).to_vec())
+    }
+}
+
+/// End every process of the program `name` (without ".exe", as the list
+/// shows it) that runs under this Windows user — never another user's or the
+/// system's, never one of `keep`, never what can't be closed. Each process
+/// is checked again by its pid, name and owner right before it is ended (a
+/// pid can be reused). Returns how many were ended.
+pub fn end_program(name: &str, keep: &[u32]) -> usize {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        QueryFullProcessImageNameW, TerminateProcess,
+    };
+    if !pcm_core::processes::can_close(name) {
+        return 0;
+    }
+    let Some(me) = token_user(unsafe { GetCurrentProcess() }) else { return 0 };
+    let mut ended = 0;
+    for s in ProcessReader::default().sample() {
+        let image = s.image.strip_suffix(".exe").or(s.image.strip_suffix(".EXE")).unwrap_or(&s.image);
+        if s.pid == 0 || keep.contains(&s.pid) || !image.eq_ignore_ascii_case(name) {
+            continue;
+        }
+        unsafe {
+            let h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, 0, s.pid);
+            if h.is_null() {
+                continue;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let same_name = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0 && {
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                let file = path.rsplit('\\').next().unwrap_or("");
+                file.strip_suffix(".exe")
+                    .or(file.strip_suffix(".EXE"))
+                    .unwrap_or(file)
+                    .eq_ignore_ascii_case(name)
+            };
+            if same_name && token_user(h).as_deref() == Some(me.as_slice()) && TerminateProcess(h, 1) != 0 {
+                ended += 1;
+            }
+            CloseHandle(h);
+        }
+    }
+    ended
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

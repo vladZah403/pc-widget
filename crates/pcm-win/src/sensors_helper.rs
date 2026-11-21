@@ -91,3 +91,163 @@ pub fn read_once(path: &Path, parts: &str, timeout: Duration) -> Result<Reading,
     }
     Ok(r)
 }
+
+/// Pauses before restarting a helper that ended: 5 s, 30 s, then 5 min.
+const BACKOFF: [Duration; 3] = [Duration::from_secs(5), Duration::from_secs(30), Duration::from_secs(300)];
+/// A run this long counts as healthy: the next failure starts over at 5 s.
+const HEALTHY: Duration = Duration::from_secs(120);
+
+#[derive(Default)]
+struct Shared {
+    latest: Option<Reading>,
+    stop: bool,
+    /// Why the helper isn't giving data, for the log and --diag.
+    last_error: Option<String>,
+    restarts: u32,
+}
+
+/// The helper running in the background, one reading every `interval_ms`.
+/// Dropping it ends the helper (its stdin closes).
+pub struct Helper {
+    shared: std::sync::Arc<std::sync::Mutex<Shared>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Helper {
+    pub fn start(path: PathBuf, parts: &str, interval_ms: u32) -> Helper {
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
+        let s = shared.clone();
+        let parts = parts.to_string();
+        let worker = std::thread::Builder::new()
+            .name("sensors-helper".into())
+            .spawn(move || run(&path, &parts, interval_ms, &s))
+            .ok();
+        Helper { shared, worker }
+    }
+
+    /// The newest reading (None until the first one arrives).
+    pub fn latest(&self) -> Option<Reading> {
+        self.shared.lock().ok()?.latest.clone()
+    }
+
+    pub fn last_error(&self) -> Option<String> {
+        self.shared.lock().ok()?.last_error.clone()
+    }
+
+    pub fn restarts(&self) -> u32 {
+        self.shared.lock().map_or(0, |s| s.restarts)
+    }
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        if let Ok(mut s) = self.shared.lock() {
+            s.stop = true;
+        }
+        // the worker notices within a second (its child ends when we close its stdin)
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
+    }
+}
+
+fn stopped(s: &std::sync::Mutex<Shared>) -> bool {
+    s.lock().map_or(true, |s| s.stop)
+}
+
+fn run(path: &Path, parts: &str, interval_ms: u32, shared: &std::sync::Mutex<Shared>) {
+    use std::io::BufRead;
+    let mut failures = 0usize;
+    while !stopped(shared) {
+        let started = Instant::now();
+        let child = Command::new(path)
+            .args(["--interval", &interval_ms.to_string(), "--parts", parts])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+        let error = match child {
+            Err(e) => format!("can't start {}: {e}", path.display()),
+            Ok(mut child) => {
+                let stdout = child.stdout.take();
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                // lines arrive on their own thread so this one can watch `stop`
+                let reader = stdout.map(|out| {
+                    std::thread::spawn(move || {
+                        for line in std::io::BufReader::new(out).lines() {
+                            let Ok(line) = line else { break };
+                            if tx.send(line).is_err() {
+                                break;
+                            }
+                        }
+                    })
+                });
+                let (mut lhm, mut admin) = (String::new(), false);
+                let mut errors: Vec<String> = Vec::new();
+                let mut reason = "the helper ended".to_string();
+                loop {
+                    if stopped(shared) {
+                        break;
+                    }
+                    match rx.recv_timeout(Duration::from_millis(500)) {
+                        Ok(line) => match parse_line(&line) {
+                            Some(Message::Hello { protocol, lhm: l, admin: a }) => {
+                                if protocol != PROTOCOL {
+                                    reason = format!("protocol {protocol}, expected {PROTOCOL}");
+                                    break;
+                                }
+                                (lhm, admin) = (l, a);
+                            }
+                            Some(Message::Sensors { hw, read_ms, mem_mb, .. }) => {
+                                let r = Reading {
+                                    lhm: lhm.clone(),
+                                    admin,
+                                    hardware: hw,
+                                    read_ms,
+                                    mem_mb,
+                                    errors: std::mem::take(&mut errors),
+                                };
+                                if let Ok(mut s) = shared.lock() {
+                                    s.latest = Some(r);
+                                    s.last_error = None;
+                                }
+                            }
+                            Some(Message::Error { message }) if errors.len() < 20 => errors.push(message),
+                            Some(Message::Error { .. }) | None => {}
+                        },
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                drop(child.stdin.take()); // the helper quits when its stdin closes
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(r) = reader {
+                    let _ = r.join();
+                }
+                reason
+            }
+        };
+        if stopped(shared) {
+            break;
+        }
+        if started.elapsed() >= HEALTHY {
+            failures = 0;
+        }
+        let pause = BACKOFF[failures.min(BACKOFF.len() - 1)];
+        failures += 1;
+        if let Ok(mut s) = shared.lock() {
+            s.last_error = Some(error);
+            s.restarts += 1;
+        }
+        let until = Instant::now() + pause;
+        while Instant::now() < until && !stopped(shared) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+}
