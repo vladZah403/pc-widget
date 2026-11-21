@@ -132,7 +132,8 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
-                  "check_updates": True, "update_seen": "", "tray": True}
+                  "check_updates": True, "update_seen": "", "tray": True,
+                  "ping_host": "1.1.1.1"}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -258,6 +259,9 @@ def sanitize_config(raw):
         elif key == "hidden":
             if isinstance(v, list):
                 cfg[key] = [s for s in v if s in SECTIONS]
+        elif key == "ping_host":
+            if isinstance(v, str) and clean_host(v) == v:
+                cfg[key] = v
         elif key == "update_seen":
             if isinstance(v, str) and (v == "" or parse_version(v)):
                 cfg[key] = v
@@ -1434,7 +1438,17 @@ def history_buckets(rows, start, end, n, index):
 
 # ---------- ping & processes ----------
 
-PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up
+PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up (the default)
+PING_PRESETS = (("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google"), ("ya.ru", "Яндекс"))
+_HOST_RE = re.compile(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?"
+                      r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*")
+
+
+def clean_host(text):
+    """'https://Eu.Battle.net/x' -> 'eu.battle.net'; None if it isn't a host name or IPv4."""
+    text = (text or "").strip().lower()
+    text = re.sub(r"^[a-z]+://", "", text).split("/")[0].split(":")[0].rstrip(".")
+    return text if _HOST_RE.fullmatch(text) else None
 PING_EVERY_S = 2
 
 
@@ -1461,16 +1475,22 @@ class PingReader(threading.Thread):
         payload = ctypes.create_string_buffer(b"pc-monitor", 10)
         reply = ctypes.create_string_buffer(256)
         while True:
+            host = self.host
             try:
-                addr = struct.unpack("<I", socket.inet_aton(socket.gethostbyname(self.host)))[0]
+                addr = struct.unpack("<I", socket.inet_aton(socket.gethostbyname(host)))[0]
                 got = icmp.IcmpSendEcho(handle, addr, payload, 10, None, reply, 256, 1000)
                 # ICMP_ECHO_REPLY: Address, Status, RoundTripTime (ULONGs)
                 _, status, rtt = struct.unpack_from("<III", reply.raw)
-                self.ms = rtt if got and status == 0 else None
-            except OSError:
-                self.ms = None
-            self.ready = True
+                ms = rtt if got and status == 0 else None
+            except OSError:  # includes "no such host"
+                ms = None
+            if host == self.host:  # not switched to another address meanwhile
+                self.ms, self.ready = ms, True
             time.sleep(PING_EVERY_S)
+
+    def set_host(self, host):
+        self.host = host
+        self.ms, self.ready = None, False  # shows "…" until the new address answers
 
 
 class _UnicodeString(ctypes.Structure):
@@ -1999,7 +2019,8 @@ class Renderer:
         elif ping is None:
             parts = [("нет ответа", self.f_value, ping_color(scale, None))]
         else:
-            parts = [(f"до {PING_HOST}   ", self.f_small, FAINT),
+            host = data.get("ping_host") or PING_HOST
+            parts = [(f"до {ellipsize(host, self.f_small, self.px(120))}   ", self.f_small, FAINT),
                      (f"{ping} мс", self.f_value, ping_color(scale, ping))]
         texts.append(("rich", Wl - P, y + 12, parts))
 
@@ -2611,7 +2632,7 @@ class Widget:
         self.history = History()
         self.lhm = LhmReader()
         self.lhm.start()
-        self.ping = PingReader()
+        self.ping = PingReader(self.cfg["ping_host"])
         self.ping.start()
         self.show_procs = False
         self.alert_state = {}
@@ -2870,6 +2891,10 @@ class Widget:
         self.topmost_index = menu.index("end")
         menu.add_command(label="В правый верхний угол", command=self._reset_position)
         menu.add_command(label="История за час и сутки", command=self._show_history)
+        self.ping_menu = tk.Menu(menu, tearoff=0)
+        self.ping_var = tk.StringVar(value=self.cfg["ping_host"])
+        self._fill_ping_menu()
+        menu.add_cascade(label="Пинг до", menu=self.ping_menu)
         about = tk.Menu(menu, tearoff=0)
         about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
         self.updates_var = tk.BooleanVar(value=bool(self.cfg["check_updates"]))
@@ -3019,6 +3044,40 @@ class Widget:
         if self.data is not None:
             self.data["procs"] = top_processes() if show else None
             self._draw()
+
+    # --- ping target ---
+    def _fill_ping_menu(self):
+        m = self.ping_menu
+        m.delete(0, "end")
+        hosts = [(h, f"{h}  ({name})") for h, name in PING_PRESETS]
+        if self.cfg["ping_host"] not in dict(PING_PRESETS):
+            hosts.append((self.cfg["ping_host"], self.cfg["ping_host"]))
+        for host, label in hosts:
+            m.add_radiobutton(label=label, value=host, variable=self.ping_var,
+                              command=lambda h=host: self._set_ping_host(h))
+        m.add_separator()
+        m.add_command(label="Свой адрес…", command=self._ask_ping_host)
+
+    def _set_ping_host(self, host):
+        self.cfg["ping_host"] = host
+        self.ping_var.set(host)
+        save_config(self.cfg)
+        self.ping.set_host(host)
+        self._fill_ping_menu()
+
+    def _ask_ping_host(self):
+        from tkinter import simpledialog, messagebox
+        text = simpledialog.askstring(
+            "Пинг до", "Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
+                       "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа».",
+            initialvalue=self.cfg["ping_host"], parent=self.root)
+        if text is None:
+            return
+        host = clean_host(text)
+        if host is None:
+            messagebox.showwarning("Пинг до", f"«{text}» не похоже на адрес.", parent=self.root)
+            return
+        self._set_ping_host(host)
 
     def _show_history(self):
         if self.history_card is None:
@@ -3248,6 +3307,7 @@ class Widget:
             "sensor_hint": self.lhm.hint(),
             "ping": self.ping.ms,
             "ping_ready": self.ping.ready,
+            "ping_host": self.ping.host,
             "procs": top_processes() if self.show_procs else None,
             "update": (getattr(self, "updates", None) and self.cfg["check_updates"]
                        and self.updates.found) or None,
