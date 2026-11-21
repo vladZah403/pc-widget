@@ -181,7 +181,8 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
                   "size": 100, "width": 264, "stretch": 0, "alert_disk": 10,
                   "fps_panel": True, "fps_corner": "tl", "fps_size": 100,
-                  "profile": "work", "profiles": {}, "auto_game": True, "quiet_games": True}
+                  "profile": "work", "profiles": {}, "auto_game": True, "quiet_games": True,
+                  "tucked": False}
 
 # what a profile ("work" / "game") remembers: how the widget looks
 PROFILE_KEYS = ("compact", "hidden", "size", "width", "stretch", "theme", "alpha", "taskbar", "pinned",
@@ -223,6 +224,7 @@ ALERT_HYST = 5
 ALERT_COOLDOWN_S = 600
 CLOSE_CONFIRM_MS = 3000
 DIM_ALPHA = 0.3  # widget opacity while a game or a fullscreen video is in front
+TUCK_MS = 180  # the widget slides behind the screen edge (and back) this long
 
 
 # ---------- helpers ----------
@@ -3669,6 +3671,20 @@ def monitor_work_area(x, y):
     return work_area()
 
 
+def other_monitor_at(x, y, home_x, home_y):
+    """True when screen point x, y is on another monitor than home_x, home_y: a widget
+    sliding there would show up on that monitor."""
+    try:
+        u = ctypes.WinDLL("user32")
+        u.MonitorFromPoint.restype = ctypes.c_void_p
+        u.MonitorFromPoint.argtypes = [_w.POINT, ctypes.c_ulong]
+        there = u.MonitorFromPoint(_w.POINT(int(x), int(y)), 0)  # MONITOR_DEFAULTTONULL
+        home = u.MonitorFromPoint(_w.POINT(int(home_x), int(home_y)), 2)
+        return bool(there) and there != home
+    except (AttributeError, OSError):
+        return False
+
+
 def snap_position(x, y, w, h, area, gap, reach):
     """A window dragged near an edge of the work area sticks to it, `gap` px off
     (so the rounded card doesn't touch the screen edge); farther away it stays put."""
@@ -3784,6 +3800,137 @@ class PopupCard:
     def hide(self):
         self.top.geometry(self.OFFSCREEN)
         self.visible = False
+
+
+class SideTab(PopupCard):
+    """A small tab on the widget's side. While the mouse is over the widget it sits
+    on the side away from the nearer screen edge ("›"): a click slides the widget
+    behind that edge. Then only the tab stays at the edge ("‹" and a CPU meter):
+    a click brings the widget back, dragging moves the tab up or down.
+    edge = the screen edge the widget goes to ("right" / "left"); the tab is
+    rounded on the other side and flat on that one."""
+
+    W, H = 14, 60  # logical px at Windows' scale
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        self.s = getattr(widget, "ui_renderer", widget.renderer).s
+        self.edge = "right"
+        self.docked = False  # alone at the screen edge: the widget is tucked behind it
+        self.hover = False
+        self.cpu = None
+        self.x = self.y = 0
+        self.geom = None
+        self._pressed_at = None  # (mouse y, tab y) while the button is down
+        self.dragged = False
+        v = self.view
+        v.bind("<Enter>", self._enter)
+        v.bind("<Leave>", self._leave)
+        v.bind("<ButtonPress-1>", self._press)
+        v.bind("<B1-Motion>", self._drag)
+        v.bind("<ButtonRelease-1>", self._release)
+        v.bind("<Button-3>", widget._show_menu)
+
+    def size(self):
+        return self.px(self.W), self.px(self.H)
+
+    def render(self):
+        S, k = SS, self.s * SS
+        W, H = self.size()
+        big = Image.new("RGB", (W * S, H * S), KEY)
+        d = ImageDraw.Draw(big)
+        r = 7 * k
+        # the flat side reaches past the image, so only the other side is rounded
+        x0, x1 = (0, W * S - 1 + r) if self.edge == "right" else (-r, W * S - 1)
+        d.rounded_rectangle((x0, 0, x1, H * S - 1), radius=r, fill=BORDER)
+        bw = max(1, self.px(1)) * S
+        d.rounded_rectangle((x0 + bw, bw, x1 - bw, H * S - 1 - bw), radius=r - bw,
+                            fill=lerp(CARD, TEXT, 0.08) if self.hover else CARD)
+        # next to the widget the arrow points where it goes, at the edge where it comes from
+        to_right = (self.edge == "right") != self.docked
+        dx = 1.8 if to_right else -1.8
+        cx, cy = self.W / 2, (13 if self.docked else self.H / 2)
+        d.line([((cx - dx) * k, (cy - 4) * k), ((cx + dx) * k, cy * k), ((cx - dx) * k, (cy + 4) * k)],
+               fill=TEXT if self.hover else DIM, width=round(1.6 * k), joint="curve")
+        if self.docked and self.cpu is not None:  # CPU load at a glance
+            scale = theme_scale(self.widget.cfg["theme"])
+            top, bottom = 24 * k, (self.H - 10) * k
+            d.rounded_rectangle(((cx - 2) * k, top, (cx + 2) * k, bottom), radius=2 * k, fill=TRACK)
+            fill = max(4 * k, (bottom - top) * min(100.0, max(0.0, self.cpu)) / 100)
+            d.rounded_rectangle(((cx - 2) * k, bottom - fill, (cx + 2) * k, bottom), radius=2 * k,
+                                fill=scale(self.cpu / 100))
+        return big.reduce(S)
+
+    def place(self, x, y, redraw=False):
+        """Show the tab with its top-left corner at x, y (screen px); drawn again only
+        when its look changed."""
+        if redraw or self.photo is None:
+            self.photo = ImageTk.PhotoImage(self.render())
+            self.view.configure(image=self.photo)
+        w, h = self.size()
+        self.x, self.y = int(x), int(y)
+        self.geom = f"{w}x{h}+{self.x}+{self.y}"
+        self.top.geometry(self.geom)
+        if not self.visible:
+            self.visible = True
+            self.top.lift()
+            self.top.after(80, self._recheck)  # see PopupCard._show_image
+
+    def _recheck(self):
+        if self.visible and self.geom and self.top.wm_geometry() != self.geom:
+            self.top.geometry(self.geom)
+
+    def redraw(self):
+        if self.visible:
+            self.place(self.x, self.y, redraw=True)
+
+    def set_cpu(self, cpu):
+        if cpu is not None and (self.cpu is None or round(cpu) != round(self.cpu)):
+            self.cpu = cpu
+            self.redraw()
+
+    def hide(self):
+        super().hide()
+        self.hover = False
+        self.photo = None  # a fresh image next time (the look may have changed meanwhile)
+
+    def _enter(self, event):
+        self.hover = True
+        self.redraw()
+        text = (tr("Показать виджет. Язычок можно передвинуть вверх или вниз") if self.docked
+                else tr("Спрятать за край экрана"))
+        self.widget.tip.request("tab", text, event.x_root, event.y_root)
+
+    def _leave(self, event):
+        self.hover = False
+        self.redraw()
+        self.widget.tip.cancel()
+
+    def _press(self, event):
+        self.widget.tip.cancel()
+        self._pressed_at = (event.y_root, self.y)
+        self.dragged = False
+
+    def _drag(self, event):
+        if not self.docked or self._pressed_at is None:
+            return
+        y0, tab_y = self._pressed_at
+        if abs(event.y_root - y0) > 4:
+            self.dragged = True
+        if self.dragged:
+            left, top, right, bottom = monitor_work_area(self.x, event.y_root)
+            h = self.size()[1]
+            self.place(self.x, max(top, min(tab_y + event.y_root - y0, bottom - h)))
+
+    def _release(self, event):
+        pressed, self._pressed_at = self._pressed_at, None
+        if pressed is None or self.dragged:
+            self.dragged = False
+            return
+        if self.docked:
+            self.widget.untuck()
+        else:
+            self.widget.tuck()
 
 
 class Toast(PopupCard):
@@ -4634,6 +4781,8 @@ class Widget:
         self.info = InfoCard(self) if _user32 is not None else None
         self.history_card = HistoryCard(self) if _user32 is not None else None
         self.visible = True
+        self.side_tab = SideTab(self) if _user32 is not None else None
+        self.tucked = self.sliding = False
 
         self.tray = None
         if _user32 is not None and self.cfg["tray"]:
@@ -4652,14 +4801,24 @@ class Widget:
             check_autostart(prefer_task=bool(self.cfg["run_as_admin"]))
         except OSError:
             log.exception("checking autostart failed")
+        if self.cfg["tucked"]:  # it was tucked behind the screen edge when it was closed
+            self.tuck(animate=False)
 
     # --- show / hide ---
     def hide_widget(self):
         self.root.withdraw()
         self.visible = False
+        tab = getattr(self, "side_tab", None)
+        if tab is not None:
+            tab.hide()
+        if getattr(self, "tucked", False):  # hidden completely now, not tucked
+            self.tucked = self.cfg["tucked"] = False
+            save_config(self.cfg)
 
     def show_widget(self):
         """Bring the widget up, in front of other windows, until something else is clicked."""
+        if getattr(self, "tucked", False):
+            self.untuck()
         if getattr(self, "game_hidden_at", None) is not None and _user32 is not None:
             # shown on purpose during a game: stay until another window comes to the front
             self.game_override = _user32.GetForegroundWindow()
@@ -4685,6 +4844,161 @@ class Widget:
             self.hide_widget()
         else:
             self.show_widget()
+
+    # --- the side tab: tucking the widget behind the screen edge ---
+    def _place_handle(self, x=None, y=None, w=None, h=None):
+        """Put the side tab next to the widget, on the side away from the nearer edge
+        of its monitor, level with its middle. x, y, w, h: the widget's rectangle when
+        Tk hasn't caught up with a move yet. Returns (edge, work area)."""
+        tab, r = self.side_tab, self.root
+        x = r.winfo_x() if x is None else x
+        y = r.winfo_y() if y is None else y
+        w = r.winfo_width() if w is None else w
+        h = r.winfo_height() if h is None else h
+        area = left, top, right, bottom = monitor_work_area(x + w // 2, y + 20)
+        edge = "right" if x + w / 2 >= (left + right) / 2 else "left"
+        tw, th = tab.size()
+        tx = max(left, min(x - tw if edge == "right" else x + w, right - tw))
+        ty = max(top, min(y + (h - th) // 2, bottom - th))
+        redraw = edge != tab.edge or tab.docked or not tab.visible
+        tab.edge, tab.docked = edge, False
+        tab.place(tx, ty, redraw)
+        return edge, area
+
+    def _show_handle(self):
+        """The mouse is over the widget: show the side tab (until it leaves both)."""
+        tab = getattr(self, "side_tab", None)
+        if (tab is None or tab.visible or getattr(self, "tucked", False) or getattr(self, "sliding", False)
+                or not self.visible or getattr(self, "game_hidden_at", None) is not None
+                or getattr(self, "resizing", None)):
+            return
+        self._place_handle()
+        self._handle_miss = 0
+        if getattr(self, "_handle_job", None) is None:
+            self._handle_job = self.root.after(200, self._watch_handle)
+
+    def _watch_handle(self):
+        """Hide the side tab once the mouse has been off the widget and the tab for a
+        moment (Enter / Leave can't tell: the mouse goes from one window to the other)."""
+        self._handle_job = None
+        tab, r = self.side_tab, self.root
+        if not tab.visible or tab.docked:
+            return
+        if not self.sliding:
+            px, py = r.winfo_pointerxy()
+            x, y, w, h = r.winfo_x(), r.winfo_y(), r.winfo_width(), r.winfo_height()
+            tw, th = tab.size()
+            over = (x <= px < x + w and y <= py < y + h) or (
+                tab.x <= px < tab.x + tw and tab.y <= py < tab.y + th)
+            self._handle_miss = 0 if over or self.resizing else self._handle_miss + 1
+            if (self._handle_miss >= 2 or not self.visible
+                    or getattr(self, "game_hidden_at", None) is not None):
+                tab.hide()
+                return
+        self._handle_job = r.after(200, self._watch_handle)
+
+    def _slide(self, widget_from, widget_to, tab_from, tab_to, done, ms=TUCK_MS):
+        """Move the widget and the tab together, easing out; then call done()."""
+        self.sliding = True
+        steps = max(1, ms // 15)
+
+        def at(a, b, e):
+            return round(a[0] + (b[0] - a[0]) * e), round(a[1] + (b[1] - a[1]) * e)
+
+        def step(i):
+            e = 1 - (1 - i / steps) ** 3
+            self.root.geometry("+%d+%d" % at(widget_from, widget_to, e))
+            self.side_tab.place(*at(tab_from, tab_to, e))
+            if i < steps:
+                self.root.after(15, lambda: step(i + 1))
+            else:
+                self.sliding = False
+                done()
+
+        step(1)
+
+    def tuck(self, animate=True):
+        """Slide the widget behind the nearer screen edge; only the tab stays there."""
+        tab = getattr(self, "side_tab", None)
+        if (tab is None or getattr(self, "tucked", False) or getattr(self, "sliding", False)
+                or not self.visible or getattr(self, "game_hidden_at", None) is not None):
+            return
+        self.tip.cancel()
+        r = self.root
+        r.update_idletasks()
+        x, y, w = r.winfo_x(), r.winfo_y(), r.winfo_width()
+        self.tucked = self.cfg["tucked"] = True
+        self._save_position()  # where it comes back to (saves "tucked" too)
+        edge, (left, top, right, bottom) = self._place_handle()
+        tw, th = tab.size()
+        start = (tab.x, tab.y)
+        end = (right - tw if edge == "right" else left, tab.y)
+        self.tuck_from = (x, y, tab.y)
+        if self.data is not None:
+            tab.cpu = self.data.get("cpu")
+
+        def done():
+            r.withdraw()
+            self.visible = False
+            r.geometry(f"+{x}+{y}")  # shown again here (Ctrl+Alt+W, the tray icon)
+            self.mouse_in = self.close_hover = self.pin_hover = self.grip_hover = False
+            self.row_hover = self.edge_hover = None
+            tab.docked = True
+            tab.place(*end, redraw=True)
+
+        beyond = right + 100 if edge == "right" else left - 100
+        if animate and not other_monitor_at(beyond, tab.y, x + w // 2, y + 20):
+            self._slide((x, y), (x + end[0] - start[0], y), start, end, done)
+        else:
+            done()
+
+    def untuck(self, animate=True):
+        """Slide the widget back out from behind the screen edge, level with the tab
+        (which may have been dragged up or down meanwhile)."""
+        tab = getattr(self, "side_tab", None)
+        if tab is None or not getattr(self, "tucked", False) or getattr(self, "sliding", False):
+            return
+        self.tip.cancel()
+        r = self.root
+        self.tucked = self.cfg["tucked"] = False
+        x, y = self.cfg["x"], self.cfg["y"]
+        if x is None or y is None:
+            x, y = r.winfo_x(), r.winfo_y()
+        w = getattr(self, "width_px", None) or r.winfo_width()
+        h = self.height or r.winfo_height()
+        tw, th = tab.size()
+        left, top, right, bottom = monitor_work_area(tab.x, tab.y + th // 2)
+        if tab.y != getattr(self, "tuck_from", (x, y, tab.y))[2]:  # the tab was moved
+            y = max(top, min(tab.y - (h - th) // 2, bottom - h))
+        end = (max(left, min(x - tw if tab.edge == "right" else x + w, right - tw)),
+               max(top, min(y + (h - th) // 2, bottom - th)))
+        start = (tab.x, tab.y)
+        dx = start[0] - end[0]
+        self.visible = True
+        self._draw(force=True)  # not drawn while it was away
+        r.geometry(f"+{x + dx}+{y}")
+        r.deiconify()
+        r.update_idletasks()
+        if self.cfg["pinned"]:
+            set_owner(self.hwnd, find_desktop_view())
+        tab.docked, tab.hover = False, False
+        tab.place(*start, redraw=True)
+
+        def done():
+            r.geometry(f"+{x}+{y}")
+            r.update_idletasks()
+            self._save_position()  # saves "tucked" too
+            self._back_if_pinned()
+            self._handle_miss = 0
+            if getattr(self, "_handle_job", None) is None:  # hide the tab if the mouse is away
+                self._handle_job = r.after(200, self._watch_handle)
+
+        beyond = right + 100 if tab.edge == "right" else left - 100
+        if animate and not other_monitor_at(beyond, tab.y, x + w // 2, y + 20):
+            self._slide((x + dx, y), (x, y), start, end, done)
+        else:
+            tab.place(*end)
+            done()
 
     def _poll_hotkey(self):
         if self.hotkey.pressed.is_set():
@@ -4771,6 +5085,14 @@ class Widget:
             self.game_hidden_at = None
             self._draw()  # it was not drawn while parked
             self.root.geometry("+%d+%d" % hidden_at)
+        tab = getattr(self, "side_tab", None)
+        if tab is not None and getattr(self, "tucked", False) and not getattr(self, "sliding", False):
+            # the tab at the screen edge never covers a game or a fullscreen video
+            if busy and mode != "off":
+                if tab.visible:
+                    tab.hide()
+            elif not tab.visible:
+                tab.place(tab.x, tab.y, redraw=True)
         alpha = float(self.cfg["alpha"])
         if busy and mode == "dim":
             alpha = min(alpha, DIM_ALPHA)
@@ -5271,6 +5593,9 @@ class Widget:
                                  monitor_work_area(event.x_root, event.y_root),
                                  round(SNAP_GAP * k), round(SNAP_REACH * k))
         self.root.geometry(f"+{x}+{y}")
+        tab = getattr(self, "side_tab", None)
+        if tab is not None and tab.visible and not tab.docked:
+            self._place_handle(x, y)  # the side tab goes along (and switches sides mid-screen)
 
     def _release(self, event):
         if self.resizing:
@@ -5316,8 +5641,10 @@ class Widget:
     def _enter(self, event):
         self.mouse_in = True
         self._draw()  # the resize corner shows up
+        self._show_handle()  # and the side tab
 
     def _hover(self, event):
+        self._show_handle()
         self._set_hover(self._in_close(event))
         on_pin = self._in_box(self.renderer.pin_box, event)
         edge = self._edge_at(event)
@@ -5856,6 +6183,9 @@ class Widget:
     def _refresh(self):
         self.data = self._collect()
         self._draw()
+        tab = getattr(self, "side_tab", None)
+        if tab is not None and tab.docked and tab.visible:
+            tab.set_cpu(self.data["cpu"])
         if getattr(self, "taskbar", None) is not None:
             self.taskbar.draw(self.data, self.cfg["theme"])
         if getattr(self, "toast", None) is not None:
@@ -5897,6 +6227,9 @@ class Widget:
         if img.height != self.height or img.width != getattr(self, "width_px", None):
             self.height, self.width_px = img.height, img.width
             self.root.geometry(f"{img.width}x{img.height}")
+            tab = getattr(self, "side_tab", None)
+            if tab is not None and tab.visible and not tab.docked and not getattr(self, "sliding", False):
+                self._place_handle(w=img.width, h=img.height)  # the side tab follows the size
 
     def run(self):
         try:

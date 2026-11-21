@@ -96,6 +96,11 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   widget, or the slider in Settings → Look.
 - **Sticks to screen edges** while you drag it (hold Shift to place it freely),
   and stays above the taskbar when it grows.
+- **Tuck it behind the screen edge** — hover the widget and a small tab shows on
+  its side: a click slides the widget behind the nearer screen edge, and only
+  the tab stays there (with a little CPU meter). Click the tab to bring the
+  widget back; drag it up or down to move it. Ctrl+Alt+W and the tray icon
+  bring the widget back too.
 - **Start with Windows**, **compact mode**, palettes, opacity — all in the
   **Settings** window (right-click → "Settings…"); the right-click menu keeps
   only the everyday items. Starting it twice doesn't open a second copy.

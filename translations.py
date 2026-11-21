@@ -33,6 +33,12 @@ TEXTS = {
 
     # widget
     "Система": ("System", "Система", "System"),
+    "Спрятать за край экрана": ("Tuck behind the screen edge", "Сховати за край екрана",
+                                "Hinter den Bildschirmrand schieben"),
+    "Показать виджет. Язычок можно передвинуть вверх или вниз": (
+        "Show the widget. The tab can be dragged up or down",
+        "Показати віджет. Язичок можна пересунути вгору або вниз",
+        "Widget anzeigen. Die Lasche lässt sich nach oben oder unten ziehen"),
     "Нажми ещё раз — закрыть": ("Click again to close", "Натисни ще раз — закрити",
                                 "Nochmal klicken zum Schließen"),
     "Процессор": ("Processor", "Процесор", "Prozessor"),
