@@ -22,6 +22,7 @@ import logging
 import logging.handlers
 import math
 import os
+import queue
 import re
 import socket
 import struct
@@ -131,7 +132,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
-                  "check_updates": True, "update_seen": ""}
+                  "check_updates": True, "update_seen": "", "tray": True}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -757,6 +758,153 @@ class HotkeyListener(threading.Thread):
                     self.pressed.set()
         except (AttributeError, OSError):
             self.ok = False
+
+
+# ---------- tray icon ----------
+# A notification-area icon needs a window that receives its messages, so it
+# has its own hidden window and message loop in a thread (like the hotkey);
+# the Tk thread picks up the clicks from a queue.
+
+def _icon_file():
+    path = os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "app.ico")
+    return path if os.path.exists(path) else None
+
+
+class TrayIcon(threading.Thread):
+    WM_TRAY = 0x8000 + 1          # WM_APP + 1: our callback message
+    WM_LBUTTONUP, WM_RBUTTONUP = 0x0202, 0x0205
+    NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
+    NIF_MESSAGE, NIF_ICON, NIF_TIP = 1, 2, 4
+
+    def __init__(self, tip="PC Monitor"):
+        super().__init__(daemon=True, name="tray")
+        import queue
+        self.clicks = queue.SimpleQueue()  # "left" / "right"
+        self.tip = tip
+        self.hwnd = None
+        self.hicon = None
+        self.added = False
+        self.ready = threading.Event()
+
+    def _data(self, flags):
+        from ctypes import wintypes as wt
+
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [("cbSize", wt.DWORD), ("hWnd", wt.HWND), ("uID", wt.UINT),
+                        ("uFlags", wt.UINT), ("uCallbackMessage", wt.UINT), ("hIcon", wt.HICON),
+                        ("szTip", wt.WCHAR * 128), ("dwState", wt.DWORD), ("dwStateMask", wt.DWORD),
+                        ("szInfo", wt.WCHAR * 256), ("uVersion", wt.UINT),
+                        ("szInfoTitle", wt.WCHAR * 64), ("dwInfoFlags", wt.DWORD),
+                        ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wt.HICON)]
+
+        nid = NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid.hWnd, nid.uID, nid.uFlags = self.hwnd, 1, flags
+        nid.uCallbackMessage = self.WM_TRAY
+        nid.hIcon = self.hicon
+        nid.szTip = self.tip[:127]
+        return nid
+
+    def _notify(self, action, flags):
+        nid = self._data(flags)
+        return bool(ctypes.windll.shell32.Shell_NotifyIconW(action, ctypes.byref(nid)))
+
+    def _add(self):
+        self.added = self._notify(self.NIM_ADD, self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP)
+
+    def set_tip(self, text):
+        """Hover text; callable from the Tk thread."""
+        if text != self.tip:
+            self.tip = text
+            if self.added:
+                self._notify(self.NIM_MODIFY, self.NIF_TIP)
+
+    def remove(self):
+        if self.added:
+            self._notify(self.NIM_DELETE, 0)
+            self.added = False
+
+    def stop(self):
+        """Remove the icon and close the hidden window (ends the thread)."""
+        self.remove()
+        if self.hwnd:
+            ctypes.windll.user32.PostMessageW(self.hwnd, 0x0010, 0, 0)  # WM_CLOSE
+
+    def run(self):
+        try:
+            self._run()
+        except (AttributeError, OSError):
+            log.exception("tray icon failed")
+        finally:
+            self.ready.set()
+
+    def _run(self):
+        from ctypes import wintypes as wt
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        LRESULT = ctypes.c_ssize_t
+        WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+        u.DefWindowProcW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+        u.DefWindowProcW.restype = LRESULT
+        u.CreateWindowExW.restype = wt.HWND
+        u.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int,
+                                      ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU,
+                                      wt.HINSTANCE, wt.LPVOID]
+        u.LoadImageW.restype = wt.HANDLE
+        u.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int, ctypes.c_int, wt.UINT]
+        u.LoadIconW.restype = wt.HICON
+        u.LoadIconW.argtypes = [wt.HINSTANCE, wt.LPVOID]
+        u.GetMessageW.argtypes = [ctypes.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT]
+        taskbar_created = u.RegisterWindowMessageW("TaskbarCreated")
+
+        def proc(hwnd, msg, wparam, lparam):
+            if msg == self.WM_TRAY:
+                event = lparam & 0xFFFF
+                if event == self.WM_LBUTTONUP:
+                    self.clicks.put("left")
+                elif event == self.WM_RBUTTONUP:
+                    self.clicks.put("right")
+                return 0
+            if msg == taskbar_created:  # explorer.exe restarted: the icon is gone, add it again
+                self._add()
+                return 0
+            if msg == 0x0002:  # WM_DESTROY (after stop()): end the message loop
+                u.PostQuitMessage(0)
+                return 0
+            return u.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        self._proc = WNDPROC(proc)  # keep a reference, or ctypes frees the callback
+
+        class WNDCLASSW(ctypes.Structure):
+            _fields_ = [("style", wt.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int),
+                        ("cbWndExtra", ctypes.c_int), ("hInstance", wt.HINSTANCE),
+                        ("hIcon", wt.HICON), ("hCursor", wt.HANDLE), ("hbrBackground", wt.HBRUSH),
+                        ("lpszMenuName", wt.LPCWSTR), ("lpszClassName", wt.LPCWSTR)]
+
+        hinst = ctypes.windll.kernel32.GetModuleHandleW(None)
+        cls = f"PCMonitorTray{id(self)}"  # own class: a re-enabled icon gets a new window proc
+        wc = WNDCLASSW(lpfnWndProc=self._proc, hInstance=hinst, lpszClassName=cls)
+        u.RegisterClassW(ctypes.byref(wc))
+        # a hidden top-level window (not message-only: those miss the TaskbarCreated broadcast)
+        self.hwnd = u.CreateWindowExW(0, cls, "PC Monitor", 0, 0, 0, 0, 0, None, None, hinst, None)
+        if not self.hwnd:
+            raise OSError("CreateWindowExW failed")
+        # when we run elevated, Windows drops messages from explorer.exe (lower
+        # integrity) unless we let these two through explicitly
+        for msg in (self.WM_TRAY, taskbar_created):
+            u.ChangeWindowMessageFilterEx(self.hwnd, msg, 1, None)  # MSGFLT_ALLOW
+
+        size = u.GetSystemMetrics(49)  # SM_CXSMICON
+        icon = _icon_file()
+        if icon:
+            self.hicon = u.LoadImageW(None, icon, 1, size, size, 0x10)  # IMAGE_ICON, LR_LOADFROMFILE
+        if not self.hicon:
+            self.hicon = u.LoadIconW(None, ctypes.c_void_p(32512))  # IDI_APPLICATION
+        self._add()
+        self.ready.set()
+        msg = wt.MSG()
+        while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            u.TranslateMessage(ctypes.byref(msg))
+            u.DispatchMessageW(ctypes.byref(msg))
 
 
 def virtual_screen(root):
@@ -2486,6 +2634,9 @@ class Widget:
         self.history_card = HistoryCard(self) if _user32 is not None else None
         self.visible = True
 
+        self.tray = None
+        if _user32 is not None and self.cfg["tray"]:
+            self._start_tray()
         self.hotkey = HotkeyListener()
         self.hotkey.start()
         self._poll_hotkey()
@@ -2525,7 +2676,48 @@ class Widget:
         if self.hotkey.pressed.is_set():
             self.hotkey.pressed.clear()
             self.toggle_widget()
+        while self.tray is not None:
+            try:
+                click = self.tray.clicks.get_nowait()
+            except queue.Empty:
+                break
+            if click == "left":
+                self.hide_widget() if self.visible else self.show_widget()
+            else:
+                self._tray_menu()
         self.root.after(120, self._poll_hotkey)
+
+    # --- tray icon ---
+    def _start_tray(self):
+        self.tray = TrayIcon()
+        self.tray.start()
+
+    def _toggle_tray(self):
+        self.cfg["tray"] = self.tray_var.get()
+        save_config(self.cfg)
+        if self.cfg["tray"] and self.tray is None:
+            self._start_tray()
+        elif not self.cfg["tray"] and self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+
+    def _tray_menu(self):
+        x, y = self.root.winfo_pointerxy()
+        try:  # a popup menu closes on an outside click only if its owner is in front
+            _user32.SetForegroundWindow(self.hwnd)
+        except (AttributeError, OSError):
+            pass
+        try:
+            self.menu.tk_popup(x, y)
+        finally:
+            self.menu.grab_release()
+        self._back_if_pinned()
+
+    def _tray_tip(self, data):
+        text = f"PC Monitor\nCPU {data['cpu']:.0f}%  ·  RAM {data['ram_pct']:.0f}%"
+        if data["temp_cpu"] is not None:
+            text += f"  ·  {data['temp_cpu']:.0f}°"
+        self.tray.set_tip(text)
 
     def _toggle_autostart(self):
         """Elevated + wants admin: a scheduled task (no UAC at logon); otherwise the Run key."""
@@ -2623,6 +2815,9 @@ class Widget:
                              command=self._toggle_pin)
         menu.add_checkbutton(label="Мини-панель на панели задач", variable=self.taskbar_var,
                              command=self._toggle_taskbar)
+        self.tray_var = tk.BooleanVar(value=bool(self.cfg["tray"]))
+        menu.add_checkbutton(label="Значок в трее", variable=self.tray_var,
+                             command=self._toggle_tray)
         self.procs_var = tk.BooleanVar(value=False)
         menu.add_checkbutton(label="Список процессов", variable=self.procs_var,
                              command=lambda: self._set_procs(self.procs_var.get()))
@@ -2715,6 +2910,9 @@ class Widget:
     def quit(self):
         if getattr(self, "history", None) is not None:
             self.history.flush()
+        if getattr(self, "tray", None) is not None:
+            self.tray.stop()  # or a dead icon stays in the tray until hovered
+            self.tray = None
         if getattr(self, "taskbar", None) is not None:
             try:
                 self.taskbar.restore()
@@ -3066,6 +3264,8 @@ class Widget:
         card = getattr(self, "history_card", None)
         if card is not None and card.visible and int(time.time()) % 5 == 0:
             card.refresh()
+        if getattr(self, "tray", None) is not None:
+            self._tray_tip(self.data)
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()

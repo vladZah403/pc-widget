@@ -12,6 +12,7 @@ if exist build rmdir /s /q build
 python -m PyInstaller --noconfirm --clean --windowed --name PC-Monitor ^
   --workpath "%TEMP%\pc-monitor-build" ^
   --icon assets\app.ico --add-data "lhm;lhm" --add-data "assets\app.png;assets" ^
+  --add-data "assets\app.ico;assets" ^
   --exclude-module numpy --exclude-module setuptools --exclude-module pkg_resources ^
   --exclude-module pywintypes --exclude-module pythoncom --exclude-module win32com ^
   --exclude-module charset_normalizer --exclude-module pyreadline3 widget.pyw
