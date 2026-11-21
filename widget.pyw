@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -1768,6 +1768,7 @@ def swap_and_restart(app_dir, staging):
     old = app_dir + ".old"
     exe = os.path.join(app_dir, EXE_NAME)
     script = f"""
+Set-Location -LiteralPath $env:SystemRoot
 Wait-Process -Id {os.getpid()} -Timeout 30 -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 Remove-Item -LiteralPath {q(old)} -Recurse -Force -ErrorAction SilentlyContinue
@@ -1785,9 +1786,11 @@ Remove-Item -LiteralPath {q(old)} -Recurse -Force -ErrorAction SilentlyContinue
 """
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     ps = os.path.join(_system32(), "WindowsPowerShell", "v1.0", "powershell.exe")
+    # cwd outside the program folder: a process sitting in it blocks the rename
     subprocess.Popen([ps, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                       "-EncodedCommand", encoded],
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True,
+                     cwd=_system32())
     log.info("update: swap scheduled for %s", app_dir)
 
 
@@ -4395,8 +4398,25 @@ def write_diagnostics():
         f.write("\n".join(lines) + "\n")
 
 
+def leave_program_folder():
+    """Work from the data folder in %APPDATA%, not the program folder: a process whose
+    current folder is inside it (and children that inherit that) would block
+    an update from renaming the folder. Also drop a staging folder that a failed
+    update left behind."""
+    try:
+        os.chdir(DATA_DIR)
+    except OSError:
+        pass
+    leftover = APP_DIR + ".new"
+    if is_frozen() and os.path.isdir(leftover):
+        import shutil
+        log.warning("removing an unfinished update in %s", leftover)
+        shutil.rmtree(leftover, ignore_errors=True)
+
+
 if __name__ == "__main__":
     setup_logging()
+    leave_program_folder()
     if "--diag" in sys.argv:
         write_diagnostics()
         sys.exit(0)

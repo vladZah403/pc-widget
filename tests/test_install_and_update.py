@@ -106,3 +106,18 @@ def test_updater(w, tmp_path, monkeypatch, entries, digest_ok, extra, error):
     else:
         assert up.state == "error" and error in up.error
         assert not (tmp_path / "evil.txt").exists()
+
+
+def test_swap_starts_outside_the_program_folder(w, tmp_path, monkeypatch):
+    """A process sitting in the program folder blocks renaming it (the 1.3/1.3.1 bug)."""
+    import subprocess
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: calls.append(k))
+    w.swap_and_restart(str(tmp_path / "App"), str(tmp_path / "App.new"))
+    assert calls and calls[0]["cwd"] == w._system32()
+
+
+def test_leave_program_folder(w, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    w.leave_program_folder()
+    assert os.path.normcase(os.getcwd()) == os.path.normcase(w.DATA_DIR)
