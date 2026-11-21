@@ -201,3 +201,67 @@ def test_bad_token_is_refused_before_any_request(w):
     import pytest as _pytest
     with _pytest.raises(OSError):
         w.tg_call("not a token", "getMe")
+
+
+@pytest.fixture
+def live(w, widget, monkeypatch):
+    """The stub widget plus what _apply_view needs."""
+    widget.dpi_scale, widget.taskbar, widget.height = 1.0, None, None
+    widget.close_hover = widget.pin_hover = widget.close_armed = False
+    widget.renderer = w.Renderer(1.0)
+    widget.view = tk.Label(widget.root)
+    widget.photo = None
+    monkeypatch.setattr(widget, "_apply_pin", lambda: None)
+    return widget
+
+
+def test_profiles_keep_their_own_look(w, live):
+    from conftest import fake_data
+    live.data = fake_data()
+    live.cfg.update(compact=False, size=100, theme="heat")
+    live.switch_profile("game")  # first time: the game look is the compact widget
+    assert live.cfg["profile"] == "game" and live.cfg["compact"] is True
+    live.cfg["theme"] = "neon"  # change the game look
+    live.switch_profile("work")
+    assert live.cfg["compact"] is False and live.cfg["theme"] == "heat"
+    live.switch_profile("game")
+    assert live.cfg["compact"] is True and live.cfg["theme"] == "neon"
+    assert live.compact_var.get() is True and live.profile_var.get() == "game"
+    assert w.sanitize_config({"profiles": {"game": {"compact": True, "evil": 1}, "x": {}}})["profiles"] == \
+        {"game": {"compact": True}}
+
+
+def test_game_switches_profile_on_and_back(w, live, monkeypatch):
+    from conftest import fake_data
+    live.data = fake_data()
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
+    state = {"game": False}
+    monkeypatch.setattr(live, "_game_in_front", lambda: state["game"])
+    state["game"] = True
+    live._auto_profile()
+    assert live.cfg["profile"] == "work"  # not yet: a game must stay in front a moment
+    clock["t"] += w.GAME_ON_S
+    live._auto_profile()
+    assert live.cfg["profile"] == "game"
+    state["game"] = False
+    live._auto_profile()
+    clock["t"] += w.GAME_OFF_S
+    live._auto_profile()
+    assert live.cfg["profile"] == "work"
+
+
+def test_quiet_in_games(w, widget, monkeypatch):
+    from conftest import fake_data
+    shown, sent = [], []
+
+    class Toast:
+        def show(self, *a, **k):
+            shown.append(a)
+
+    widget.toast = Toast()
+    monkeypatch.setattr(widget, "_telegram", sent.append)
+    monkeypatch.setattr(widget, "_game_in_front", lambda: True)
+    widget.cfg.update(alerts=True, quiet_games=True)
+    widget._check_alerts(fake_data(battery=(10.0, False), battery_left=None))
+    assert not shown and sent  # no card over the game, Telegram still gets it

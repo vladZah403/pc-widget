@@ -179,7 +179,12 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
                   "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
-                  "size": 100, "tg_enabled": False, "tg_token": "", "tg_chat": 0, "tg_name": ""}
+                  "size": 100, "tg_enabled": False, "tg_token": "", "tg_chat": 0, "tg_name": "",
+                  "profile": "work", "profiles": {}, "auto_game": True, "quiet_games": True}
+
+# what a profile ("work" / "game") remembers: how the widget looks
+PROFILE_KEYS = ("compact", "hidden", "size", "theme", "alpha", "taskbar", "pinned", "topmost")
+GAME_ON_S, GAME_OFF_S = 3, 10  # a game in front this long switches to / back from "game"
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -350,6 +355,10 @@ def sanitize_config(raw):
         elif key == "ping_host":
             if isinstance(v, str) and clean_host(v) == v:
                 cfg[key] = v
+        elif key == "profiles":
+            if isinstance(v, dict):
+                cfg[key] = {name: sanitize_profile(view) for name, view in v.items()
+                            if name in ("work", "game") and isinstance(view, dict)}
         elif key == "tg_token":
             if isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9+/=]{0,4096}", v):
                 cfg[key] = v
@@ -368,12 +377,19 @@ def sanitize_config(raw):
 # key -> allowed values
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
                   "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de"),
-                  "size": (100, 125, 150), "in_games": ("hide", "dim", "off")}
+                  "size": (100, 125, 150), "in_games": ("hide", "dim", "off"),
+                  "profile": ("work", "game")}
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"cores": "Ядра", "ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
             "disk_io": "Чтение и запись диска", "battery": "Износ батареи", "fans": "Вентиляторы",
             "uptime": "Время без перезагрузки"}
+
+
+def sanitize_profile(view):
+    """Only PROFILE_KEYS, each checked like the main config."""
+    clean = sanitize_config({k: view[k] for k in PROFILE_KEYS if k in view})
+    return {k: clean[k] for k in PROFILE_KEYS if k in view}
 
 
 def load_config():
@@ -3671,6 +3687,13 @@ class SettingsWindow:
         if lhm_dir():
             self._check(p, tr("Права администратора (температуры)"), w.admin_var, w._toggle_admin)
         self._check(p, tr("Проверять обновления"), w.updates_var, w._toggle_updates)
+        box = ttk.LabelFrame(p, text=tr("Профиль"), padding=(10, 4))
+        box.pack(fill="x", pady=(8, 0))
+        for value, label in (("work", tr("Работа")), ("game", tr("Игра"))):
+            ttk.Radiobutton(box, text=label, value=value, variable=w.profile_var,
+                            command=w._set_profile).pack(side="left", padx=(0, 12))
+        ttk.Button(box, text=tr("Запомнить текущий вид"), command=w.save_profile).pack(side="left")
+        self._check(p, tr("Включать «Игру», когда запущена игра"), w.auto_game_var, w._toggle_auto_game)
         langs = [("auto", tr("Как в Windows"))] + list(LANGS.items())
         box = ttk.LabelFrame(p, text="Язык / Language", padding=(10, 4))
         box.pack(fill="x", pady=(8, 0))
@@ -3705,6 +3728,8 @@ class SettingsWindow:
     def _alerts(self, p):
         w = self.w
         self._check(p, tr("Показывать предупреждения"), w.alerts_var, w._toggle_alerts)
+        self._check(p, tr("Не показывать поверх игры (только в Telegram)"), w.quiet_var,
+                    w._toggle_quiet_games)
         for key, title, unit in (("alert_temp", "Перегрев CPU от", "°"),
                                  ("alert_ram", "Память занята от", "%"),
                                  ("alert_battery", "Батарея ниже", "%")):
@@ -4192,6 +4217,9 @@ class Widget:
         self.updates_var = tk.BooleanVar(value=bool(cfg["check_updates"]))
         self.lang_var = tk.StringVar(value=cfg["lang"])
         self.tg_var = tk.BooleanVar(value=bool(cfg["tg_enabled"]))
+        self.profile_var = tk.StringVar(value=cfg["profile"])
+        self.auto_game_var = tk.BooleanVar(value=bool(cfg["auto_game"]))
+        self.quiet_var = tk.BooleanVar(value=bool(cfg["quiet_games"]))
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label=tr("Настройки…"), command=self._show_settings)
@@ -4202,6 +4230,10 @@ class Widget:
                              command=self._toggle_compact)
         menu.add_checkbutton(label=tr("Закрепить на рабочем столе"), variable=self.pinned_var,
                              command=self._toggle_pin)
+        menu.add_separator()
+        for value, label in (("work", tr("Профиль «Работа»")), ("game", tr("Профиль «Игра»"))):
+            menu.add_radiobutton(label=label, value=value, variable=self.profile_var,
+                                 command=self._set_profile)
         menu.add_separator()
         about = tk.Menu(menu, tearoff=0)
         about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
@@ -4498,6 +4530,98 @@ class Widget:
                 self.toast.show(tr("Обновлений нет"), tr("У тебя последняя версия, {v}.", v=APP_VERSION),
                                 scale(0.0))
 
+    # --- profiles ---
+    def _game_in_front(self):
+        overlay = getattr(self, "fps_overlay", None)
+        return bool(overlay is not None and overlay.visible) or (
+            _user32 is not None and fullscreen_app_active())
+
+    def _profile_view(self, name):
+        """The saved look of a profile; "game" defaults to the compact widget."""
+        saved = self.cfg["profiles"].get(name)
+        if saved:
+            return saved
+        view = {k: self.cfg[k] for k in PROFILE_KEYS}
+        if name == "game":
+            view["compact"] = True
+        return view
+
+    def save_profile(self):
+        """Remember the current look as the current profile."""
+        profiles = dict(self.cfg["profiles"])
+        profiles[self.cfg["profile"]] = {k: self.cfg[k] for k in PROFILE_KEYS}
+        self.cfg["profiles"] = profiles
+        save_config(self.cfg)
+
+    def switch_profile(self, name, auto=False):
+        """Save the look of the profile we leave, apply the one we enter."""
+        if name == self.cfg["profile"]:
+            return
+        self.save_profile()
+        self.cfg["profile"] = name
+        self.cfg.update(self._profile_view(name))
+        if not auto:
+            self.auto_switched = False
+        save_config(self.cfg)
+        self._apply_view()
+        log.info("profile: %s%s", name, " (game started)" if auto else "")
+
+    def _apply_view(self):
+        """Bring every view setting from cfg into effect (after a profile switch)."""
+        cfg = self.cfg
+        custom_stops[:] = cfg["custom_colors"]
+        for var, key in ((self.compact_var, "compact"), (self.size_var, "size"),
+                         (self.theme_var, "theme"), (self.alpha_var, "alpha"),
+                         (self.taskbar_var, "taskbar"), (self.pinned_var, "pinned"),
+                         (self.topmost_var, "topmost"), (self.profile_var, "profile")):
+            var.set(cfg[key])
+        for key, var in self.section_vars.items():
+            var.set(key not in cfg["hidden"])
+        self.renderer = Renderer(self.dpi_scale * cfg["size"] / 100)
+        self.height = None
+        self.root.attributes("-alpha", float(cfg["alpha"]))
+        self._alpha_now = float(cfg["alpha"])
+        self._apply_pin()
+        if self.taskbar is not None:
+            if not cfg["taskbar"]:
+                self.taskbar.restore()
+            self.taskbar.layout()
+            if self.data:
+                self.taskbar.draw(self.data, cfg["theme"])
+        self._draw()
+
+    def _set_profile(self):
+        self.switch_profile(self.profile_var.get())
+
+    def _auto_profile(self):
+        """'Game' while a game is in front (after GAME_ON_S), back after GAME_OFF_S."""
+        if not self.cfg["auto_game"]:
+            return
+        now = time.monotonic()
+        playing = self._game_in_front()
+        if playing:
+            self.game_seen = getattr(self, "game_seen", None) or now
+            self.game_gone = None
+            if self.cfg["profile"] != "game" and now - self.game_seen >= GAME_ON_S:
+                self.back_to = self.cfg["profile"]
+                self.switch_profile("game", auto=True)
+                self.auto_switched = True
+        else:
+            self.game_seen = None
+            self.game_gone = getattr(self, "game_gone", None) or now
+            if (getattr(self, "auto_switched", False) and self.cfg["profile"] == "game"
+                    and now - self.game_gone >= GAME_OFF_S):
+                self.auto_switched = False
+                self.switch_profile(getattr(self, "back_to", "work"), auto=True)
+
+    def _toggle_auto_game(self):
+        self.cfg["auto_game"] = self.auto_game_var.get()
+        save_config(self.cfg)
+
+    def _toggle_quiet_games(self):
+        self.cfg["quiet_games"] = self.quiet_var.get()
+        save_config(self.cfg)
+
     # --- Telegram ---
     def _telegram(self, text):
         """Send to the user's bot when Telegram alerts are on and connected."""
@@ -4575,7 +4699,8 @@ class Widget:
                     and now - st["last"] >= ALERT_COOLDOWN_S):
                 st["armed"], st["last"] = False, now
                 text = body() if callable(body) else body
-                self.toast.show(title, text, color)
+                if not (self.cfg["quiet_games"] and self._game_in_front()):
+                    self.toast.show(title, text, color)  # never pops up over a game
                 self._telegram(f"⚠️ {title}\n{text}")
         else:
             st["since"] = None
@@ -4755,6 +4880,8 @@ class Widget:
             self._tray_tip(self.data)
         if getattr(self, "fps_overlay", None) is not None:
             self._update_fps_overlay()
+        if getattr(self, "profile_var", None) is not None:
+            self._auto_profile()
         self._apply_dim()
         # explorer.exe restarted -> the desktop view changed, re-attach
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):

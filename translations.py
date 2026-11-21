@@ -175,6 +175,21 @@ TEXTS = {
                                      "«{text}» не схоже на адресу.",
                                      "„{text}“ sieht nicht wie eine Adresse aus."),
 
+    # profiles
+    "Профиль «Работа»": ("Profile: Work", "Профіль «Робота»", "Profil „Arbeit“"),
+    "Профиль «Игра»": ("Profile: Game", "Профіль «Гра»", "Profil „Spiel“"),
+    "Профиль": ("Profile", "Профіль", "Profil"),
+    "Работа": ("Work", "Робота", "Arbeit"),
+    "Игра": ("Game", "Гра", "Spiel"),
+    "Запомнить текущий вид": ("Remember the current look", "Запам'ятати поточний вигляд",
+                              "Aktuelles Aussehen merken"),
+    "Включать «Игру», когда запущена игра": ("Switch to “Game” while a game is running",
+                                             "Вмикати «Гру», коли запущена гра",
+                                             "„Spiel“ einschalten, solange ein Spiel läuft"),
+    "Не показывать поверх игры (только в Telegram)": ("Not over a game (Telegram only)",
+                                                      "Не показувати поверх гри (лише в Telegram)",
+                                                      "Nicht über einem Spiel (nur Telegram)"),
+
     # Telegram
     "это не похоже на токен бота": ("that doesn't look like a bot token", "це не схоже на токен бота",
                                     "das sieht nicht wie ein Bot-Token aus"),

@@ -54,6 +54,10 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   GPU 3° earlier), memory from 90% (with the program that ate it), battery
   below 15% when unplugged. The limits are in Settings → Alerts. Each alert at
   most once in 10 minutes; they never take the focus from a game.
+- **Profiles "Work" and "Game"** — each remembers its own look (compact or
+  full, size, colours, rows, opacity, mini panel). Switch from the right-click
+  menu; "Game" turns on by itself while a game is running and switches back
+  afterwards. Alert cards never pop up over a game (they still go to Telegram).
 - **Alerts in Telegram** — the same alerts also go to your own Telegram bot
   (Settings → Telegram: paste the token from @BotFather, click Connect, write
   to the bot, click Connect again). The token is kept encrypted with Windows'
