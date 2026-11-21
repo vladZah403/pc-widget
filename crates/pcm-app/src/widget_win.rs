@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 use pcm_core::config::{self, Config};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
-use pcm_render::widget::{BoxPx, Boxes, Data, Edge, GRIP, Renderer, View};
+use pcm_render::widget::{BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, View, side_tab};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -31,6 +31,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 use crate::collect::{self, Shared, WM_APP_DATA};
+use crate::layered::{self, Surface};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
 const EDGE: f32 = 6.0;
@@ -41,6 +42,10 @@ const SNAP_REACH: i32 = 16;
 const DRAG_START: i32 = 4;
 const TIMER_DISARM: usize = 1;
 const TIMER_GAMES: usize = 2;
+const TIMER_TAB: usize = 3;
+const TIMER_SLIDE: usize = 4;
+/// The widget slides behind the screen edge (and back) this long.
+const TUCK_MS: f32 = 180.0;
 /// Opacity while a game or a fullscreen video is in front ("dim").
 const DIM_ALPHA: f32 = 0.3;
 
@@ -79,45 +84,29 @@ fn inside(b: &BoxPx, x: f32, y: f32) -> bool {
     x >= b[0] && x < b[2] && y >= b[1] && y < b[3]
 }
 
-/// A DIB section kept between frames for UpdateLayeredWindow.
-struct Surface {
-    dc: HDC,
-    bmp: HBITMAP,
-    old: HGDIOBJ,
-    bits: *mut u8,
-    w: i32,
-    h: i32,
+/// A slide of the widget and its tab between two positions (screen px).
+#[derive(Clone, Copy)]
+struct Slide {
+    start: std::time::Instant,
+    widget: ((i32, i32), (i32, i32)),
+    tab: ((i32, i32), (i32, i32)),
+    tucking: bool,
 }
 
-impl Surface {
-    fn new(w: i32, h: i32) -> Surface {
-        unsafe {
-            let screen = GetDC(null_mut());
-            let dc = CreateCompatibleDC(screen);
-            ReleaseDC(null_mut(), screen);
-            let mut bmi: BITMAPINFO = std::mem::zeroed();
-            bmi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-            let mut bits = null_mut();
-            let bmp = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-            let old = SelectObject(dc, bmp);
-            Surface { dc, bmp, old, bits: bits as *mut u8, w, h }
-        }
-    }
-}
-
-impl Drop for Surface {
-    fn drop(&mut self) {
-        unsafe {
-            SelectObject(self.dc, self.old);
-            DeleteObject(self.bmp);
-            DeleteDC(self.dc);
-        }
-    }
+/// The side tab: beside the widget while the mouse is over it; alone at the
+/// screen edge (docked) while the widget is tucked behind that edge.
+struct TabState {
+    hwnd: HWND,
+    surface: Option<Surface>,
+    visible: bool,
+    edge_right: bool,
+    pos: (i32, i32),
+    hover: bool,
+    misses: u8,
+    /// (mouse y, tab y, moved) while the button is down on the docked tab
+    press: Option<(i32, i32, bool)>,
+    slide: Option<Slide>,
+    cpu_shown: Option<i32>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,6 +136,7 @@ struct App {
     busy: bool,
     /// Hidden because of it (the "hide" mode).
     game_hidden: bool,
+    tab: TabState,
 }
 
 thread_local! {
@@ -265,7 +255,7 @@ impl App {
 
     /// Draw the latest data and hand it to the window (premultiplied BGRA).
     fn present(&mut self) {
-        if self.game_hidden {
+        if self.game_hidden || (self.cfg.tucked && self.tab.slide.is_none()) {
             return; // drawn again when it comes back
         }
         let Some(mut data) = self.data.clone() else { return };
@@ -274,27 +264,8 @@ impl App {
         let Some(frame) = Renderer::new(&mut self.fonts).render(&data, &view) else { return };
         self.boxes = frame.boxes;
         let (w, h) = (frame.pm.width() as i32, frame.pm.height() as i32);
-        if self.surface.as_ref().is_none_or(|s| s.w != w || s.h != h) {
-            self.surface = Some(Surface::new(w, h));
-        }
-        let s = self.surface.as_ref().unwrap();
-        unsafe {
-            let dst = std::slice::from_raw_parts_mut(s.bits, (w * h * 4) as usize);
-            for (d, p) in dst.as_chunks_mut::<4>().0.iter_mut().zip(frame.pm.data().as_chunks::<4>().0) {
-                *d = [p[2], p[1], p[0], p[3]];
-            }
-            let size = SIZE { cx: w, cy: h };
-            let src = POINT { x: 0, y: 0 };
-            let blend = BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                BlendFlags: 0,
-                SourceConstantAlpha: (self.alpha() * 255.0).round() as u8,
-                AlphaFormat: AC_SRC_ALPHA as u8,
-            };
-            let screen = GetDC(null_mut());
-            UpdateLayeredWindow(self.hwnd, screen, null(), &size, s.dc, &src, 0, &blend, ULW_ALPHA);
-            ReleaseDC(null_mut(), screen);
-        }
+        let alpha = self.alpha();
+        layered::show(self.hwnd, &mut self.surface, &frame.pm, alpha, None);
         self.size_px = (w, h);
     }
 
@@ -318,6 +289,330 @@ impl App {
             }
         } else if changed {
             self.present(); // the opacity changes with "dim"
+        }
+        if self.cfg.tucked && self.tab.slide.is_none() {
+            let hide_tab = busy && self.cfg.in_games != "off";
+            if hide_tab == self.tab.visible {
+                if hide_tab {
+                    self.tab_hide();
+                } else {
+                    self.tab_render();
+                }
+            }
+        }
+    }
+
+    // --- the side tab ---
+
+    fn tab_scale(&self) -> f32 {
+        unsafe { GetDpiForWindow(self.hwnd) }.max(96) as f32 / 96.0
+    }
+
+    fn tab_size(&self) -> (i32, i32) {
+        let s = self.tab_scale();
+        ((TAB_W * s).round() as i32, (TAB_H * s).round() as i32)
+    }
+
+    /// The work area of the monitor the widget belongs to.
+    fn work_area(&self) -> RECT {
+        unsafe {
+            let mut r = RECT::default();
+            GetWindowRect(self.hwnd, &mut r);
+            if self.cfg.tucked
+                && let (Some(x), Some(y)) = (self.cfg.x, self.cfg.y)
+            {
+                r = RECT { left: x, top: y, right: x + self.size_px.0, bottom: y + self.size_px.1 };
+            }
+            let mon = MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+            GetMonitorInfoW(mon, &mut mi);
+            mi.rcWork
+        }
+    }
+
+    fn widget_rect(&self) -> RECT {
+        let mut r = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut r) };
+        r
+    }
+
+    fn tab_render(&mut self) {
+        let cpu = self.data.as_ref().map(|d| d.cpu);
+        let docked = self.cfg.tucked;
+        let Some(pm) =
+            side_tab(self.tab_scale(), self.tab.edge_right, docked, self.tab.hover, cpu, &self.theme())
+        else {
+            return;
+        };
+        let pos = self.tab.pos;
+        layered::show(self.tab.hwnd, &mut self.tab.surface, &pm, 1.0, Some(pos));
+        self.tab.cpu_shown = cpu.map(|c| c.round() as i32);
+        if !self.tab.visible {
+            self.tab.visible = true;
+            unsafe {
+                ShowWindow(self.tab.hwnd, SW_SHOWNOACTIVATE);
+                SetWindowPos(
+                    self.tab.hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+    }
+
+    fn tab_hide(&mut self) {
+        if self.tab.visible {
+            self.tab.visible = false;
+            self.tab.hover = false;
+            unsafe { ShowWindow(self.tab.hwnd, SW_HIDE) };
+        }
+    }
+
+    /// Where the tab sits beside the widget: on the side away from the nearer
+    /// screen edge, the edge the widget would go behind.
+    fn tab_beside_pos(&mut self, r: &RECT) -> (i32, i32) {
+        let wa = self.work_area();
+        let (tw, th) = self.tab_size();
+        self.tab.edge_right = (r.left + r.right) / 2 > (wa.left + wa.right) / 2;
+        let x = if self.tab.edge_right { r.left - tw } else { r.right };
+        (x, r.top + (r.bottom - r.top - th) / 2)
+    }
+
+    /// The mouse is over the widget: show the tab beside it.
+    fn tab_beside(&mut self) {
+        if self.cfg.tucked || self.tab.slide.is_some() {
+            return;
+        }
+        self.tab.misses = 0;
+        if self.tab.visible {
+            return;
+        }
+        let r = self.widget_rect();
+        self.tab.pos = self.tab_beside_pos(&r);
+        self.tab_render();
+        unsafe { SetTimer(self.hwnd, TIMER_TAB, 200, None) };
+    }
+
+    /// Hide the tab after the mouse has been off the widget and the tab for
+    /// two checks.
+    fn tab_watch(&mut self) {
+        if self.cfg.tucked || self.tab.slide.is_some() {
+            return;
+        }
+        let mut pt = POINT::default();
+        unsafe { GetCursorPos(&mut pt) };
+        let r = self.widget_rect();
+        let (tw, th) = self.tab_size();
+        let over_widget = pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom;
+        let (tx, ty) = self.tab.pos;
+        let over_tab = pt.x >= tx && pt.x < tx + tw && pt.y >= ty && pt.y < ty + th;
+        if over_widget || over_tab || self.press.is_some() {
+            self.tab.misses = 0;
+            return;
+        }
+        self.tab.misses += 1;
+        if self.tab.misses >= 2 {
+            self.tab_hide();
+            unsafe { KillTimer(self.hwnd, TIMER_TAB) };
+        }
+    }
+
+    /// Off-screen position of the widget behind the tab's edge.
+    fn behind_edge(&self, wa: &RECT, from: (i32, i32)) -> (i32, i32) {
+        let w = self.size_px.0;
+        if self.tab.edge_right { (wa.right + 2, from.1) } else { (wa.left - w - 2, from.1) }
+    }
+
+    fn docked_tab_pos(&self, wa: &RECT, y: i32) -> (i32, i32) {
+        let (tw, th) = self.tab_size();
+        let y = y.clamp(wa.top, wa.bottom - th);
+        (if self.tab.edge_right { wa.right - tw } else { wa.left }, y)
+    }
+
+    fn start_slide(
+        &mut self,
+        widget: ((i32, i32), (i32, i32)),
+        tab: ((i32, i32), (i32, i32)),
+        tucking: bool,
+    ) {
+        self.tab.slide = Some(Slide { start: std::time::Instant::now(), widget, tab, tucking });
+        unsafe { SetTimer(self.hwnd, TIMER_SLIDE, 15, None) };
+    }
+
+    /// Slide the widget behind the screen edge; only the tab stays.
+    fn tuck(&mut self) {
+        let r = self.widget_rect();
+        let from = (r.left, r.top);
+        self.cfg.x = Some(r.left);
+        self.cfg.y = Some(r.top);
+        let wa = self.work_area();
+        let to = self.behind_edge(&wa, from);
+        let tab_to = self.docked_tab_pos(&wa, self.tab.pos.1);
+        self.cfg.tab_y = Some(tab_to.1);
+        self.start_slide((from, to), (self.tab.pos, tab_to), true);
+    }
+
+    /// Bring the widget back from behind the edge.
+    fn untuck(&mut self) {
+        let wa = self.work_area();
+        let home = (self.cfg.x.unwrap_or(wa.right - 300), self.cfg.y.unwrap_or(wa.top + 40));
+        let from = self.behind_edge(&wa, home);
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                null_mut(),
+                from.0,
+                from.1,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        self.cfg.tucked = false;
+        self.present();
+        unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
+        let r = RECT {
+            left: home.0,
+            top: home.1,
+            right: home.0 + self.size_px.0,
+            bottom: home.1 + self.size_px.1,
+        };
+        let tab_to = self.tab_beside_pos(&r);
+        self.start_slide((from, home), (self.tab.pos, tab_to), false);
+    }
+
+    fn slide_step(&mut self) {
+        let Some(sl) = self.tab.slide else {
+            unsafe { KillTimer(self.hwnd, TIMER_SLIDE) };
+            return;
+        };
+        let t = (sl.start.elapsed().as_secs_f32() * 1000.0 / TUCK_MS).min(1.0);
+        let e = 1.0 - (1.0 - t).powi(3); // ease-out
+        let lerp = |a: (i32, i32), b: (i32, i32)| {
+            (a.0 + ((b.0 - a.0) as f32 * e).round() as i32, a.1 + ((b.1 - a.1) as f32 * e).round() as i32)
+        };
+        let w = lerp(sl.widget.0, sl.widget.1);
+        self.tab.pos = lerp(sl.tab.0, sl.tab.1);
+        unsafe {
+            SetWindowPos(self.hwnd, null_mut(), w.0, w.1, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(
+                self.tab.hwnd,
+                null_mut(),
+                self.tab.pos.0,
+                self.tab.pos.1,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        if t < 1.0 {
+            return;
+        }
+        unsafe { KillTimer(self.hwnd, TIMER_SLIDE) };
+        self.tab.slide = None;
+        if sl.tucking {
+            unsafe { ShowWindow(self.hwnd, SW_HIDE) };
+            self.cfg.tucked = true;
+            self.tab.hover = false;
+            self.tab_render(); // now docked: "‹" and the CPU meter
+        } else {
+            self.apply_pin();
+            self.tab_render();
+            unsafe { SetTimer(self.hwnd, TIMER_TAB, 200, None) };
+        }
+        self.save();
+    }
+
+    /// Started tucked: only the docked tab at the edge.
+    fn dock_at_start(&mut self) {
+        let wa = self.work_area();
+        let home_x = self.cfg.x.unwrap_or(wa.right);
+        self.tab.edge_right = home_x + self.size_px.0 / 2 > (wa.left + wa.right) / 2;
+        let y = self.cfg.tab_y.unwrap_or(wa.top + (wa.bottom - wa.top) / 2);
+        self.tab.pos = self.docked_tab_pos(&wa, y);
+        unsafe { ShowWindow(self.hwnd, SW_HIDE) };
+        self.tab_render();
+    }
+
+    /// A new CPU reading: the docked tab's meter follows it.
+    fn tab_cpu(&mut self) {
+        if self.cfg.tucked && self.tab.visible && self.tab.slide.is_none() {
+            let now = self.data.as_ref().map(|d| d.cpu.round() as i32);
+            if now != self.tab.cpu_shown {
+                self.tab_render();
+            }
+        }
+    }
+
+    fn tab_mouse(&mut self, msg: u32, x: i32, y: i32) {
+        let mut pt = POINT { x, y };
+        unsafe { ClientToScreen(self.tab.hwnd, &mut pt) };
+        match msg {
+            WM_MOUSEMOVE => {
+                if !self.tab.hover {
+                    self.tab.hover = true;
+                    let mut t = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: self.tab.hwnd,
+                        dwHoverTime: 0,
+                    };
+                    unsafe { TrackMouseEvent(&mut t) };
+                    self.tab_render();
+                }
+                self.tab.misses = 0;
+                // the docked tab moves up and down with the mouse
+                if let Some((my, ty, _)) = self.tab.press
+                    && self.cfg.tucked
+                    && (pt.y - my).abs() > DRAG_START
+                {
+                    let wa = self.work_area();
+                    self.tab.pos = self.docked_tab_pos(&wa, ty + pt.y - my);
+                    self.tab.press = Some((my, ty, true));
+                    unsafe {
+                        SetWindowPos(
+                            self.tab.hwnd,
+                            null_mut(),
+                            self.tab.pos.0,
+                            self.tab.pos.1,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        )
+                    };
+                }
+            }
+            WM_MOUSELEAVE => {
+                self.tab.hover = false;
+                self.tab_render();
+            }
+            WM_LBUTTONDOWN => {
+                self.tab.press = Some((pt.y, self.tab.pos.1, false));
+                unsafe { SetCapture(self.tab.hwnd) };
+            }
+            WM_LBUTTONUP => {
+                let press = self.tab.press.take();
+                unsafe { ReleaseCapture() };
+                match press {
+                    Some((_, _, true)) => {
+                        self.cfg.tab_y = Some(self.tab.pos.1);
+                        self.save();
+                    }
+                    Some(_) if self.tab.slide.is_none() => {
+                        if self.cfg.tucked {
+                            self.untuck();
+                        } else {
+                            self.tuck();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     }
 
@@ -541,6 +836,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     a.data = Some(new);
                 }
                 a.present();
+                a.tab_cpu();
             });
             0
         }
@@ -558,6 +854,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     a.mouse_in = true;
                 }
                 a.hover = (x as f32, y as f32);
+                a.tab_beside();
                 match a.press {
                     Some(Press::Body { x: px, y: py }) if (x - px).abs() + (y - py).abs() > DRAG_START => {
                         // the press becomes a move: Windows drags the window
@@ -682,6 +979,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.remember_position());
             0
         }
+        WM_TIMER if wp == TIMER_TAB => {
+            with_app(|a| a.tab_watch());
+            0
+        }
+        WM_TIMER if wp == TIMER_SLIDE => {
+            with_app(|a| a.slide_step());
+            0
+        }
         WM_TIMER if wp == TIMER_GAMES => {
             with_app(|a| a.check_games());
             0
@@ -721,6 +1026,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             unsafe { PostQuitMessage(0) };
             0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
+}
+
+unsafe extern "system" fn tab_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_MOUSEMOVE | WM_MOUSELEAVE | WM_LBUTTONDOWN | WM_LBUTTONUP => {
+            let (x, y) = lparam_xy(lp);
+            with_app(|a| a.tab_mouse(msg, x, y));
+            0
+        }
+        WM_RBUTTONUP => {
+            with_app(|a| a.menu());
+            0
+        }
+        WM_SETCURSOR => {
+            unsafe { SetCursor(LoadCursorW(null_mut(), IDC_HAND)) };
+            1
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
     }
@@ -776,6 +1100,30 @@ pub fn run() -> i32 {
             return 1;
         }
         shared.hwnd.store(hwnd as isize, Ordering::Relaxed);
+        let tab_class = wide("PCMonitor2Tab");
+        let tc = WNDCLASSW {
+            lpfnWndProc: Some(tab_proc),
+            hInstance: hinst,
+            lpszClassName: tab_class.as_ptr(),
+            hCursor: LoadCursorW(null_mut(), IDC_HAND),
+            ..Default::default()
+        };
+        RegisterClassW(&tc);
+        let tab_ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST;
+        let tab_hwnd = CreateWindowExW(
+            tab_ex,
+            tab_class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            14,
+            60,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         APP.with(|a| {
             *a.borrow_mut() = Some(App {
                 hwnd,
@@ -794,12 +1142,29 @@ pub fn run() -> i32 {
                 press: None,
                 busy: false,
                 game_hidden: false,
+                tab: TabState {
+                    hwnd: tab_hwnd,
+                    surface: None,
+                    visible: false,
+                    edge_right: true,
+                    pos: (0, 0),
+                    hover: false,
+                    misses: 0,
+                    press: None,
+                    slide: None,
+                    cpu_shown: None,
+                },
             })
         });
         collect::start(shared.clone());
         with_app(|a| a.apply_pin());
         SetTimer(hwnd, TIMER_GAMES, 1000, None);
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let tucked = with_app(|a| a.cfg.tucked).unwrap_or(false);
+        if tucked {
+            with_app(|a| a.dock_at_start());
+        } else {
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
 
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {

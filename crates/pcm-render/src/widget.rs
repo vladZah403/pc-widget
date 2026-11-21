@@ -1357,6 +1357,42 @@ pub fn sample_data() -> Data {
     }
 }
 
+/// Logical size of the side tab.
+pub const TAB_W: f32 = 14.0;
+pub const TAB_H: f32 = 60.0;
+
+/// The side tab (1.8's SideTab): rounded on the side away from `edge_right`'s
+/// screen edge, flat on it. Beside the widget its arrow points where the
+/// widget goes; docked at the screen edge it points back and shows a CPU meter.
+pub fn side_tab(
+    scale: f32,
+    edge_right: bool,
+    docked: bool,
+    hover: bool,
+    cpu: Option<f32>,
+    theme: &Theme,
+) -> Option<Pixmap> {
+    let (pw, ph) = ((TAB_W * scale).round() as u32, (TAB_H * scale).round() as u32);
+    let mut c = Canvas::new(pw, ph, scale)?;
+    let r = 7.0;
+    // the flat side reaches past the image, so only the other side is rounded
+    let (x0, x1) = if edge_right { (0.0, TAB_W + r) } else { (-r, TAB_W) };
+    c.rrect(x0, 0.0, x1, TAB_H, r, BORDER);
+    let bw = 1.0 / scale * scale.round().max(1.0);
+    c.rrect(x0 + bw, bw, x1 - bw, TAB_H - bw, r - bw, if hover { lerp(CARD, TEXT, 0.08) } else { CARD });
+    let to_right = edge_right != docked;
+    let dx = if to_right { 1.8 } else { -1.8 };
+    let (cx, cy) = (TAB_W / 2.0, if docked { 13.0 } else { TAB_H / 2.0 });
+    c.line(&[(cx - dx, cy - 4.0), (cx + dx, cy), (cx - dx, cy + 4.0)], 1.6, if hover { TEXT } else { DIM });
+    if docked && let Some(cpu) = cpu {
+        let (top, bottom) = (24.0, TAB_H - 10.0);
+        c.rrect(cx - 2.0, top, cx + 2.0, bottom, 2.0, TRACK);
+        let fill = 4.0f32.max((bottom - top) * cpu.clamp(0.0, 100.0) / 100.0);
+        c.rrect(cx - 2.0, bottom - fill, cx + 2.0, bottom, 2.0, theme.scale().at(cpu / 100.0));
+    }
+    Some(c.pm)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

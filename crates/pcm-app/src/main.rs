@@ -6,6 +6,7 @@
 
 mod collect;
 mod diag;
+mod layered;
 mod widget_win;
 
 fn main() {
