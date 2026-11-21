@@ -8,6 +8,7 @@ mod alerts;
 mod collect;
 mod diag;
 mod layered;
+mod taskbar;
 mod tray;
 mod widget_win;
 

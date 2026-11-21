@@ -84,6 +84,8 @@ pub struct Config {
     pub alert_disk: u32,
     /// Alerts wait until a game or a fullscreen video is over.
     pub quiet_games: bool,
+    /// The mini panel on the taskbar (None = on, except on Windows 11).
+    pub taskbar: Option<bool>,
 }
 
 impl Default for Config {
@@ -113,6 +115,7 @@ impl Default for Config {
             alert_battery: 15,
             alert_disk: 10,
             quiet_games: true,
+            taskbar: None,
         }
     }
 }

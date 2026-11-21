@@ -35,6 +35,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
 use crate::layered::{self, Surface};
+use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
@@ -149,6 +150,7 @@ struct App {
     started: std::time::Instant,
     toast: HWND,
     toast_surface: Option<Surface>,
+    panel: Panel,
 }
 
 thread_local! {
@@ -696,6 +698,22 @@ impl App {
         }
     }
 
+    fn taskbar_on(&self) -> bool {
+        self.cfg.taskbar.unwrap_or_else(|| !pcm_win::system::is_windows_11())
+    }
+
+    fn update_panel(&mut self) {
+        if !self.taskbar_on() {
+            self.panel.hide();
+            return;
+        }
+        let scale = self.tab_scale();
+        let theme = self.theme();
+        if let Some(d) = &self.data {
+            self.panel.update(d, &mut self.fonts, &theme, scale, self.busy);
+        }
+    }
+
     fn update_tray(&mut self) {
         let scale = self.theme().scale();
         if let (Some(t), Some(d)) = (&mut self.tray, &self.data) {
@@ -776,6 +794,7 @@ impl App {
         const CLOSE: usize = 3;
         const WIDGET: usize = 4;
         const ALERTS: usize = 5;
+        const PANEL: usize = 6;
         const TRAY: usize = 60;
         const THEME: usize = 10;
         const SIZE: usize = 20;
@@ -843,6 +862,12 @@ impl App {
             }
             AppendMenuW(m, MF_POPUP, trm as usize, wide("Значки в трее").as_ptr());
             AppendMenuW(m, MF_STRING | check(self.cfg.alerts), ALERTS, wide("Предупреждения").as_ptr());
+            AppendMenuW(
+                m,
+                MF_STRING | check(self.taskbar_on()),
+                PANEL,
+                wide("Панель на панели задач").as_ptr(),
+            );
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING, CLOSE, wide("Выход").as_ptr());
             let mut pt = POINT::default();
@@ -854,6 +879,12 @@ impl App {
             match cmd {
                 COMPACT => self.cfg.compact = !self.cfg.compact,
                 ALERTS => self.cfg.alerts = !self.cfg.alerts,
+                PANEL => {
+                    self.cfg.taskbar = Some(!self.taskbar_on());
+                    self.save();
+                    self.update_panel();
+                    return;
+                }
                 WIDGET => {
                     let on = !self.cfg.widget;
                     self.set_widget(on);
@@ -967,6 +998,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.present();
                 a.tab_cpu();
                 a.update_tray();
+                a.update_panel();
                 a.check_alerts();
             });
             0
@@ -1182,6 +1214,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DESTROY => {
             with_app(|a| {
+                a.panel.hide();
                 a.shared.stop.store(true, Ordering::Relaxed);
                 a.shared.hwnd.store(0, Ordering::Relaxed);
             });
@@ -1204,6 +1237,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
         }
+    }
+}
+
+unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_LBUTTONUP => {
+            with_app(|a| {
+                let on = !a.cfg.widget;
+                a.set_widget(on);
+            });
+            0
+        }
+        WM_RBUTTONUP => {
+            with_app(|a| a.menu());
+            0
+        }
+        WM_SETCURSOR => {
+            unsafe { SetCursor(LoadCursorW(null_mut(), IDC_HAND)) };
+            1
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
     }
 }
 
@@ -1295,6 +1349,29 @@ pub fn run() -> i32 {
             ..Default::default()
         };
         RegisterClassW(&tc);
+        let panel_class = wide("PCMonitor2Panel");
+        let pc = WNDCLASSW {
+            lpfnWndProc: Some(panel_proc),
+            hInstance: hinst,
+            lpszClassName: panel_class.as_ptr(),
+            hCursor: LoadCursorW(null_mut(), IDC_HAND),
+            ..Default::default()
+        };
+        RegisterClassW(&pc);
+        let panel_hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+            panel_class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            200,
+            40,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         let toast_class = wide("PCMonitor2Toast");
         let toc = WNDCLASSW {
             lpfnWndProc: Some(toast_proc),
@@ -1368,6 +1445,7 @@ pub fn run() -> i32 {
                 started: std::time::Instant::now(),
                 toast: toast_hwnd,
                 toast_surface: None,
+                panel: Panel::new(panel_hwnd),
             })
         });
         collect::start(shared.clone());

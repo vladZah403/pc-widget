@@ -8,6 +8,7 @@ fn main() {
     let out = std::env::args().nth(1).unwrap_or_else(|| "alert.png".into());
     let mut fonts = Fonts::system();
     let body = "Занято 93% (20,3 из 21,8 ГБ). Больше всех: chrome — 3,4 ГБ.";
-    let pm = alert_card(&mut fonts, 1.5, "Память почти закончилась", body, Theme::Heat.scale().at(1.0)).unwrap();
+    let pm =
+        alert_card(&mut fonts, 1.5, "Память почти закончилась", body, Theme::Heat.scale().at(1.0)).unwrap();
     pm.save_png(out).unwrap();
 }

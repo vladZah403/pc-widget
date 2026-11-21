@@ -1446,6 +1446,99 @@ pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent
     Some(c.pm)
 }
 
+/// The two-line readout on the taskbar (1.8's TaskbarPanel): CPU/RAM load,
+/// network speed, ping and, when there are any, CPU/GPU temperatures.
+/// `height` = the taskbar's height (physical px); the background stays
+/// transparent (alpha 1, so the mouse still reaches the window).
+pub fn taskbar_panel(
+    fonts: &mut Fonts,
+    scale: f32,
+    d: &Data,
+    theme: &Theme,
+    light: bool,
+    height: u32,
+) -> Option<Pixmap> {
+    let sc = theme.scale();
+    let probe = Canvas::new(1, 1, scale)?;
+    let w = |fonts: &mut Fonts, t: &str, st: Style| probe.width(fonts, t, st, 12.0);
+    let speed_w = w(fonts, &fmt_speed(1023.0 * 1024.0), T).max(w(fonts, &fmt_speed(99.9 * 1048576.0), T));
+    let col_a = w(fonts, "CPU ", T).max(w(fonts, "RAM ", T)) + w(fonts, "100%", SB);
+    let col_b = w(fonts, "↓ ", T) + speed_w;
+    let col_c = w(fonts, "CPU ", T).max(w(fonts, "GPU ", T)) + w(fonts, "≈", T) + w(fonts, "100°", SB);
+    let col_d = w(fonts, &tr("пинг"), T).max(w(fonts, &trf("{v} мс", &[("v", "999".into())]), SB));
+    let gap = 14.0;
+    let temps = d.temp_cpu.is_some() || d.temp_gpu.is_some();
+    let x_b = col_a + gap;
+    let x_d = x_b + col_b + gap;
+    let x_c = x_d + col_d + gap;
+    let width = if temps { x_c + col_c } else { x_d + col_d } + 2.0;
+    let hl = height as f32 / scale;
+    let mut c = Canvas::new((width * scale).ceil() as u32, height, scale)?;
+    // almost transparent: clicks still land on the window
+    c.pm.fill(tiny_skia::Color::from_rgba8(0, 0, 0, 1));
+    let label = if light { (88, 88, 92) } else { (158, 163, 172) };
+    let text = if light { (24, 24, 24) } else { (240, 240, 242) };
+    let tone = |t: f32| if light { lerp(sc.at(t), (0, 0, 0), 0.4) } else { sc.at(t) };
+    // text baselines for two rows centred on the bar
+    let off = 8.0f32.min(hl * 0.24);
+    let rows = [hl / 2.0 - off + 4.0, hl / 2.0 + off + 4.0];
+    let right = |c: &mut Canvas, fonts: &mut Fonts, x: f32, y: f32, parts: &[Part]| {
+        c.rich(fonts, x, y, parts, Align::Right)
+    };
+    for (y, name, pct) in [(rows[0], "CPU", d.cpu), (rows[1], "RAM", d.ram_pct)] {
+        c.text(fonts, 0.0, y, name, T, 12.0, label);
+        right(&mut c, fonts, col_a, y, &[part(format!("{pct:.0}%"), SB, 12.0, tone(pct / 100.0))]);
+    }
+    for (y, arrow, color, speed) in
+        [(rows[0], "↓", tone(0.0), d.net_down), (rows[1], "↑", tone(0.75), d.net_up)]
+    {
+        c.text(fonts, x_b, y, arrow, T, 12.0, color);
+        right(&mut c, fonts, x_b + col_b, y, &[part(fmt_speed(speed), T, 12.0, text)]);
+    }
+    right(&mut c, fonts, x_d + col_d, rows[0], &[part(tr("пинг"), T, 12.0, label)]);
+    let (value, color) = if !d.ping_ready {
+        ("…".to_string(), label)
+    } else {
+        match d.ping {
+            None => (tr("нет"), tone(1.0)),
+            Some(ms) => {
+                let t = if ms < 50 {
+                    0.05
+                } else if ms < 100 {
+                    0.55
+                } else {
+                    0.95
+                };
+                (trf("{v} мс", &[("v", ms.to_string())]), tone(t))
+            }
+        }
+    };
+    right(&mut c, fonts, x_d + col_d, rows[1], &[part(value, SB, 12.0, color)]);
+    if temps {
+        let shared = d.gpu_shared && d.temp_gpu.is_none() && d.temp_cpu.is_some();
+        let gpu = if shared { d.temp_cpu } else { d.temp_gpu };
+        for (y, name, t, approx) in
+            [(rows[0], "CPU", d.temp_cpu, d.temp_cpu_approx), (rows[1], "GPU", gpu, shared)]
+        {
+            c.text(fonts, x_c, y, name, T, 12.0, label);
+            let parts = match t {
+                None => vec![part("—", SB, 12.0, label)],
+                Some(t) => {
+                    let col = tone((t - 30.0) / 70.0);
+                    let mut v = Vec::new();
+                    if approx {
+                        v.push(part("≈", T, 12.0, col));
+                    }
+                    v.push(part(format!("{t:.0}°"), SB, 12.0, col));
+                    v
+                }
+            };
+            right(&mut c, fonts, x_c + col_c, y, &parts);
+        }
+    }
+    Some(c.pm)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1470,6 +1563,18 @@ pub(crate) mod tests {
         assert_eq!(short.width(), 300);
         assert_eq!(short.height(), 63, "one line");
         assert!(long.height() >= 80, "the text wraps: {}", long.height());
+    }
+
+    #[test]
+    fn taskbar_panel_has_the_bar_height() {
+        let mut fonts = Fonts::system();
+        let d = sample_data();
+        let with = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, true, 40).unwrap();
+        let without =
+            taskbar_panel(&mut fonts, 1.0, &Data { temp_cpu: None, ..d.clone() }, &Theme::Heat, false, 40)
+                .unwrap();
+        assert_eq!(with.height(), 40);
+        assert!(with.width() > without.width(), "the temperature column only with temperatures");
     }
 
     #[test]
