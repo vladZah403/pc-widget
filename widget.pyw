@@ -261,6 +261,14 @@ def fmt_gb(n_bytes):
     return dec(f"{n_bytes / 2**30:.1f}")
 
 
+def fmt_disk(used, total):
+    """'300,0 из 476,0 ГБ'; a drive of 1 TB and more in TB: '1,2 из 1,8 ТБ'."""
+    if total >= 2**40:
+        tb = lambda n: dec(f"{n / 2**40:.1f}")
+        return tr("{used} из {total} ТБ", used=tb(used), total=tb(total))
+    return tr("{used} из {total} ГБ", used=fmt_gb(used), total=fmt_gb(total))
+
+
 def fmt_speed(bytes_per_s):
     if bytes_per_s < 1024:
         return tr("{v} Б/с", v=f"{bytes_per_s:.0f}")
@@ -2869,8 +2877,8 @@ class Renderer:
         return HERO_H + self._plan(data, hidden)[0]
 
     def layout_height(self, data, compact=False, hidden=()):
-        if compact:
-            return self.px(self.hero_h(data, hidden, True) + 178 - HERO_H)
+        if compact:  # the CPU block, then 1 or 2 rows of readings
+            return self.px(self.hero_h(data, hidden, True) + (50 if self.compact_rows() == 2 else 28))
         hero_extra, _, footer, body = self._plan(data, hidden)
         return self.px(HERO_H + hero_extra + body + footer[0])
 
@@ -2892,11 +2900,18 @@ class Renderer:
                 y += h
         return spans
 
-    def _compact_rows(self, d, texts, data, scale, y):
-        """Compact mode: two rows of three readings under the CPU block, each an icon
-        and a value in even columns (the same icons as the full widget)."""
+    def compact_rows(self):
+        """Compact mode: 2 rows of 3 readings, or all 6 in one row when the widget is
+        at least twice the standard width."""
+        return 1 if self.WIDTH >= 2 * WIDTH_STD else 2
+
+    def _compact_rows(self, d, texts, data, scale, y, hover=None):
+        """Compact mode: readings under the CPU block, each an icon and a value in
+        even columns (the same icons as the full widget). Those with a history are
+        clickable (row_boxes); `hover` = index of the one under the mouse."""
         P, Wl = self.PAD, self.WIDTH
-        col = (Wl - 2 * P) / 3
+        per_row = 6 // self.compact_rows()
+        col = (Wl - 2 * P) / per_row
         load = data.get("gpu_load")
         disk_pct = data["disks"][0][3] if data["disks"] else None
         cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
@@ -2906,28 +2921,34 @@ class Renderer:
         heat = lambda t: scale(((t or 30) - 30) / 70)
         pct = lambda v: None if v is None else f"{v:.0f}%"
         deg = lambda v: None if v is None else f"{v:.0f}°"
-        rows = [
-            [("ram", None, pct(data["ram_pct"]), scale(data["ram_pct"] / 100), False),
-             ("gpu", None, pct(load), scale((load or 0) / 100), False),
-             ("disk", None, pct(disk_pct), scale((disk_pct or 0) / 100), False)],
-            [("temp", "CPU", deg(cpu_t), heat(cpu_t), False),
-             ("temp", "GPU", deg(g), heat(g), shared),
-             ("ping", None, None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
-              ping_color(scale, ping), False)],
+        # (icon, name, value, colour, approximate, history subject or None)
+        cells = [
+            ("ram", None, pct(data["ram_pct"]), scale(data["ram_pct"] / 100), False, 2),
+            ("gpu", None, pct(load), scale((load or 0) / 100), False, 1),
+            ("disk", None, pct(disk_pct), scale((disk_pct or 0) / 100), False, None),
+            ("temp", "CPU", deg(cpu_t), heat(cpu_t), False, 0),
+            ("temp", "GPU", deg(g), heat(g), shared, 1),
+            ("ping", None, None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
+             ping_color(scale, ping), False, 3),
         ]
-        for r, row in enumerate(rows):
+        for i, (icon, name, value, color, approx, subject) in enumerate(cells):
+            r, c = divmod(i, per_row)
             by = y + 16 + r * 22
-            for c, (icon, name, value, color, approx) in enumerate(row):
-                x = P + c * col
-                self._icon(d, icon, x, by - 4.4, DIM)
-                parts = [(name + " ", self.f_small, DIM)] if name else []
-                if value is None:
-                    parts.append(("—", self.f_value, FAINT))
-                else:
-                    if approx:
-                        parts.append(("≈", self.f_sym, color))
-                    parts.append((value, self.f_value, color))
-                texts.append(("rich_left", x + self.ICON_W, by, parts))
+            x = P + c * col
+            if subject is not None:  # a click opens its history; lit under the mouse
+                box = (x - 6, by - 14, x + col - 8, by + 6)
+                if len(self.row_boxes) == hover:
+                    self._rrect(d, *box, 6, ROW_HOVER)
+                self.row_boxes.append((subject, tuple(self.px(v) for v in box)))
+            self._icon(d, icon, x, by - 4.4, DIM)
+            parts = [(name + " ", self.f_small, DIM)] if name else []
+            if value is None:
+                parts.append(("—", self.f_value, FAINT))
+            else:
+                if approx:
+                    parts.append(("≈", self.f_sym, color))
+                parts.append((value, self.f_value, color))
+            texts.append(("rich_left", x + self.ICON_W, by, parts))
 
     @staticmethod
     def _temps_online(data):
@@ -2935,8 +2956,8 @@ class Renderer:
             data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
-               compact=False, close_armed=False, hidden=(), hover_row=None, grip=0):
-        """hover_row: history subject of the row under the mouse (highlighted);
+               compact=False, close_armed=False, hidden=(), hover_row=None, grip=0, edge=None):
+        """hover_row: index in row_boxes of the row under the mouse (highlighted);
         grip: 0 = no resize corner, 1 = shown (mouse over the widget), 2 = in use."""
         scale = theme_scale(theme)
         P, Wl = self.PAD, self.WIDTH
@@ -2997,16 +3018,18 @@ class Renderer:
             texts.append(("rich", Wl - P, hero_base + 18, [(extra, self.f_small, DIM)]))
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
-            self._compact_rows(d, texts, data, scale, HERO_H + grow)
+            self._compact_rows(d, texts, data, scale, HERO_H + grow, hover_row)
             self._grip(d, H, grip)
+            self._edge_line(d, H, edge)
             return self._compose(layer, texts)
         chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118 + grow))
 
         # rows that open their history: a soft highlight under the one the mouse is on
-        for subject, x0, top, x1, bottom in self._row_spans(data, hidden):
-            if subject == hover_row:
+        # (hover_row = its index in row_boxes: two rows may open the same history)
+        for i, (subject, x0, top, x1, bottom) in enumerate(self._row_spans(data, hidden)):
+            if i == hover_row:
                 self._rrect(d, x0 + P - 7, top + 1, x1 - P + 7, bottom - 3, 8, ROW_HOVER)
             self.row_boxes.append((subject, (self.px(x0 + P - 7), self.px(top + 1),
                                              self.px(x1 - P + 7), self.px(bottom - 3))))
@@ -3019,6 +3042,7 @@ class Renderer:
         if footer[1] is not None:
             footer[1](d, texts, top + body, data, scale)
         self._grip(d, H, grip)
+        self._edge_line(d, H, edge)
         return self._compose(layer, texts)
 
     def _draw_column(self, d, texts, ox, width, rows, y, data, scale):
@@ -3057,6 +3081,15 @@ class Renderer:
         for k in (3.5, 7.0, 10.5):
             d.line(self._ss(cx - k, cy, cx, cy - k), fill=color, width=width)
         self.grip_box = (self.px(Wl - GRIP), H - self.px(GRIP), self.px(Wl), H)
+
+    def _edge_line(self, d, H, edge):
+        """A thin light line along the right or bottom edge the mouse is on (or that
+        is being dragged): shows what will move."""
+        Wl, Hl, r = self.WIDTH, H / self.s, self.RADIUS
+        if edge == "x":
+            self._rrect(d, Wl - 3, r, Wl - 1.5, Hl - r, 0.75, DIM)
+        elif edge == "y":
+            self._rrect(d, r, Hl - 3, Wl - r, Hl - 1.5, 0.75, DIM)
 
     # --- section icons: small line drawings, so a row is recognised before it is read ---
     ICON_W = 16  # icon + gap before the label, logical px
@@ -3230,8 +3263,7 @@ class Renderer:
         name, used, total, pct = disk
         self._label(d, texts, y + 14, tr("Диск {name}", name=name), "disk")
         texts.append(("rich", Wl - P, y + 14, [
-            (tr("{used} из {total} ГБ", used=fmt_gb(used), total=fmt_gb(total)) + "   ",
-             self.f_small, DIM),
+            (fmt_disk(used, total) + "   ", self.f_small, DIM),
             (f"{pct:.0f}%", self.f_value, TEXT)]))
         self._segment_meter(d, P, y + 22, Wl - P, pct, scale)
 
@@ -4540,7 +4572,8 @@ class Widget:
         self.grip_hover = self.grip_pressed = False
         self.resizing = None   # (mouse x, y, size, width, height) while the corner is dragged
         self.mouse_in = False  # the resize corner shows while the mouse is over the widget
-        self.row_hover = None  # history subject of the highlighted row
+        self.row_hover = None  # index (renderer.row_boxes) of the highlighted row
+        self.edge_hover = None  # "x" / "y": the right / bottom edge under the mouse (lit)
         self.tip = Tooltip(root)
         # set before the first refresh below: with a fullscreen app in front it already
         # decides whether to hide the widget ("no attribute 'visible'" otherwise)
@@ -4756,6 +4789,8 @@ class Widget:
         """Scale the widget (fonts and all) without restarting; size in %, by default
         from the settings slider. The top-left corner stays where it is."""
         size = clean_size(self.size_var.get() if size is None else size)
+        if size > self.cfg["size"]:  # never bigger than the screen it is on
+            size = max(self.cfg["size"], min(size, self._largest_size()))
         if self.size_var.get() != size:
             self.size_var.set(size)  # the slider snaps to the step
         if size == self.cfg["size"] and self.renderer.s == self.dpi_scale * size / 100:
@@ -4770,6 +4805,20 @@ class Widget:
         if keep_on_screen:
             self._place()
             self._keep_inside()
+
+    def _screen_room(self):
+        """(width, height) in px of the work area of the monitor the widget is on."""
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        left, top, right, bottom = monitor_work_area(x + self.root.winfo_width() // 2, y + 20)
+        return right - left, bottom - top
+
+    def _largest_size(self):
+        """The biggest size (%) at which the widget, as it is now, still fits its screen."""
+        room_w, room_h = self._screen_room()
+        s = self.renderer.s
+        w_l, h_l = self.renderer.WIDTH, max(1, self.root.winfo_height()) / s
+        fit = min(room_w / w_l, room_h / h_l) / self.dpi_scale * 100
+        return max(SIZE_MIN, int(fit // SIZE_STEP) * SIZE_STEP)
 
     def _new_renderer(self):
         """The widget's renderer: Windows' scale x its size, and its shape."""
@@ -4798,6 +4847,11 @@ class Widget:
         return None
 
     def _start_resize(self, event, axes="xy"):
+        # the shape may grow until the widget fills the screen it is on
+        room_w, room_h = self._screen_room()
+        s = self.renderer.s
+        natural_h = self.root.winfo_height() / s - self.cfg["stretch"]
+        self.shape_limits = (int(room_w / s), int(room_h / s - natural_h))
         self.resizing = (event.x_root, event.y_root, self.cfg["width"], self.cfg["stretch"], axes)
         self.row_hover = None  # no row stays lit while (and after) the widget is reshaped
         self._draw(force=True)
@@ -4807,11 +4861,12 @@ class Widget:
         both on the corner; redrawn once per idle moment, not per mouse event."""
         x0, y0, width0, stretch0, axes = self.resizing
         s = self.renderer.s
+        max_w, max_stretch = getattr(self, "shape_limits", (WIDTH_MAX, STRETCH_MAX))
         width, stretch = self.cfg["width"], self.cfg["stretch"]
         if "x" in axes:
-            width = clean_width(width0 + (event.x_root - x0) / s)
+            width = clean_width(min(width0 + (event.x_root - x0) / s, max(WIDTH_STD, max_w)))
         if "y" in axes:
-            stretch = clean_stretch(stretch0 + (event.y_root - y0) / s)
+            stretch = clean_stretch(min(stretch0 + (event.y_root - y0) / s, max(0, max_stretch)))
         if (width, stretch) != (self.cfg["width"], self.cfg["stretch"]):
             self.cfg["width"], self.cfg["stretch"] = width, stretch
             if getattr(self, "_shape_job", None) is None:
@@ -4843,7 +4898,7 @@ class Widget:
     def _keep_inside(self):
         """After growing, move the widget so all of it is on its monitor, above the
         taskbar (as far as it fits there); the new place is remembered."""
-        if not self.visible or getattr(self, "game_hidden_at", None) is not None:
+        if not getattr(self, "visible", True) or getattr(self, "game_hidden_at", None) is not None:
             return
         self.root.update_idletasks()
         x, y = self.root.winfo_x(), self.root.winfo_y()
@@ -5182,10 +5237,10 @@ class Widget:
         return None
 
     def _row_at(self, event):
-        """History subject of the row under the mouse, or None."""
-        for subject, box in getattr(self.renderer, "row_boxes", []):
+        """Index (in renderer.row_boxes) of the clickable row under the mouse, or None."""
+        for i, (_, box) in enumerate(getattr(self.renderer, "row_boxes", [])):
             if self._in_box(box, event):
-                return subject
+                return i
         return None
 
     def _press(self, event):
@@ -5252,7 +5307,7 @@ class Widget:
             self._update_clicked()
         row = self._row_at(event)
         if moved < 5 and row is not None:
-            self._show_history(row)
+            self._show_history(self.renderer.row_boxes[row][0])
         if self.cfg["pinned"]:
             self._back_if_pinned()
             return
@@ -5268,8 +5323,10 @@ class Widget:
         edge = self._edge_at(event)
         on_grip = edge == "xy"
         row = None if edge else self._row_at(event)
-        if (on_pin, on_grip, row) != (self.pin_hover, self.grip_hover, self.row_hover) or not self.mouse_in:
-            self.pin_hover, self.grip_hover, self.row_hover = on_pin, on_grip, row
+        line = edge if edge in ("x", "y") else None
+        state = (on_pin, on_grip, row, line)
+        if state != (self.pin_hover, self.grip_hover, self.row_hover, self.edge_hover) or not self.mouse_in:
+            self.pin_hover, self.grip_hover, self.row_hover, self.edge_hover = state
             self.mouse_in = True
             self._draw()
         hand = (self._in_close(event) or on_pin or self._proc_at(event) or row is not None
@@ -5521,6 +5578,7 @@ class Widget:
             if self.data:
                 self.taskbar.draw(self.data, cfg["theme"])
         self._draw()
+        self._keep_inside()  # the other profile's shape may be bigger
 
     def _set_profile(self):
         self.switch_profile(self.profile_var.get())
@@ -5664,7 +5722,7 @@ class Widget:
     def _leave(self, event):
         self.tip.cancel()
         self.pin_hover = self.grip_hover = False
-        self.row_hover = None
+        self.row_hover = self.edge_hover = None
         if not self.resizing:  # the mouse runs ahead of a shrinking widget
             self.mouse_in = False
         self._set_hover(False)
@@ -5832,7 +5890,8 @@ class Widget:
                                    close_armed=self.close_armed,
                                    hidden=tuple(self.cfg["hidden"]),
                                    hover_row=None if resizing else getattr(self, "row_hover", None),
-                                   grip=grip)
+                                   grip=grip,
+                                   edge=resizing[4] if resizing else getattr(self, "edge_hover", None))
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         if img.height != self.height or img.width != getattr(self, "width_px", None):

@@ -46,6 +46,7 @@ TEXTS = {
     "Диски": ("Disks", "Диски", "Laufwerke"),
     "Диск {name}": ("Disk {name}", "Диск {name}", "Laufwerk {name}"),
     "{used} из {total} ГБ": ("{used} of {total} GB", "{used} з {total} ГБ", "{used} von {total} GB"),
+    "{used} из {total} ТБ": ("{used} of {total} TB", "{used} з {total} ТБ", "{used} von {total} TB"),
     "нет данных": ("no data", "немає даних", "keine Daten"),
     "Температура": ("Temperature", "Температура", "Temperatur"),
     "Нет данных о температуре": ("No temperature data", "Немає даних про температуру",

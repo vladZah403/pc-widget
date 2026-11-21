@@ -23,7 +23,7 @@ def ui(w, live, monkeypatch):
     monkeypatch.setattr(w, "monitor_work_area", lambda x, y: (0, 0, 3000, 3000))  # roomy screen
     live.saved = saved
     live.tip = w.Tooltip(live.root)
-    live.resizing, live.mouse_in, live.row_hover = None, False, None
+    live.resizing, live.mouse_in, live.row_hover, live.edge_hover = None, False, None, None
     live.grip_hover = live.grip_pressed = False
     live.proc_pressed = live.close_pressed = live.pin_pressed = live.hero_pressed = False
     live.proc_armed, live.show_procs, live.visible = None, False, True
@@ -62,7 +62,14 @@ def test_corner_and_rows_are_drawn_where_they_are_hit(w):
     lit = r.render(data, "heat", hover_row=2)  # memory row highlighted
     assert lit.tobytes() != plain.tobytes() and lit.size == plain.size
     r.render(data, "heat", compact=True, grip=1)
-    assert r.grip_box[3] == r.layout_height(data, compact=True) and r.row_boxes == []
+    assert r.grip_box[3] == r.layout_height(data, compact=True)
+    assert [s for s, _ in r.row_boxes] == [2, 1, 0, 1, 3]  # RAM, GPU, CPU °, GPU °, ping (disk: none)
+    lit = r.render(data, "heat", hover_row=0)  # only the hovered row lights up, even when two
+    one = r.render(data, "heat", hover_row=3)  # rows open the same history (cores, temperature)
+    assert lit.tobytes() != one.tobytes()
+    wide = w.Renderer(1.0, 600)
+    assert wide.compact_rows() == 1 and r.compact_rows() == 2
+    assert wide.layout_height(data, compact=True) == r.layout_height(data, compact=True) - 22
 
 
 def test_snap_to_screen_edges(w):
@@ -116,8 +123,10 @@ def test_drag_edges_and_corner_to_change_the_shape(w, ui):
     drag(ui, center(ui.renderer.grip_box), (50, 60), root)  # the corner: both
     assert (ui.cfg["width"], ui.cfg["stretch"]) == (314, 60) and ui.renderer.s == 1.0  # text as it was
     assert (ui.root.winfo_x(), ui.root.winfo_y()) == root
+    plain = ui.renderer.render(ui.data, "heat").tobytes()
     ui._hover(Ev(ui.root.winfo_width() - 2, 200, root))
-    assert ui.view.cget("cursor") == "size_we"
+    assert ui.view.cget("cursor") == "size_we" and ui.edge_hover == "x"
+    assert ui.renderer.render(ui.data, "heat", edge="x").tobytes() != plain  # the edge lights up
     ui._hover(Ev(100, ui.root.winfo_height() - 2, root))
     assert ui.view.cget("cursor") == "size_ns"
 
@@ -138,7 +147,7 @@ def test_no_row_stays_lit_after_resizing(w, ui):
     root = (ui.root.winfo_x(), ui.root.winfo_y())
     ui._enter(Ev(10, 10, root))
     ui._hover(Ev(*center(dict(ui.renderer.row_boxes)[2]), root))
-    assert ui.row_hover == 2
+    assert ui.renderer.row_boxes[ui.row_hover][0] == 2
     g = center(ui.renderer.grip_box)
     ui._press(Ev(*g, root))
     ui._drag_move(Ev(g[0] + 40, g[1] + 90, root))
@@ -205,7 +214,7 @@ def test_a_click_on_a_row_opens_its_history(w, ui):
     assert calls == [("show", 2), ("hide", 2), ("show", 3), ("refresh", 1)]
     # hovering a row highlights it and shows the hand
     ui._hover(Ev(*center(boxes[2]), root))
-    assert ui.row_hover == 2 and ui.view.cget("cursor") == "hand2"
+    assert ui.row_hover == 1 and ui.view.cget("cursor") == "hand2"  # the 2nd row: memory
     ui._hover(Ev(*center(ui.renderer.grip_box), root))
     assert ui.row_hover is None and ui.view.cget("cursor") == "size_nw_se"
     ui._leave(None)
@@ -259,3 +268,27 @@ def test_wide_widget_puts_rows_in_columns(w):
     only = ("temps", "battery", "ssd", "fans", "net", "ping", "disk_io")
     cols = three._plan(fake_data(), only)[1]
     assert len(cols) == 1 and cols[0][1] == 820
+
+
+def test_big_drives_in_terabytes(w):
+    assert w.fmt_disk(300 * 2**30, 476 * 2**30) == "300,0 из 476,0 ГБ"
+    assert w.fmt_disk(1.2 * 2**40, 1.8 * 2**40) == "1,2 из 1,8 ТБ"
+
+
+def test_never_bigger_than_the_screen(w, ui, monkeypatch):
+    monkeypatch.setattr(w, "monitor_work_area", lambda x, y: (0, 0, 800, 700))
+    for _ in range(15):
+        ui._wheel_size(Ev(5, 5, delta=120))
+    ui.root.update()
+    assert ui.cfg["size"] < w.SIZE_MAX
+    assert ui.root.winfo_width() <= 800 and ui.root.winfo_height() <= 700
+    ui._set_size(100)
+    ui.root.update()
+    root = (ui.root.winfo_x(), ui.root.winfo_y())
+    ui._enter(Ev(10, 10, root))
+    ui.root.update()
+    W, H = ui.root.winfo_width(), ui.root.winfo_height()
+    drag(ui, (W - 2, H // 2), (5000, 0), root)  # far right: as wide as the screen at most
+    drag(ui, (W // 2, ui.root.winfo_height() - 2), (0, 5000), root)  # far down: as tall at most
+    assert ui.root.winfo_width() <= 800 and ui.root.winfo_height() <= 700
+    assert ui.cfg["width"] == 800 and ui.cfg["stretch"] > 0
