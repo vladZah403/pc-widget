@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.3"
+APP_VERSION = "1.3.1"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -1465,6 +1465,23 @@ def lhm_dir():
     return path if os.path.exists(os.path.join(path, "LibreHardwareMonitorLib.dll")) else None
 
 
+def unblock_dlls(folder):
+    """Remove the 'downloaded from the internet' mark (the Zone.Identifier stream
+    Windows adds to files unpacked from a downloaded zip) from the DLLs under
+    `folder`: .NET Framework refuses to load marked assemblies, and then there
+    are no sensors. Returns how many files were unmarked."""
+    count = 0
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            if name.lower().endswith(".dll"):
+                try:
+                    os.remove(os.path.join(root, name) + ":Zone.Identifier")
+                    count += 1
+                except OSError:  # not marked (the usual case) or no rights
+                    pass
+    return count
+
+
 class NativeSensors:
     """Reads sensors in-process with LibreHardwareMonitorLib (via pythonnet).
     Without admin rights it still gives GPU load; temperatures need admin and
@@ -1478,6 +1495,11 @@ class NativeSensors:
               "Energy": ("Energy", " mWh"), "Level": ("Levels", " %"), "Fan": ("Fans", " RPM")}
 
     def __init__(self, path):
+        # the bundled DLLs (pythonnet, clr_loader, LibreHardwareMonitor) must not
+        # carry the download mark, or .NET won't load them
+        unmarked = unblock_dlls(getattr(sys, "_MEIPASS", path) if is_frozen() else path)
+        if unmarked:
+            log.info("removed the download mark from %d DLLs", unmarked)
         from pythonnet import load
         load("netfx")
         import clr
@@ -1508,6 +1530,12 @@ class NativeSensors:
         children += [self._node(sub) for sub in hw.SubHardware]
         icon = self.ICONS.get(str(hw.HardwareType), "chip")
         return {"Text": hw.Name, "ImageURL": f"images_icon/{icon}.png", "Children": children}
+
+    def close(self):
+        try:
+            self.computer.Close()
+        except Exception:
+            log.exception("closing the sensor library failed")
 
     def tree(self):
         return {"Text": "Sensor", "Children": [
@@ -1565,14 +1593,26 @@ class LhmReader(threading.Thread):
             except Exception:  # no .NET / pythonnet / broken DLLs: fall back to the web server
                 log.exception("built-in sensor library failed to load")
                 native = None
+        failures = 0
         while True:
             found, source = None, None
             if native is not None:
                 try:
                     found, source = read_lhm(native.tree()), "native"
+                    failures = 0
                 except Exception:
                     log_error("reading built-in sensors")
                     found = None
+                    failures += 1
+                    if failures >= 3:  # stuck: open the library again
+                        failures = 0
+                        native.close()
+                        try:
+                            native = NativeSensors(path)
+                            log.info("sensor library reopened")
+                        except Exception:
+                            log.exception("reopening the sensor library failed")
+                            native = None
             if found is None or found["cpu"] is None:
                 try:
                     web = _fetch_web()

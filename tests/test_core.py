@@ -87,3 +87,15 @@ def test_every_text_is_translated_with_the_same_fields():
         assert len(row) == 3, key
         for text in row:
             assert {f[1] for f in string.Formatter().parse(text) if f[1]} == fields, (key, text)
+
+
+def test_unblock_dlls_removes_the_download_mark(w, tmp_path):
+    for name in ("a.dll", "b.DLL", "c.txt"):
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        with open(str(path) + ":Zone.Identifier", "w") as z:  # what Windows adds on unzip
+            z.write("[ZoneTransfer]\nZoneId=3\n")
+    assert w.unblock_dlls(str(tmp_path)) == 2
+    assert not os.path.exists(str(tmp_path / "a.dll") + ":Zone.Identifier")
+    assert os.path.exists(str(tmp_path / "c.txt") + ":Zone.Identifier")  # only DLLs
+    assert w.unblock_dlls(str(tmp_path)) == 0
