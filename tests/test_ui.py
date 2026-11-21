@@ -84,3 +84,44 @@ def test_update_notice_once_per_version(w, widget, monkeypatch):
     assert [t for t, _, _ in widget.toast.shown] == ["Вышла версия 1.9"]
     widget.toast.shown[0][2]()  # no asset / can't update here -> opens the page
     assert opened == [w.RELEASES_URL + "/tag/v1.9"]
+
+
+def test_in_games_hide_dim_and_override(w, widget, monkeypatch):
+    state = {"fg": 2, "full": True}
+
+    class U:
+        GetForegroundWindow = staticmethod(lambda: state["fg"])
+
+    monkeypatch.setattr(w, "_user32", U)
+    monkeypatch.setattr(w, "fullscreen_app_active", lambda: state["full"])
+    widget.fps_overlay, widget.visible = None, True
+    widget.root.deiconify()  # a withdrawn window doesn't move
+    widget.root.geometry("100x50+300+200")
+    widget.root.update()
+    alpha = lambda: round(float(widget.root.attributes("-alpha")), 2)
+    widget.cfg.update(in_games="hide", alpha=0.9)
+    widget._apply_dim()  # a fullscreen game in front: parked off-screen
+    widget.root.update()
+    assert widget.game_hidden_at == (300, 200) and widget.root.winfo_x() < -1000
+    widget._save_position()
+    assert widget.cfg["x"] != widget.root.winfo_x()  # the parked spot is never saved
+    state["full"] = False
+    widget._apply_dim()  # the game is gone: back in place
+    widget.root.update()
+    assert widget.game_hidden_at is None and widget.root.winfo_x() == 300
+    state["full"] = True
+    widget.cfg["in_games"] = "dim"
+    widget._apply_dim()
+    assert alpha() == 0.3 and widget.root.winfo_x() == 300
+    widget.cfg["in_games"] = "off"
+    widget._apply_dim()
+    assert alpha() == 0.9
+    widget.cfg["in_games"] = "hide"
+    widget._apply_dim()
+    widget.show_widget()  # Ctrl+Alt+W during the game: shown and stays
+    widget._apply_dim()
+    widget.root.update()
+    assert widget.root.winfo_x() == 300 and widget.game_override == 2
+    state["fg"] = 3  # another window in front: the override ends
+    widget._apply_dim()
+    assert widget.game_override is None

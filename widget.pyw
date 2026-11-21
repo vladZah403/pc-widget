@@ -177,7 +177,8 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
-                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "dim": True, "size": 100}
+                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
+                  "size": 100}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -328,7 +329,7 @@ def sanitize_config(raw):
 # key -> allowed values
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
                   "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de"),
-                  "size": (100, 125, 150)}
+                  "size": (100, 125, 150), "in_games": ("hide", "dim", "off")}
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"cores": "Ядра", "ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
@@ -3351,7 +3352,9 @@ class SettingsWindow:
                      [(pct, f"{pct}%") for pct in CONFIG_CHOICES["size"]], w._set_size)
         ttk.Frame(p, height=6).pack()
         self._check(p, tr("Компактный режим"), w.compact_var, w._toggle_compact)
-        self._check(p, tr("Тускнеть в играх и видео"), w.dim_var, w._toggle_dim)
+        self._radios(p, tr("В играх и видео на весь экран"), w.in_games_var,
+                     [("hide", tr("прятать")), ("dim", tr("тускнеть")), ("off", tr("ничего"))],
+                     w._set_in_games)
 
     def _sections(self, p):
         for key, title in SECTIONS.items():
@@ -3532,6 +3535,11 @@ class Widget:
 
     def show_widget(self):
         """Bring the widget up, in front of other windows, until something else is clicked."""
+        if getattr(self, "game_hidden_at", None) is not None and _user32 is not None:
+            # shown on purpose during a game: stay until another window comes to the front
+            self.game_override = _user32.GetForegroundWindow()
+            self.root.geometry("+%d+%d" % self.game_hidden_at)
+            self.game_hidden_at = None
         if not self.visible:
             self.root.deiconify()
             self.visible = True
@@ -3596,19 +3604,38 @@ class Widget:
                             scale(0.75))
 
     def _apply_dim(self):
-        """Fade the widget while a game (FPS shown) or a fullscreen window is in front,
-        so it doesn't distract; back to the chosen opacity afterwards."""
+        """While a game (FPS shown) or a fullscreen window is in front: hide the widget
+        (parked off-screen, so nothing gets activated) or fade it, as chosen in the
+        settings; everything comes back when that window goes. Ctrl+Alt+W during
+        the game shows the widget anyway, until another window comes to the front."""
         if _user32 is None:
             return
+        fg = _user32.GetForegroundWindow()
         overlay = getattr(self, "fps_overlay", None)
-        busy = (overlay is not None and overlay.visible) or fullscreen_app_active()
+        busy = (fg != self.hwnd and fg != getattr(self, "game_override", None)
+                and ((overlay is not None and overlay.visible) or fullscreen_app_active()))
+        mode = self.cfg["in_games"]
+        hide = busy and mode == "hide" and self.visible
+        hidden_at = getattr(self, "game_hidden_at", None)
+        if hide and hidden_at is None:
+            self.game_hidden_at = (self.root.winfo_x(), self.root.winfo_y())
+            self.root.geometry("+-9000+-9000")
+        elif not hide and hidden_at is not None:
+            self.game_hidden_at = None
+            self.root.geometry("+%d+%d" % hidden_at)
         alpha = float(self.cfg["alpha"])
-        if self.cfg["dim"] and busy and _user32.GetForegroundWindow() != self.hwnd:
+        if busy and mode == "dim":
             alpha = min(alpha, DIM_ALPHA)
         if alpha != getattr(self, "_alpha_now", None):
             self._alpha_now = alpha
             self.root.attributes("-alpha", alpha)
+        if getattr(self, "game_override", None) not in (None, fg):
+            self.game_override = None  # the game lost the front: the override ends
 
+    def _set_in_games(self):
+        self.cfg["in_games"] = self.in_games_var.get()
+        save_config(self.cfg)
+        self._apply_dim()
     def _set_size(self):
         """Scale the widget (fonts and all) without restarting."""
         self.cfg["size"] = self.size_var.get()
@@ -3618,11 +3645,6 @@ class Widget:
         self._draw()
         self.root.update_idletasks()
         self._place()  # keep it on screen when it grew
-
-    def _toggle_dim(self):
-        self.cfg["dim"] = self.dim_var.get()
-        save_config(self.cfg)
-        self._apply_dim()
 
     def _update_fps_overlay(self):
         """Show the counter over the window in front if it is a game: not ignored, and
@@ -3782,7 +3804,7 @@ class Widget:
         self.limit_vars = {key: tk.IntVar(value=cfg[key])
                            for key in ("alert_temp", "alert_ram", "alert_battery")}
         self.size_var = tk.IntVar(value=cfg["size"])
-        self.dim_var = tk.BooleanVar(value=bool(cfg["dim"]))
+        self.in_games_var = tk.StringVar(value=cfg["in_games"])
         self.ping_var = tk.StringVar(value=cfg["ping_host"])
         self.updates_var = tk.BooleanVar(value=bool(cfg["check_updates"]))
         self.lang_var = tk.StringVar(value=cfg["lang"])
@@ -4180,6 +4202,8 @@ class Widget:
             self._draw()
 
     def _save_position(self):
+        if getattr(self, "game_hidden_at", None) is not None:
+            return  # parked off-screen for a game: keep the real position
         self.cfg["x"], self.cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
         save_config(self.cfg)
 

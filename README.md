@@ -63,8 +63,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   seen, and Windows doesn't let anything draw over exclusive fullscreen — use
   windowed or borderless. Usually needs admin rights. Browsers, chats and
   players don't count as games.
-- **Dims itself** to 30% while a game (FPS shown) or a fullscreen video is in
-  front, back to normal afterwards (Settings → Look).
+- **Hides itself** while a game (FPS shown) or a fullscreen video is in front
+  and comes back afterwards; or just dims to 30%, or does nothing (Settings →
+  Look). Ctrl+Alt+W during a game shows it anyway.
 - **Tray icon** next to the clock: left click shows/hides the widget, right
   click opens the menu, hover shows CPU, RAM and temperature. Can be switched
   off in Settings.
