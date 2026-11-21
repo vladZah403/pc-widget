@@ -10,13 +10,16 @@ Every value is coloured on one "cool → hot" scale: the redder, the higher the
 load or temperature. Three palettes to choose from, or your own two colours
 (Settings → Look → "Choose custom colours…"):
 
-![Palettes: Warm, Neon, Ice](docs/themes.png)
+![Palettes: Warm, Neon, Ice and custom colours](docs/themes.png)
 
 Compact mode, the hover card of the mini panel and the panel itself:
 
 ![Compact mode and the mini panel](docs/compact-and-taskbar.png)
 
-*(The screenshots show the Russian interface; the language can be switched.)*
+CPU history for the last hour or day, and the FPS counter in a game with the
+1% low and a frame-time graph (a red bar is a stutter):
+
+![History card and FPS counter](docs/history-and-fps.png)
 
 ## Features
 - **Processor** — the load and a histogram of the last minute, clock and
