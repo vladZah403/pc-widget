@@ -1439,7 +1439,7 @@ def history_buckets(rows, start, end, n, index):
 # ---------- ping & processes ----------
 
 PING_HOST = "1.1.1.1"  # Cloudflare DNS: fast and always up (the default)
-PING_PRESETS = (("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google"), ("ya.ru", "Яндекс"))
+PING_PRESETS = (("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google"), ("9.9.9.9", "Quad9"))
 _HOST_RE = re.compile(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?"
                       r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*")
 
