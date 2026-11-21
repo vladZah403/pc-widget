@@ -56,11 +56,11 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   most once in 10 minutes; they never take the focus from a game.
 - **Pin to the desktop** (📌 button): the widget lives under the windows,
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
-- **FPS in games** — a small "FPS 60 · 1% 48" in the corner of the game window
-  with a frame-time graph where stutters stand out in red (clicks go through
-  it). Frames are counted from Windows' own events for every presented frame
+- **FPS in games** — a small "FPS 60 · low 48 · ping 24 ms" in the corner of
+  the game window with a frame-time graph where stutters stand out in red
+  (clicks go through it); the ping goes to the address chosen in Settings. Frames are counted from Windows' own events for every presented frame
   (like PresentMon), so DirectX 9–12, OpenGL and Vulkan games all count.
-  1% low = the 99th percentile frame time over the last 10 s. Windows doesn't
+  low ("1% low") = the 99th percentile frame time over the last 10 s. Windows doesn't
   let anything draw over *exclusive* fullscreen — use windowed or borderless.
   Browsers, chats and players don't count as games.
 - **Hides itself** while a game (FPS shown) or a fullscreen video is in front

@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.4"
+APP_VERSION = "1.4.1"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -3250,16 +3250,22 @@ class FpsOverlay:
     def fps_color(scale, fps):
         return scale(0.05 if fps >= 55 else 0.55 if fps >= 30 else 0.95)
 
-    def render(self, stats, scale):
-        """'FPS 60 · 1% 48' and a graph of the last frame times (spikes = stutter)."""
+    def render(self, stats, scale, ping=None):
+        """'FPS 60  low 48', a graph of the last frame times (spikes = stutter) and the ping."""
         px = self.px
         fps, low, times = stats
         parts = [("FPS ", self.f_label, DIM), (f"{fps:.0f}", self.f_value, self.fps_color(scale, fps))]
         if low is not None:
-            parts += [("   1% ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
+            parts += [("   low ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
+        tail = []
+        if ping is not None:
+            tail = [(tr("пинг") + " ", self.f_label, DIM), (str(ping), self.f_value, ping_color(scale, ping)),
+                    (" " + tr("{v} мс", v="").strip(), self.f_label, DIM)]
+        tail_w = sum(font.getlength(t) for t, font, _ in tail)
         text_w = sum(font.getlength(t) for t, font, _ in parts)
         graph = bool(times)
-        w = int(text_w + px(22) + (px(self.GRAPH_W + 10) if graph else 0))
+        w = int(text_w + px(22) + (px(self.GRAPH_W + 10) if graph else 0)
+                + (tail_w + px(12) if tail else 0))
         h = px(30)
         img = card_image(px, w, h)
         d = ImageDraw.Draw(img)
@@ -3278,16 +3284,22 @@ class FpsOverlay:
                 spike = ms > med * 1.8
                 d.rectangle((gx0 + i * bar, gy1 - hgt, gx0 + i * bar + max(1, bar - 1), gy1),
                             fill=scale(0.95) if spike else scale(0.05))
+            x = gx0 + px(self.GRAPH_W)
+        x += px(12)
+        for t, font, color in tail:
+            d.text((x, px(21) if font is self.f_value else px(20)), t, font=font, fill=color, anchor="ls")
+            x += font.getlength(t)
         return img
 
-    def show(self, stats, rect, scale):
+    def show(self, stats, rect, scale, ping=None):
         x, y = rect[0] + self.px(12), rect[1] + self.px(12)
         fps, low, times = stats
-        key = (round(fps), None if low is None else round(low), tuple(round(t) for t in times[-48:]), x, y)
+        key = (round(fps), None if low is None else round(low), tuple(round(t) for t in times[-48:]),
+               ping, x, y)
         if self.shown == key:
             return
         self.shown = key
-        img = self.render(stats, scale)
+        img = self.render(stats, scale, ping)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
@@ -3726,7 +3738,8 @@ class Widget:
                 if fullscreen_app_active() or streak >= 3:
                     shown = (stats, window_rect(fg))
         if shown:
-            self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]))
+            ping = self.ping.ms if getattr(self, "ping", None) and self.ping.ready else None
+            self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]), ping)
         else:
             self.fps_overlay.hide()
 
