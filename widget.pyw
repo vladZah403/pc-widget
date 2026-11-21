@@ -178,7 +178,8 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
                   "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
-                  "size": 100,
+                  "size": 100, "alert_disk": 10,
+                  "fps_panel": True, "fps_corner": "tl", "fps_size": 100,
                   "profile": "work", "profiles": {}, "auto_game": True, "quiet_games": True}
 
 # what a profile ("work" / "game") remembers: how the widget looks
@@ -368,12 +369,13 @@ def sanitize_config(raw):
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
                   "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de"),
                   "size": (100, 125, 150), "in_games": ("hide", "dim", "off"),
-                  "profile": ("work", "game")}
+                  "profile": ("work", "game"), "alert_disk": (5, 10, 15, 20),
+                  "fps_corner": ("tl", "tr", "bl", "br"), "fps_size": (100, 125, 150)}
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"cores": "Ядра", "ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
-            "disk_io": "Чтение и запись диска", "battery": "Износ батареи", "fans": "Вентиляторы",
-            "uptime": "Время без перезагрузки"}
+            "disk_io": "Чтение и запись диска", "battery": "Износ батареи", "ssd": "Здоровье SSD",
+            "fans": "Вентиляторы", "uptime": "Время без перезагрузки"}
 
 
 def sanitize_profile(view):
@@ -837,8 +839,9 @@ def set_autostart(enable, name=RUN_NAME):
 
 
 HOTKEY_TEXT = "Ctrl+Alt+W"
+FPS_HOTKEY_TEXT = "Ctrl+Alt+F"  # the FPS panel in a game: hide / show
 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
-VK_W = 0x57
+VK_W, VK_F = 0x57, 0x46
 
 
 class HotkeyListener(threading.Thread):
@@ -1473,13 +1476,17 @@ def read_lhm(tree):
                 hw["energy"].append((low, value))
             elif group == "Fans":
                 hw["fans"].append((low, value))
+            elif group in ("Data", "SmallData"):
+                unit = (node.get("Value") or "").strip().upper()
+                hw["data"].append((low, value * 1024 if unit.endswith("GB") else value))  # -> MB
             return
         if text in SENSOR_GROUPS:
             for kid in kids:
                 walk(kid, hw, text)
             return
         new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
-                  "clocks": [], "powers": [], "energy": [], "fans": [], "integrated": False}
+                  "clocks": [], "powers": [], "energy": [], "fans": [], "data": [],
+                  "integrated": False}
         hardware.append(new_hw)
         for kid in kids:
             walk(kid, new_hw, None)
@@ -1494,7 +1501,7 @@ def read_lhm(tree):
     gpus = [hw for hw in hardware if hw["kind"] == "gpu"]
     primary = next((g for g in gpus if any(k == "gpu" for _, _, k in g["temps"])),
                    gpus[0] if gpus else None)
-    gpu = gpu_load = gpu_name = None
+    gpu = gpu_load = gpu_name = gpu_clock = vram_used = vram_total = None
     gpu_shared = False
     if primary:
         gpu = _pick([(n, v) for n, v, k in primary["temps"] if k == "gpu"], GPU_PREFS)
@@ -1507,6 +1514,15 @@ def read_lhm(tree):
         gpu_name = re.sub(r"\s+", " ", gpu_name).strip()
         integrated = primary["integrated"] or bool(INTEGRATED_GPU.search(primary["name"]))
         gpu_shared = gpu is None and integrated and cpu is not None
+        clock = dict(primary["clocks"]).get("gpu core")
+        gpu_clock = clock if clock and 0 < clock < 10000 else None
+        mem = dict(primary["data"])
+        # the driver's own numbers first, else Windows' (D3D) view of the dedicated memory
+        for used_k, total_k in (("gpu memory used", "gpu memory total"),
+                                ("d3d dedicated memory used", "d3d dedicated memory total")):
+            if mem.get(used_k) is not None and mem.get(total_k):
+                vram_used, vram_total = mem[used_k], mem[total_k]
+                break
 
     ssds = [_pick([(n, v) for n, v, k in hw["temps"] if k == "storage"], STORAGE_PREFS)
             for hw in hardware if any(k == "storage" for _, _, k in hw["temps"])]
@@ -1525,6 +1541,7 @@ def read_lhm(tree):
         cpu_power = power if power and 0 < power < 1000 else None
     return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
             "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power,
+            "gpu_clock": gpu_clock, "vram_used": vram_used, "vram_total": vram_total,
             "fans": fans[:3] or None, **battery}
 
 
@@ -1555,7 +1572,8 @@ def extract_temps(tree):
 EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None,
                  "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None,
                  "battery_design": None, "battery_full": None, "battery_wear": None,
-                 "battery_rate": None, "fans": None}
+                 "battery_rate": None, "fans": None, "gpu_clock": None, "vram_used": None,
+                 "vram_total": None}
 
 
 def is_admin():
@@ -1599,7 +1617,8 @@ class NativeSensors:
              "Storage": "hdd", "Battery": "battery"}
     GROUPS = {"Temperature": ("Temperatures", " °C"), "Load": ("Load", " %"),
               "Clock": ("Clocks", " MHz"), "Power": ("Powers", " W"),
-              "Energy": ("Energy", " mWh"), "Level": ("Levels", " %"), "Fan": ("Fans", " RPM")}
+              "Energy": ("Energy", " mWh"), "Level": ("Levels", " %"), "Fan": ("Fans", " RPM"),
+              "SmallData": ("SmallData", " MB"), "Data": ("Data", " GB")}
 
     def __init__(self, path):
         # the bundled DLLs (pythonnet, clr_loader, LibreHardwareMonitor) must not
@@ -2197,11 +2216,12 @@ class ProcessSampler:
             rows = sorted(groups.items(), key=lambda kv: (kv[1][idx], kv[1][1 - idx]), reverse=True)
             return [(name, cpu, mem) for name, (cpu, mem) in rows[:limit]]
         dt = (now - self.prev_t) if self.prev_t else None
-        groups, current = {}, {}
+        groups, current, pids = {}, {}, {}
         for pid, name, cpu_time, mem, created in self._snapshot():
             if pid == 0:  # idle
                 continue
             current[pid] = (created, cpu_time)
+            pids.setdefault(name.removesuffix(".exe") or "?", []).append(pid)
             cpu = 0.0
             before = self.prev.get(pid)
             if dt and before and before[0] == created:
@@ -2209,7 +2229,7 @@ class ProcessSampler:
             g = groups.setdefault(name.removesuffix(".exe") or "?", [0.0, 0])
             g[0] += cpu
             g[1] += mem
-        self.prev, self.prev_t, self.groups = current, now, groups
+        self.prev, self.prev_t, self.groups, self.pids = current, now, groups, pids
         idx = 0 if key == "cpu" else 1
         rows = sorted(groups.items(), key=lambda kv: (kv[1][idx], kv[1][1 - idx]), reverse=True)
         return [(name, cpu, mem) for name, (cpu, mem) in rows[:limit]]
@@ -2223,6 +2243,188 @@ def top_processes(limit=5, key="cpu"):
     if _sampler is None:
         _sampler = ProcessSampler()
     return _sampler.top(limit, key)
+
+
+# never offered for closing: Windows itself (ending these logs you out or crashes
+# the PC), the antivirus, and this widget
+KEEP_RUNNING = {"system", "registry", "smss", "csrss", "wininit", "winlogon", "services", "lsass",
+                "lsaiso", "svchost", "dwm", "explorer", "fontdrvhost", "memory compression",
+                "secure system", "spoolsv", "audiodg", "sihost", "ctfmon", "taskhostw", "conhost",
+                "runtimebroker", "dllhost", "wudfhost", "searchindexer", "msmpeng", "nissrv",
+                "securityhealthservice", "smartscreen", "pc-monitor", "python", "pythonw", "?"}
+
+
+def can_close(name):
+    own = os.path.splitext(os.path.basename(sys.executable))[0].lower()
+    return name.lower() not in KEEP_RUNNING and name.lower() != own
+
+
+def close_program(name):
+    """End every process of this program (the list sums them by name) that runs
+    under this Windows user — never other users' or the system's. Returns how
+    many were ended."""
+    if not can_close(name) or _sampler is None:
+        return 0
+    me = psutil.Process()
+    try:
+        user = me.username()
+    except psutil.Error:
+        return 0
+    ended = 0
+    for pid in getattr(_sampler, "pids", {}).get(name, []):
+        if pid == me.pid:
+            continue
+        try:
+            proc = psutil.Process(pid)
+            # the pid may belong to another program by now
+            if proc.name().lower().removesuffix(".exe") != name.lower() or proc.username() != user:
+                continue
+            proc.terminate()
+            ended += 1
+        except psutil.Error:  # gone already, or not ours to end
+            continue
+    return ended
+
+
+# ---------- SSD health ----------
+# NVMe drives hand out their health log (wear, spare blocks, data written,
+# temperature, hours) through IOCTL_STORAGE_QUERY_PROPERTY on a handle opened
+# with no access rights, so this works without admin rights. Measured on
+# Vlad's WD SN740: 3% worn, 100% spare, 38.9 TB written, 2101 hours, 32°.
+
+IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
+DRIVES_POLL_S = 60
+SSD_WEAR_ALERT = 90  # % of the rated endurance used up
+_k32 = None
+
+
+def _kernel32():
+    """Own kernel32 instance with 64-bit-safe prototypes (handles are pointers)."""
+    global _k32
+    if _k32 is None:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateFileW.restype = _w.HANDLE
+        k.CreateFileW.argtypes = [_w.LPCWSTR, _w.DWORD, _w.DWORD, ctypes.c_void_p, _w.DWORD,
+                                  _w.DWORD, _w.HANDLE]
+        k.DeviceIoControl.restype = _w.BOOL
+        k.DeviceIoControl.argtypes = [_w.HANDLE, _w.DWORD, ctypes.c_void_p, _w.DWORD, ctypes.c_void_p,
+                                      _w.DWORD, ctypes.POINTER(_w.DWORD), ctypes.c_void_p]
+        k.CloseHandle.argtypes = [_w.HANDLE]
+        _k32 = k
+    return _k32
+
+
+def _open_device(path):
+    """A handle with no access rights (enough for these queries) or None."""
+    h = _kernel32().CreateFileW(path, 0, 3, None, 3, 0, None)  # share read+write, OPEN_EXISTING
+    return None if h in (None, ctypes.c_void_p(-1).value) else h
+
+
+def _query(h, code, inbuf, out_size):
+    out = ctypes.create_string_buffer(out_size)
+    got = _w.DWORD()
+    if not _kernel32().DeviceIoControl(h, code, inbuf, len(inbuf), out, out_size, ctypes.byref(got), None):
+        return None
+    return out.raw[:got.value]
+
+
+def parse_nvme_health(log):
+    """The NVMe 'SMART / Health Information' log page -> dict, or None if too short."""
+    if len(log) < 144:
+        return None
+    temp_k = struct.unpack_from("<H", log, 1)[0]
+    return {"critical": log[0],                       # bit flags: spare low, too hot, read-only…
+            "temp": temp_k - 273 if 273 < temp_k < 273 + 150 else None,
+            "spare": log[3], "spare_min": log[4],      # % of spare blocks left / the drive's limit
+            "wear": min(100, log[5]),                  # 'percentage used' of the rated endurance
+            "written": int.from_bytes(log[48:64], "little") * 512_000,  # units of 1000 sectors
+            "hours": int.from_bytes(log[128:144], "little")}
+
+
+def _drive_model(h):
+    """Model name from the storage device descriptor ('' if unknown)."""
+    data = _query(h, IOCTL_STORAGE_QUERY_PROPERTY, struct.pack("<III", 0, 0, 0), 1024)
+    if not data or len(data) < 20:
+        return ""
+    names = []
+    for off in struct.unpack_from("<II", data, 12):  # vendor, product
+        if 0 < off < len(data):
+            names.append(data[off:].split(b"\0")[0].decode("ascii", "replace").strip())
+    return " ".join(n for n in names if n)
+
+
+def nvme_health(n):
+    """Health of \\\\.\\PhysicalDrive<n> if it is an NVMe drive, else None."""
+    h = _open_device(f"\\\\.\\PhysicalDrive{n}")
+    if h is None:
+        return None
+    try:
+        # STORAGE_PROPERTY_QUERY (StorageDeviceProtocolSpecificProperty) + STORAGE_PROTOCOL_SPECIFIC_DATA
+        # asking for NVMe log page 2, then room for the 512-byte page
+        query = (struct.pack("<II", 50, 0) + struct.pack("<11I", 3, 2, 2, 0, 44, 512, 0, 0, 0, 0, 0)
+                 + bytes(512))
+        data = _query(h, IOCTL_STORAGE_QUERY_PROPERTY, query, len(query))
+        if not data or len(data) < 8 + 44:
+            return None
+        offset, length = struct.unpack_from("<II", data, 8 + 16)
+        health = parse_nvme_health(data[8 + offset:8 + offset + min(length, 512)])
+        if health:
+            health.update(drive=n, model=_drive_model(h), letters=[])
+        return health
+    finally:
+        _kernel32().CloseHandle(h)
+
+
+def volume_drive(letter):
+    """Physical drive number of a volume like 'C:' (its first extent), or None."""
+    h = _open_device(f"\\\\.\\{letter}")
+    if h is None:
+        return None
+    try:
+        data = _query(h, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, b"", 64)
+    finally:
+        _kernel32().CloseHandle(h)
+    if not data or len(data) < 12 or not struct.unpack_from("<I", data, 0)[0]:
+        return None
+    return struct.unpack_from("<I", data, 8)[0]
+
+
+def fmt_written(n_bytes):
+    """Drive makers count endurance in decimal terabytes."""
+    if n_bytes >= 1e12:
+        return tr("{v} ТБ", v=dec(f"{n_bytes / 1e12:.1f}"))
+    return tr("{v} ГБ", v=f"{n_bytes / 1e9:.0f}")
+
+
+class DriveHealth(threading.Thread):
+    """The NVMe drives' health, read every DRIVES_POLL_S in the background
+    (a few ms, but a sleeping drive may take longer to answer)."""
+
+    def __init__(self):
+        super().__init__(daemon=True, name="drives")
+        self.drives = []  # replaced as a whole: readers always see one consistent list
+
+    def poll(self):
+        drives = [d for d in (nvme_health(n) for n in range(16)) if d]
+        letters = {}
+        if drives:
+            for mount in scan_partitions():
+                letter = mount.rstrip("\\")
+                number = volume_drive(letter)
+                if number is not None:
+                    letters.setdefault(number, []).append(letter)
+        for d in drives:
+            d["letters"] = sorted(letters.get(d["drive"], []))
+        self.drives = drives
+
+    def run(self):
+        while True:
+            try:
+                self.poll()
+            except Exception:
+                log.exception("reading the drive health failed")
+            time.sleep(DRIVES_POLL_S)
 
 
 # ---------- rendering ----------
@@ -2249,6 +2451,7 @@ class Renderer:
         self.pin_box = (0, 0, 0, 0)
         self.hero_box = (0, 0, 0, 0)
         self.update_box = (0, 0, 0, 0)
+        self.proc_boxes = []  # [(program name, × box)] in the process list
         self.temps_box = (0, 0, 0, 0)
 
     def px(self, v):
@@ -2336,9 +2539,8 @@ class Renderer:
         self._rrect(d, cx - 5, cy + 0.4, cx + 5, cy + 2.2, 0.8, color)
         d.rectangle(self._ss(cx - 0.6, cy + 2, cx + 0.6, cy + 7.5), fill=color)
 
-    def _close_icon(self, d, cx, cy, color):
-        a = 4.2
-        w = 1.5 * self.s * SS
+    def _close_icon(self, d, cx, cy, color, a=4.2, width=1.5):
+        w = width * self.s * SS
         d.line(self._ss(cx - a, cy - a, cx + a, cy + a), fill=color, width=round(w))
         d.line(self._ss(cx - a, cy + a, cx + a, cy - a), fill=color, width=round(w))
 
@@ -2385,6 +2587,14 @@ class Renderer:
             sensors.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
         if "battery" not in hidden and data.get("battery_wear") is not None:
             sensors.append((38, self._draw_battery))
+        if "ssd" not in hidden:
+            drives = data.get("drives") or []
+            # a single drive whose temperature the strip above already shows: not twice
+            twice = ("temps" not in hidden and self._temps_online(data)
+                     and data.get("temp_ssd") is not None and len(drives) == 1)
+            for drive in drives:
+                sensors.append((38, lambda d, texts, y, data, scale, drive=drive:
+                                self._draw_ssd(d, texts, y, drive, scale, show_temp=not twice)))
         if "fans" not in hidden and data.get("fans"):
             sensors.append((24, self._draw_fans))
         if sensors and secs:
@@ -2457,6 +2667,7 @@ class Renderer:
         scale = theme_scale(theme)
         P, Wl = self.PAD, self.WIDTH
         self.update_box = self.temps_box = (0, 0, 0, 0)
+        self.proc_boxes = []
         if compact:
             data = dict(data, procs=None, update=None)
         H = self.layout_height(data, compact, hidden)
@@ -2620,18 +2831,29 @@ class Renderer:
         procs = data["procs"]
         y0, y1 = y - 4, y + 108
         self._rrect(d, P - 6, y0, Wl - P + 6, y1, 8, (34, 40, 52))
-        col_mem, col_cpu = Wl - P, Wl - P - 58
+        armed = data.get("procs_armed")
+        col_x = Wl - P - 3  # centre of the × that closes a program
+        col_mem, col_cpu = Wl - P - 14, Wl - P - 68
         texts.append((P, y0 + 17, tr("Программа"), self.f_small, FAINT, "ls"))
         texts.append(("rich", col_cpu, y0 + 17, [("CPU", self.f_small, FAINT)]))
         texts.append(("rich", col_mem, y0 + 17, [(tr("Память"), self.f_small, FAINT)]))
         name_w = self.px(col_cpu - 42 - P)
+        hot = scale(1.0)
         for i, (name, cpu_p, mem) in enumerate(procs):
             by = y0 + 36 + i * 17
-            texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
-            cpu_txt = dec(f"{cpu_p:.1f}") if cpu_p < 10 else f"{cpu_p:.0f}"
-            texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
-                                                 scale(min(1.0, cpu_p / 50)))]))
-            texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
+            if name == armed:  # the first click on × asks: the row says what a second one does
+                texts.append((P, by, ellipsize(tr("Закрыть {name}?", name=name), self.f_small,
+                                               self.px(col_mem - 8 - P)), self.f_small, hot, "ls"))
+            else:
+                texts.append((P, by, ellipsize(name, self.f_small, name_w), self.f_small, TEXT, "ls"))
+                cpu_txt = dec(f"{cpu_p:.1f}") if cpu_p < 10 else f"{cpu_p:.0f}"
+                texts.append(("rich", col_cpu, by, [(f"{cpu_txt}%", self.f_value,
+                                                     scale(min(1.0, cpu_p / 50)))]))
+                texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
+            if can_close(name):
+                self._close_icon(d, col_x, by - 4, hot if name == armed else FAINT, a=3, width=1.3)
+                self.proc_boxes.append((name, (self.px(col_x - 8), self.px(by - 12),
+                                               self.px(col_x + 8), self.px(by + 4))))
         if not procs:
             texts.append((P, y0 + 36, tr("собираю данные…"), self.f_small, FAINT, "ls"))
 
@@ -2731,6 +2953,30 @@ class Renderer:
         texts.append(("rich", Wl - P, y + 14, [
             (info, self.f_small, DIM), (tr("износ") + " ", self.f_small, DIM),
             (f"{wear:.0f}%", self.f_value, scale(min(1.0, wear / 40)))]))
+        self._segment_meter(d, P, y + 22, Wl - P, wear, scale)
+
+    def _draw_ssd(self, d, texts, y, drive, scale, show_temp=True):
+        """An NVMe drive: wear (share of its rated endurance used up), temperature and
+        data written; what doesn't fit drops off, the wear always stays."""
+        P, Wl = self.PAD, self.WIDTH
+        label = " ".join(["SSD"] + drive["letters"])
+        self._label(d, texts, y + 14, label, "disk")
+        wear = drive["wear"]
+        bad = bool(drive["critical"]) or drive["spare"] < drive["spare_min"]
+        hot = scale(1.0)
+        wear_parts = [(tr("износ") + " ", self.f_small, DIM),
+                      (f"{wear}%", self.f_value, hot if bad else scale(min(1.0, wear / 100)))]
+        if bad:
+            wear_parts.insert(0, (tr("неисправен") + "   ", self.f_small, hot))
+        temp = drive["temp"] if show_temp else None
+        temp_parts = ([(f"{temp}°", self.f_small, scale((temp - 30) / 70)), ("   ", self.f_small, DIM)]
+                      if temp is not None else [])
+        written = [(tr("записано {v}", v=fmt_written(drive["written"])) + "   ", self.f_small, DIM)]
+        room = self.px(Wl - P - P - self.ICON_W - 6) - self.f_label.getlength(label)
+        for parts in (temp_parts + written + wear_parts, temp_parts + wear_parts, wear_parts):
+            if sum(f.getlength(t) for t, f, _ in parts) <= room:
+                break
+        texts.append(("rich", Wl - P, y + 14, parts))
         self._segment_meter(d, P, y + 22, Wl - P, wear, scale)
 
     def _draw_fans(self, d, texts, y, data, scale):
@@ -3420,17 +3666,14 @@ def write_history_csv(path, rows):
 
 
 class FpsOverlay:
-    """'FPS 60' in the top-left corner of the game window: topmost, clicks go
-    through it to the game, and it never takes the focus."""
+    """'FPS 60' in a corner of the game window (the one chosen in the settings):
+    topmost, clicks go through it to the game, and it never takes the focus."""
 
     OFFSCREEN = "1x1+-9000+-9000"
 
     def __init__(self, widget):
-        self.px = px = getattr(widget, "ui_renderer", widget.renderer).px
-        self.f_label = load_font(px(11), "SemiBold")
-        self.f_value = load_font(px(17), "SemiBold Condensed")
-        self.f_small_value = load_font(px(13), "SemiBold")
-        self.f_sym = load_symbol_font(px(12))  # "≈": not in Bahnschrift
+        self.widget = widget
+        self.rescale()
         self.top = top = tk.Toplevel(widget.root)
         top.overrideredirect(True)
         top.configure(bg=KEY_HEX)
@@ -3450,7 +3693,26 @@ class FpsOverlay:
         self.hwnd = hwnd
         self.photo = None
         self.visible = False
-        self.shown = None  # (text, colour, x, y) on screen now
+
+    def rescale(self):
+        """Fonts for the panel size from the settings, on top of Windows' scale."""
+        cfg = getattr(self.widget, "cfg", None) or {}
+        k = getattr(self.widget, "dpi_scale", 1.0) * cfg.get("fps_size", 100) / 100
+        self.px = px = lambda v: int(round(v * k))
+        self.f_label = load_font(px(11), "SemiBold")
+        self.f_value = load_font(px(17), "SemiBold Condensed")
+        self.f_small_value = load_font(px(13), "SemiBold")
+        self.f_sym = load_symbol_font(px(12))  # "≈": not in Bahnschrift
+        self.content = None  # what the picture on screen shows
+        self.placed = None   # (x, y, w, h) on screen
+
+    def place(self, rect, w, h):
+        """Top-left corner of a w x h panel in the chosen corner of the game window."""
+        corner = (getattr(self.widget, "cfg", None) or {}).get("fps_corner", "tl")
+        m = self.px(12)
+        x = rect[0] + m if corner in ("tl", "bl") else rect[2] - w - m
+        y = rect[1] + m if corner in ("tl", "tr") else rect[3] - h - m
+        return x, y
 
     GRAPH_W = 52  # frame-time graph, logical px
 
@@ -3470,8 +3732,32 @@ class FpsOverlay:
     def _width(parts):
         return sum(font.getlength(t) for t, font, _ in parts)
 
+    def system_rows(self, info, scale):
+        """Rows under the FPS: 'CPU 45% · 66°  GPU 23% · ≈66°', then
+        'VRAM 1.2/2.0 GB  GPU 1800 MHz  ping 24 ms' (the ping joins the first row
+        when the sensors give no video memory or clock). Empty rows are left out."""
+        f, fv = self.f_label, self.f_small_value
+        gap = ("     ", f, DIM)
+        cpu_gpu = self.system_parts(info, scale)
+        extra = []
+        used, total = info.get("vram_used"), info.get("vram_total")
+        if used is not None and total:
+            extra += [("VRAM ", f, DIM), (f"{used / 1024:.1f}", fv, scale(min(1.0, used / total))),
+                      (f"/{total / 1024:.1f} GB", f, DIM)]
+        clock = info.get("gpu_clock")
+        if clock:
+            extra += ([gap] if extra else []) + [("GPU ", f, DIM), (f"{clock:.0f}", fv, TEXT),
+                                                  (" MHz", f, DIM)]
+        ping = info.get("ping")
+        if ping is not None:
+            row = extra if extra else cpu_gpu
+            # English like FPS / low / CPU / GPU in this pill, whatever the language
+            row += ([gap] if row else []) + [("ping ", f, DIM), (str(ping), fv, ping_color(scale, ping)),
+                                             (" ms", f, DIM)]
+        return [r for r in (cpu_gpu, extra) if r]
+
     def system_parts(self, info, scale):
-        """'CPU 45% 66°  GPU 23% ≈66°  ping 24 ms' from the widget's readings."""
+        """'CPU 45% · 66°     GPU 23% · ≈66°' from the widget's readings."""
         f, fv = self.f_label, self.f_small_value
         heat = lambda t: scale(max(0.0, min(1.0, (t - 30) / 70)))
         parts = []
@@ -3490,27 +3776,22 @@ class FpsOverlay:
                 if approx:
                     parts.append(("≈", self.f_sym, heat(temp)))
                 parts.append((f"{temp:.0f}°", fv, heat(temp)))
-        ping = info.get("ping")
-        if ping is not None:
-            if parts:
-                parts.append(("     ", f, DIM))
-            # English like FPS / low / CPU / GPU in this pill, whatever the language
-            parts += [("ping ", f, DIM), (str(ping), fv, ping_color(scale, ping)), (" ms", f, DIM)]
         return parts
 
     def render(self, stats, scale, info=None):
         """Row 1: 'FPS 60  low 48' and a graph of the last frame times (spikes = stutter).
-        Row 2 (when there is anything): CPU and GPU load and temperature, the ping."""
+        Then (when there is anything) CPU and GPU load and temperature, and the video
+        memory, GPU clock and ping."""
         px = self.px
         fps, low, times = stats
         top = [("FPS ", self.f_label, DIM), (f"{fps:.0f}", self.f_value, self.fps_color(scale, fps))]
         if low is not None:
             top += [("   low ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
-        bottom = self.system_parts(info or {}, scale)
+        rows = self.system_rows(info or {}, scale)
         graph = bool(times)
         top_w = self._width(top) + (px(self.GRAPH_W + 10) if graph else 0)
-        w = int(max(top_w, self._width(bottom)) + px(22))
-        h = px(30) + (px(18) if bottom else 0)
+        w = int(max([top_w] + [self._width(r) for r in rows]) + px(22))
+        h = px(30) + px(18) * len(rows)
         img = card_image(px, w, h)
         d = ImageDraw.Draw(img)
         x = self._row(d, px(11), px(20), top)
@@ -3525,32 +3806,35 @@ class FpsOverlay:
                 spike = ms > med * 1.8
                 d.rectangle((gx0 + i * bar, gy1 - hgt, gx0 + i * bar + max(1, bar - 1), gy1),
                             fill=scale(0.95) if spike else scale(0.05))
-        if bottom:
-            self._row(d, px(11), px(39), bottom)
+        for i, row in enumerate(rows):
+            self._row(d, px(11), px(39 + 18 * i), row)
         return img
 
     def show(self, stats, rect, scale, info=None):
-        x, y = rect[0] + self.px(12), rect[1] + self.px(12)
         fps, low, times = stats
         info = info or {}
         key = (round(fps), None if low is None else round(low), tuple(round(t) for t in times[-48:]),
-               tuple(sorted((k, None if v is None else round(v)) for k, v in info.items()
-                            if not isinstance(v, bool))), x, y)
-        if self.shown == key:
-            return
-        self.shown = key
-        img = self.render(stats, scale, info)
-        self.photo = ImageTk.PhotoImage(img)
-        self.view.configure(image=self.photo)
-        self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
-        self.top.lift()
+               tuple(sorted((k, None if v is None else round(v, 1)) for k, v in info.items()
+                            if not isinstance(v, bool))))
+        if self.content != key:
+            self.content = key
+            img = self.render(stats, scale, info)
+            self.size = (img.width, img.height)
+            self.photo = ImageTk.PhotoImage(img)
+            self.view.configure(image=self.photo)
+        w, h = self.size
+        x, y = self.place(rect, w, h)
+        if self.placed != (x, y, w, h):
+            self.placed = (x, y, w, h)
+            self.top.geometry(f"{w}x{h}+{x}+{y}")
+            self.top.lift()
         self.visible = True
 
     def hide(self):
         if self.visible:
             self.top.geometry(self.OFFSCREEN)
             self.visible = False
-            self.shown = None
+            self.placed = None
 
 
 def window_pid(hwnd):
@@ -3690,7 +3974,8 @@ class SettingsWindow:
                     w._toggle_quiet_games)
         for key, title, unit in (("alert_temp", "Перегрев CPU от", "°"),
                                  ("alert_ram", "Память занята от", "%"),
-                                 ("alert_battery", "Батарея ниже", "%")):
+                                 ("alert_battery", "Батарея ниже", "%"),
+                                 ("alert_disk", "Свободно на диске C: меньше", "%")):
             self._radios(p, tr(title), w.limit_vars[key],
                          [(v, f"{v}{unit}") for v in CONFIG_CHOICES[key]],
                          lambda k=key: w._set_limit(k))
@@ -3714,6 +3999,13 @@ class SettingsWindow:
         ttk.Button(row, text="OK", width=4, command=self._apply_host).pack(side="left")
         ttk.Frame(p, height=8).pack()
         self._check(p, tr("FPS в играх"), w.fps_var, w._toggle_fps)
+        self._check(p, tr("Показывать FPS-панель ({hotkey})", hotkey=FPS_HOTKEY_TEXT), w.fps_panel_var,
+                    w._toggle_fps_panel)
+        self._radios(p, tr("Угол панели"), w.fps_corner_var,
+                     [("tl", tr("слева вверху")), ("tr", tr("справа вверху")),
+                      ("bl", tr("слева внизу")), ("br", tr("справа внизу"))], w._set_fps_look)
+        self._radios(p, tr("Размер панели"), w.fps_size_var,
+                     [(v, f"{v}%") for v in CONFIG_CHOICES["fps_size"]], w._set_fps_look)
 
     def _apply_host(self):
         from tkinter import messagebox
@@ -3812,12 +4104,16 @@ class Widget:
         self.history = History()
         self.lhm = LhmReader()
         self.lhm.start()
+        self.drive_health = DriveHealth()
+        self.drive_health.start()
         self.ping = PingReader(self.cfg["ping_host"])
         self.ping.start()
         self.show_procs = False
         self.alert_state = {}
         self._press_at = (0, 0)
         self.hero_pressed = False
+        self.proc_pressed = None  # program whose × was pressed
+        self.proc_armed = None    # program whose × asks for a second click
 
         self.update()
         self._place()
@@ -3846,6 +4142,8 @@ class Widget:
             self._start_fps()
         self.hotkey = HotkeyListener()
         self.hotkey.start()
+        self.fps_hotkey = HotkeyListener(vk=VK_F)
+        self.fps_hotkey.start()
         self._poll_hotkey()
         try:
             check_autostart(prefer_task=bool(self.cfg["run_as_admin"]))
@@ -3888,6 +4186,11 @@ class Widget:
         if self.hotkey.pressed.is_set():
             self.hotkey.pressed.clear()
             self.toggle_widget()
+        fps_key = getattr(self, "fps_hotkey", None)
+        if fps_key is not None and fps_key.pressed.is_set():
+            fps_key.pressed.clear()
+            self.fps_panel_var.set(not self.cfg["fps_panel"])
+            self._toggle_fps_panel()
         while self.tray is not None:
             try:
                 click = self.tray.clicks.get_nowait()
@@ -3918,6 +4221,23 @@ class Widget:
             self.fps = None
             self.fps_overlay.hide()
 
+    def _toggle_fps_panel(self):
+        """The panel only: FPS keeps being counted (the widget still knows a game runs)."""
+        self.cfg["fps_panel"] = self.fps_panel_var.get()
+        save_config(self.cfg)
+        if self.fps_overlay is not None and self.fps is not None:
+            self._update_fps_overlay()
+
+    def _set_fps_look(self):
+        """Corner or size of the panel changed in the settings."""
+        self.cfg["fps_corner"] = self.fps_corner_var.get()
+        self.cfg["fps_size"] = self.fps_size_var.get()
+        save_config(self.cfg)
+        if self.fps_overlay is not None:
+            self.fps_overlay.rescale()
+            if self.fps is not None:
+                self._update_fps_overlay()
+
     def _fps_problem(self):
         """Tell why the counter can't work (after switching it on)."""
         if self.fps is not None and self.fps.error and self.toast is not None:
@@ -3935,9 +4255,8 @@ class Widget:
         if _user32 is None:
             return
         fg = _user32.GetForegroundWindow()
-        overlay = getattr(self, "fps_overlay", None)
         busy = (fg != self.hwnd and fg != getattr(self, "game_override", None)
-                and ((overlay is not None and overlay.visible) or fullscreen_app_active()))
+                and (getattr(self, "game_fps", False) or fullscreen_app_active()))
         mode = self.cfg["in_games"]
         hide = busy and mode == "hide" and self.visible
         hidden_at = getattr(self, "game_hidden_at", None)
@@ -3978,6 +4297,8 @@ class Widget:
         ping = getattr(self, "ping", None)
         return {"cpu": d.get("cpu"), "cpu_t": cpu_t, "gpu": d.get("gpu_load"),
                 "gpu_t": cpu_t if shared else gpu_t, "gpu_approx": shared,
+                "vram_used": d.get("vram_used"), "vram_total": d.get("vram_total"),
+                "gpu_clock": d.get("gpu_clock"),
                 "ping": ping.ms if ping is not None and ping.ready else None}
 
     def _update_fps_overlay(self):
@@ -3996,7 +4317,8 @@ class Widget:
                 self.fps_streak = (pid, streak)
                 if fullscreen_app_active() or streak >= 3:
                     shown = (stats, window_rect(fg))
-        if shown:
+        self.game_fps = bool(shown)  # a game is in front, whether the panel shows or not
+        if shown and self.cfg["fps_panel"]:
             self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]),
                                   self._overlay_info())
         else:
@@ -4130,6 +4452,9 @@ class Widget:
         self.taskbar_var = tk.BooleanVar(value=bool(cfg["taskbar"]))
         self.tray_var = tk.BooleanVar(value=bool(cfg["tray"]))
         self.fps_var = tk.BooleanVar(value=bool(cfg["fps"]))
+        self.fps_panel_var = tk.BooleanVar(value=bool(cfg["fps_panel"]))
+        self.fps_corner_var = tk.StringVar(value=cfg["fps_corner"])
+        self.fps_size_var = tk.IntVar(value=cfg["fps_size"])
         self.procs_var = tk.BooleanVar(value=self.show_procs if hasattr(self, "show_procs") else False)
         self.compact_var = tk.BooleanVar(value=bool(cfg["compact"]))
         self.autostart_var = tk.BooleanVar(value=autostart_enabled() or admin_task_enabled())
@@ -4137,7 +4462,7 @@ class Widget:
         self.section_vars = {key: tk.BooleanVar(value=key not in cfg["hidden"]) for key in SECTIONS}
         self.alerts_var = tk.BooleanVar(value=bool(cfg["alerts"]))
         self.limit_vars = {key: tk.IntVar(value=cfg[key])
-                           for key in ("alert_temp", "alert_ram", "alert_battery")}
+                           for key in ("alert_temp", "alert_ram", "alert_battery", "alert_disk")}
         self.size_var = tk.IntVar(value=cfg["size"])
         self.in_games_var = tk.StringVar(value=cfg["in_games"])
         self.ping_var = tk.StringVar(value=cfg["ping_host"])
@@ -4265,7 +4590,15 @@ class Widget:
         x0, y0, x1, y1 = box
         return x0 <= event.x <= x1 and y0 <= event.y <= y1
 
+    def _proc_at(self, event):
+        """The program whose × is under the mouse, or None."""
+        for name, box in getattr(self.renderer, "proc_boxes", []):
+            if self._in_box(box, event):
+                return name
+        return None
+
     def _press(self, event):
+        self.proc_pressed = self._proc_at(event)
         self.close_pressed = self._in_close(event)
         self.pin_pressed = self._in_box(self.renderer.pin_box, event)
         self.hero_pressed = self._in_box(self.renderer.hero_box, event)
@@ -4273,12 +4606,17 @@ class Widget:
         self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
 
     def _drag_move(self, event):
-        if self.close_pressed or self.pin_pressed or self.cfg["pinned"]:
+        if self.close_pressed or self.pin_pressed or self.proc_pressed or self.cfg["pinned"]:
             return
         dx, dy = self._drag
         self.root.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
 
     def _release(self, event):
+        if self.proc_pressed:
+            name, self.proc_pressed = self.proc_pressed, None
+            if self._proc_at(event) == name:
+                self._close_program_clicked(name)
+            return
         if self.close_pressed:
             self.close_pressed = False
             if self._in_close(event):
@@ -4312,7 +4650,7 @@ class Widget:
         if on_pin != self.pin_hover:
             self.pin_hover = on_pin
             self._draw()
-        hand = (self._in_close(event) or on_pin
+        hand = (self._in_close(event) or on_pin or self._proc_at(event)
                 or self._in_box(self.renderer.hero_box, event)
                 or self._in_box(self.renderer.update_box, event)
                 or self._in_box(self.renderer.temps_box, event))
@@ -4321,6 +4659,31 @@ class Widget:
             self.view.configure(cursor=cursor)
 
     # --- processes & alerts ---
+    def _close_program_clicked(self, name):
+        """× in the process list: the first click asks (the row turns red), a second
+        one within CLOSE_CONFIRM_MS ends the program."""
+        if self.proc_armed == name:
+            self.proc_armed = None
+            ended = close_program(name)
+            log.info("closed %s: %d processes", name, ended)
+            if not ended and self.toast is not None:
+                self.toast.show(tr("Не получилось закрыть {name}", name=name),
+                                tr("Программа запущена от администратора или уже закрылась."),
+                                theme_scale(self.cfg["theme"])(0.75))
+        else:
+            self.proc_armed = name
+            self.root.after(CLOSE_CONFIRM_MS, lambda: self._disarm_program(name))
+        if self.data is not None:
+            self.data["procs_armed"] = self.proc_armed
+            self._draw()
+
+    def _disarm_program(self, name):
+        if self.proc_armed == name:
+            self.proc_armed = None
+            if self.data is not None:
+                self.data["procs_armed"] = None
+                self._draw()
+
     def _set_procs(self, show):
         self.show_procs = show
         self.procs_var.set(show)
@@ -4458,8 +4821,8 @@ class Widget:
 
     # --- profiles ---
     def _game_in_front(self):
-        overlay = getattr(self, "fps_overlay", None)
-        return bool(overlay is not None and overlay.visible) or (
+        """A game counted by the FPS reader, or any fullscreen window, is in front."""
+        return bool(getattr(self, "game_fps", False)) or (
             _user32 is not None and fullscreen_app_active())
 
     def _profile_view(self, name):
@@ -4555,7 +4918,7 @@ class Widget:
     def _set_limit(self, key):
         self.cfg[key] = self.limit_vars[key].get()
         self.alert_state.pop({"alert_temp": "cpu_temp", "alert_ram": "ram",
-                              "alert_battery": "battery"}[key], None)  # re-arm
+                              "alert_battery": "battery", "alert_disk": "disk_space"}[key], None)  # re-arm
         if key == "alert_temp":
             self.alert_state.pop("gpu_temp", None)
         save_config(self.cfg)
@@ -4632,6 +4995,28 @@ class Widget:
                         + (tr(", примерно на {left}", left=fmt_left(left)) if left else "")
                         + ". " + tr("Подключи зарядку."),
                         scale(0.75))
+        system = os.environ.get("SystemDrive", "C:").upper()
+        for name, used, total, pct in data["disks"]:
+            if name.upper() != system or not total:
+                continue
+            free_pct = 100 - pct
+            disk_limit = self.cfg["alert_disk"]
+            self._alert("disk_space", free_pct < disk_limit, free_pct >= disk_limit + 2, 10,
+                        tr("Мало места на диске {name}", name=name),
+                        tr("Свободно {free} ГБ ({pct}%). Очисти корзину и «Загрузки» или удали "
+                           "ненужные программы.", free=fmt_gb(total - used), pct=f"{free_pct:.0f}"),
+                        scale(0.75))
+        for drive in data.get("drives") or []:
+            name = " ".join(["SSD"] + drive["letters"])
+            failing = bool(drive["critical"]) or drive["spare"] < drive["spare_min"]
+            worn = drive["wear"] >= SSD_WEAR_ALERT
+            self._alert(f"ssd_{drive['drive']}", failing or worn, not (failing or worn), 0,
+                        tr("{name} сообщает о неисправности", name=name) if failing
+                        else tr("{name} изношен", name=name),
+                        (tr("Сделай копию важных файлов.") if failing
+                         else tr("Износ {wear}%. Сделай копию важных файлов и присмотри замену.",
+                                 wear=drive["wear"])),
+                        hot)
 
     def _leave(self, event):
         self.pin_hover = False
@@ -4709,6 +5094,13 @@ class Widget:
             if isinstance(secs, int) and 0 < secs < 48 * 3600:
                 left = secs
         sensors = self.lhm.sensors  # one consistent snapshot from the reader thread
+        health = getattr(self, "drive_health", None)
+        drives = list(health.drives) if health is not None else []
+        ssd_t = sensors["ssd"]
+        if ssd_t is None and (sensors["cpu"] is not None or sensors["gpu"] is not None):
+            # the drive's own log has it even without admin rights; used only when the
+            # temperature strip shows anyway (no CPU/GPU temps -> it shows the hint)
+            ssd_t = next((d["temp"] for d in drives if d["temp"] is not None), None)
         return {
             "cpu": cpu,
             "cpu_hist": list(self.cpu_hist),
@@ -4731,7 +5123,11 @@ class Widget:
             "gpu_shared": sensors["gpu_shared"],
             "gpu_load": sensors["gpu_load"],
             "gpu_name": sensors["gpu_name"],
-            "temp_ssd": sensors["ssd"],
+            "temp_ssd": ssd_t,
+            "drives": drives,
+            "gpu_clock": sensors.get("gpu_clock"),
+            "vram_used": sensors.get("vram_used"),
+            "vram_total": sensors.get("vram_total"),
             "cpu_clock": sensors.get("cpu_clock"),
             "cpu_power": sensors.get("cpu_power"),
             "battery_wear": sensors.get("battery_wear"),
@@ -4745,6 +5141,7 @@ class Widget:
             "ping_ready": self.ping.ready,
             "ping_host": self.ping.host,
             "procs": top_processes() if self.show_procs else None,
+            "procs_armed": getattr(self, "proc_armed", None),
             "update": (getattr(self, "updates", None) and self.cfg["check_updates"]
                        and self.updates.found) or None,
             "update_auto": self._can_auto_update(),

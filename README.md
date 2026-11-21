@@ -24,7 +24,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 ## Features
 - **Processor** — the load and a histogram of the last minute, clock and
   power (with admin rights). Click the block to see the top 5 programs by
-  load (processes with the same name are added up, memory as in Task Manager).
+  load (processes with the same name are added up, memory as in Task Manager);
+  × next to a program closes it on the second click. Windows' own processes
+  have no ×, and only your own programs are closed.
 - **Cores** — a bar per logical processor, so one overloaded core (a game,
   a stuck program) is visible even when the average is low.
 - **Memory, graphics, disks** — segment meters; a plugged-in USB stick shows
@@ -43,6 +45,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Battery** — charge and how long it will last (Windows' estimate), wear
   (how much capacity is lost since new) and the power draw in watts when
   unplugged.
+- **SSD health** — for NVMe drives: wear (how much of the rated endurance is
+  used up), data written and temperature, read from the drive's own health
+  log — no admin rights needed.
 - **Fans** — fan speeds, when the PC reports them (board fans need admin
   rights; many laptops don't report fans at all).
 - **Show** (Settings) — hide the rows you don't need: graphics, disks, network
@@ -54,7 +59,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Alerts** as a card in the corner: CPU overheating (from 90° by default,
   GPU 3° earlier), memory from 90% (with the program that ate it), battery
   below 15% when unplugged. The limits are in Settings → Alerts. Each alert at
-  most once in 10 minutes; they never take the focus from a game.
+  most once in 10 minutes; they never take the focus from a game. Also: little
+  free space on C: (below 10% by default) and an SSD that reports a fault or
+  is 90% worn.
 - **Profiles "Work" and "Game"** — each remembers its own look (compact or
   full, size, colours, rows, opacity, mini panel). Switch from the right-click
   menu; "Game" turns on by itself while a game is running and switches back
@@ -63,8 +70,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
 - **FPS in games** — a small panel in the corner of the game window (clicks go
   through it): "FPS 60 · low 48" with a frame-time graph where stutters stand
-  out in red, and below it CPU and GPU load and temperature and the ping (to
-  the address chosen in Settings). Frames are counted from Windows' own events for every presented frame
+  out in red, and below it CPU and GPU load and temperature, video memory, GPU
+  clock and the ping (to the address chosen in Settings). Any corner, 100/125/150%
+  (Settings → Network and games); **Ctrl+Alt+F** hides or shows it. Frames are counted from Windows' own events for every presented frame
   (like PresentMon), so DirectX 9–12, OpenGL and Vulkan games all count.
   low ("1% low") = the 99th percentile frame time over the last 10 s. Windows doesn't
   let anything draw over *exclusive* fullscreen — use windowed or borderless.

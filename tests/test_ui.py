@@ -136,14 +136,24 @@ def test_fps_pill_second_row(w, widget):
     widget.data, widget.ping = fake_data(cpu=45.0, temp_cpu=66.0, temp_gpu=None, gpu_shared=True,
                                          gpu_load=23.0), Ping()
     info = widget._overlay_info()
-    assert info == {"cpu": 45.0, "cpu_t": 66.0, "gpu": 23.0, "gpu_t": 66.0, "gpu_approx": True, "ping": 24}
+    assert info == {"cpu": 45.0, "cpu_t": 66.0, "gpu": 23.0, "gpu_t": 66.0, "gpu_approx": True, "ping": 24,
+                    "gpu_clock": 400.0, "vram_used": 274.0, "vram_total": 2048.0}
     widget.renderer = w.Renderer(1.0)  # the stub has no __init__
     ov = w.FpsOverlay(widget)
     one_row = ov.render((60.0, 50.0, [16.7] * 30), w.theme_scale("heat"), {})
     two_rows = ov.render((60.0, 50.0, [16.7] * 30), w.theme_scale("heat"), info)
     assert two_rows.height > one_row.height
     texts = [t for t, _, _ in ov.system_parts(info, w.theme_scale("heat"))]
-    assert "≈" in texts and "24" in texts and "45%" in texts
+    assert "≈" in texts and "45%" in texts
+    rows = ov.system_rows(info, w.theme_scale("heat"))
+    assert len(rows) == 2
+    third = [t for t, _, _ in rows[1]]
+    assert "0.3" in third and "/2.0 GB" in third and "400" in third and "24" in third  # VRAM, clock, ping
+    three_rows = ov.render((60.0, 50.0, [16.7] * 30), w.theme_scale("heat"), info)
+    assert three_rows.height == one_row.height + 2 * ov.px(18)
+    # no video memory / clock: the ping stays on the CPU / GPU row
+    rows = ov.system_rows(dict(info, gpu_clock=None, vram_used=None), w.theme_scale("heat"))
+    assert len(rows) == 1 and "24" in [t for t, _, _ in rows[0]]
 
 
 @pytest.fixture

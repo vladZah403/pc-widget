@@ -171,7 +171,7 @@
       <p class="small">Windows 10 and 11. Free and open source. Updates install in one click from the widget.</p>
     </div>
     <div class="pinned">
-      <img src="img/widget.png" width="528" height="1064" alt="The PC Monitor widget: CPU at 45% with a one-minute histogram, cores, memory, graphics, disk, temperatures, network graph, ping">
+      <img src="img/widget.png" width="528" height="1140" alt="The PC Monitor widget: CPU at 45% with a one-minute histogram, cores, memory, graphics, disk, temperatures, SSD health, network graph, ping">
     </div>
   </div>
   <div class="taskbar" aria-label="The mini panel on the taskbar">
@@ -192,13 +192,14 @@
         <li><strong>Processor</strong> with a one-minute histogram, clock and power</li>
         <li><strong>Every core</strong> as its own bar</li>
         <li><strong>Memory, graphics, disks</strong> — USB sticks show up by themselves</li>
-        <li><strong>Top programs</strong> by load, one click on the CPU block</li>
+        <li><strong>Top programs</strong> by load, one click on the CPU block — and close one right there</li>
       </ul>
     </div>
     <div style="--dot: var(--warm)">
       <h3>Sensors</h3>
       <ul>
         <li><strong>CPU, GPU and SSD temperature</strong></li>
+        <li><strong>SSD health</strong>: wear, data written — no admin rights needed</li>
         <li><strong>Battery</strong>: time left, wear, power draw</li>
         <li><strong>Fans</strong>, when the PC reports them</li>
         <li><strong>History</strong> of CPU, GPU, memory and network for the last hour or day, saved as CSV</li>
@@ -210,7 +211,7 @@
         <li><strong>Download and upload</strong> with a one-minute graph</li>
         <li><strong>Ping</strong> to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your game server</li>
         <li><strong>Disk activity</strong>: read and write speed</li>
-        <li><strong>Alerts</strong> when the CPU overheats, memory runs out or the battery is low — never over a game</li>
+        <li><strong>Alerts</strong> when the CPU overheats, memory or disk space runs out, the SSD wears out or the battery is low — never over a game</li>
       </ul>
     </div>
   </div>
@@ -221,10 +222,10 @@
 <section class="split">
   <div>
     <h2>In games</h2>
-    <p>A small counter sits in the corner of the game: FPS, the low (how far it drops in the worst moments), a frame-time graph where every stutter shows up red, and below it the CPU and GPU load and temperature and your ping. It works with DirectX 9–12, OpenGL and Vulkan games, and clicks go straight through it. The widget itself hides while you play.</p>
+    <p>A small counter sits in the corner of the game: FPS, the low (how far it drops in the worst moments), a frame-time graph where every stutter shows up red, and below it the CPU and GPU load and temperature, video memory, GPU clock and your ping. Put it in any corner, make it bigger, or hide it with Ctrl+Alt+F. It works with DirectX 9–12, OpenGL and Vulkan games, and clicks go straight through it. The widget itself hides while you play.</p>
   </div>
   <div class="game">
-    <img class="fps-pill" src="img/fps.png" width="549" height="96" alt="In-game counter: FPS 47, low 22, frame-time graph, CPU 45% 66°, GPU 23% 66°, ping 24 ms">
+    <img class="fps-pill" src="img/fps.png" width="527" height="132" alt="In-game counter: FPS 47, low 22, frame-time graph, CPU 45% 66°, GPU 23% 66°, VRAM 1.2 of 2.0 GB, GPU 1800 MHz, ping 24 ms">
     <p>Windowed or borderless mode — Windows lets nothing draw over exclusive fullscreen.</p>
   </div>
 </section>

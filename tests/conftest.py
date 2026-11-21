@@ -50,6 +50,9 @@ def fake_data(**over):
         "cpu_clock": 3.21, "cpu_power": 12.4, "fans": [1450.0, 820.0],
         "lhm_online": True, "sensor_hint": None, "ping": 23, "ping_ready": True,
         "ping_host": "1.1.1.1", "procs": None, "update": None,
+        "drives": [{"drive": 0, "model": "WD PC SN740", "letters": ["C:"], "critical": 0, "temp": 32,
+                    "spare": 100, "spare_min": 10, "wear": 3, "written": 38.9e12, "hours": 2101}],
+        "gpu_clock": 400.0, "vram_used": 274.0, "vram_total": 2048.0,
     }
     d.update(over)
     return d

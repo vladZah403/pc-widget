@@ -196,6 +196,44 @@ TEXTS = {
                                            "Під час гри — показати після неї",
                                            "Während eines Spiels — danach zeigen"),
 
+    # SSD health, disk space, closing programs, FPS panel
+    "Здоровье SSD": ("SSD health", "Здоров'я SSD", "SSD-Zustand"),
+    "неисправен": ("failing", "несправний", "defekt"),
+    "записано {v}": ("{v} written", "записано {v}", "{v} geschrieben"),
+    "{v} ТБ": ("{v} TB", "{v} ТБ", "{v} TB"),
+    "Закрыть {name}?": ("Close {name}?", "Закрити {name}?", "{name} schließen?"),
+    "Не получилось закрыть {name}": ("Couldn't close {name}", "Не вийшло закрити {name}",
+                                     "{name} ließ sich nicht schließen"),
+    "Программа запущена от администратора или уже закрылась.": (
+        "It runs as administrator or has already closed.",
+        "Програма запущена від адміністратора або вже закрилася.",
+        "Das Programm läuft als Administrator oder ist schon beendet."),
+    "Мало места на диске {name}": ("Drive {name} is almost full", "Мало місця на диску {name}",
+                                   "Laufwerk {name} ist fast voll"),
+    "Свободно {free} ГБ ({pct}%). Очисти корзину и «Загрузки» или удали ненужные программы.": (
+        "{free} GB free ({pct}%). Empty the Recycle Bin and Downloads or remove programs you don't need.",
+        "Вільно {free} ГБ ({pct}%). Очисти кошик і «Завантаження» або видали непотрібні програми.",
+        "{free} GB frei ({pct} %). Leere den Papierkorb und „Downloads“ oder entferne unnötige Programme."),
+    "{name} сообщает о неисправности": ("{name} reports a fault", "{name} повідомляє про несправність",
+                                        "{name} meldet einen Fehler"),
+    "{name} изношен": ("{name} is worn out", "{name} зношений", "{name} ist verschlissen"),
+    "Сделай копию важных файлов.": ("Back up your important files.", "Зроби копію важливих файлів.",
+                                    "Sichere deine wichtigen Dateien."),
+    "Износ {wear}%. Сделай копию важных файлов и присмотри замену.": (
+        "{wear}% worn. Back up your important files and look for a replacement.",
+        "Знос {wear}%. Зроби копію важливих файлів і придивися до заміни.",
+        "{wear} % verschlissen. Sichere wichtige Dateien und sieh dich nach Ersatz um."),
+    "Свободно на диске C: меньше": ("Free space on C: below", "Вільно на диску C: менше",
+                                    "Freier Platz auf C: unter"),
+    "Показывать FPS-панель ({hotkey})": ("Show the FPS panel ({hotkey})", "Показувати FPS-панель ({hotkey})",
+                                         "FPS-Anzeige zeigen ({hotkey})"),
+    "Угол панели": ("Panel corner", "Кут панелі", "Ecke der Anzeige"),
+    "слева вверху": ("top left", "зліва вгорі", "oben links"),
+    "справа вверху": ("top right", "справа вгорі", "oben rechts"),
+    "слева внизу": ("bottom left", "зліва внизу", "unten links"),
+    "справа внизу": ("bottom right", "справа внизу", "unten rechts"),
+    "Размер панели": ("Panel size", "Розмір панелі", "Größe der Anzeige"),
+
     # updates
     "У тебя {v}. Нажми, чтобы открыть страницу загрузки.": (
         "You have {v}. Click to open the download page.",
