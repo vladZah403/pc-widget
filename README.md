@@ -52,8 +52,9 @@ Compact mode, the hover card of the mini panel and the panel itself:
   most once in 10 minutes; they never take the focus from a game.
 - **Pin to the desktop** (📌 button): the widget lives under the windows,
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
-- **FPS in games** — a small "FPS 60" in the corner of the game window (clicks
-  go through it). Frames are counted from Windows' events for every
+- **FPS in games** — a small "FPS 60 · 1% 48" in the corner of the game window
+  with a frame-time graph where stutters stand out in red (clicks go through
+  it). 1% low = the 99th percentile frame time over the last 10 s. Frames are counted from Windows' events for every
   DirectX 10/11/12 frame (like PresentMon), so Vulkan/OpenGL games aren't
   seen, and Windows doesn't let anything draw over exclusive fullscreen — use
   windowed or borderless. Usually needs admin rights. Browsers, chats and

@@ -911,6 +911,25 @@ class _EVENT_TRACE_LOGFILEW(ctypes.Structure):
                 ("IsKernelTrace", ctypes.c_ulong), ("Context", ctypes.c_void_p)]
 
 
+FRAME_STATS_S = 10.0  # 1% low is taken over this many seconds of frames
+FRAME_PAUSE_S = 1.0   # a longer gap is a pause (alt-tab, loading), not a stutter
+
+
+def frame_stats(times, now=None):
+    """(fps, 1% low fps or None, last frame times in ms) from present timestamps,
+    or None when the process isn't drawing. 1% low = 1 / 99th percentile frame time."""
+    fps = fps_from_times(times, now)
+    if fps is None:
+        return None
+    last = times[-1]
+    recent = [t for t in times if t >= last - FRAME_STATS_S]
+    gaps = [b - a for a, b in zip(recent, recent[1:]) if 0 < b - a < FRAME_PAUSE_S]
+    if len(gaps) < 20:
+        return fps, None, [g * 1000 for g in gaps]
+    worst = sorted(gaps)[min(len(gaps) - 1, int(len(gaps) * 0.99))]
+    return fps, 1 / worst, [g * 1000 for g in gaps[-48:]]
+
+
 def fps_from_times(times, now=None, window=FPS_WINDOW_S, stale=2.5):
     """Frames per second from QPC-second timestamps of presents (sorted), or None
     when the process hasn't presented lately."""
@@ -965,6 +984,11 @@ class FpsReader(threading.Thread):
             self.stop_session()
 
     # --- per-process frame times ---
+    def stats(self, pid):
+        with self.lock:
+            times = list(self.frames.get(pid, ()))
+        return frame_stats(times)
+
     def fps(self, pid):
         with self.lock:
             times = list(self.frames.get(pid, ()))
@@ -1017,7 +1041,7 @@ class FpsReader(threading.Thread):
         freq = ctypes.c_int64()
         ctypes.windll.kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
         qpc = float(freq.value)
-        keep = FPS_WINDOW_S + 4
+        keep = FRAME_STATS_S + 4
 
         def on_event(rec):
             h = rec.contents
@@ -3100,24 +3124,50 @@ class FpsOverlay:
         self.visible = False
         self.shown = None  # (text, colour, x, y) on screen now
 
-    def render(self, text, color):
+    GRAPH_W = 52  # frame-time graph, logical px
+
+    @staticmethod
+    def fps_color(scale, fps):
+        return scale(0.05 if fps >= 55 else 0.55 if fps >= 30 else 0.95)
+
+    def render(self, stats, scale):
+        """'FPS 60 · 1% 48' and a graph of the last frame times (spikes = stutter)."""
         px = self.px
-        w = int(self.f_label.getlength("FPS ") + self.f_value.getlength(text)) + px(22)
+        fps, low, times = stats
+        parts = [("FPS ", self.f_label, DIM), (f"{fps:.0f}", self.f_value, self.fps_color(scale, fps))]
+        if low is not None:
+            parts += [("   1% ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
+        text_w = sum(font.getlength(t) for t, font, _ in parts)
+        graph = bool(times)
+        w = int(text_w + px(22) + (px(self.GRAPH_W + 10) if graph else 0))
         h = px(30)
         img = card_image(px, w, h)
         d = ImageDraw.Draw(img)
-        d.text((px(11), px(20)), "FPS", font=self.f_label, fill=DIM, anchor="ls")
-        d.text((w - px(11), px(21)), text, font=self.f_value, fill=color, anchor="rs")
+        x = px(11)
+        for t, font, color in parts:
+            d.text((x, px(21) if font is self.f_value else px(20)), t, font=font, fill=color, anchor="ls")
+            x += font.getlength(t)
+        if graph:
+            # bars of frame time: the median is a third of the height, a spike reaches the top
+            med = sorted(times)[len(times) // 2]
+            top_ms = max(med * 3, 1.0)
+            gx0, gy0, gy1 = x + px(10), px(8), px(22)
+            bar = px(self.GRAPH_W) / 48
+            for i, ms in enumerate(times[-48:]):
+                hgt = max(1, (gy1 - gy0) * min(1.0, ms / top_ms))
+                spike = ms > med * 1.8
+                d.rectangle((gx0 + i * bar, gy1 - hgt, gx0 + i * bar + max(1, bar - 1), gy1),
+                            fill=scale(0.95) if spike else scale(0.05))
         return img
 
-    def show(self, fps, rect, scale):
-        text = f"{fps:.0f}"
-        color = scale(0.05 if fps >= 55 else 0.55 if fps >= 30 else 0.95)
+    def show(self, stats, rect, scale):
         x, y = rect[0] + self.px(12), rect[1] + self.px(12)
-        if self.shown == (text, color, x, y):
+        fps, low, times = stats
+        key = (round(fps), None if low is None else round(low), tuple(round(t) for t in times[-48:]), x, y)
+        if self.shown == key:
             return
-        self.shown = (text, color, x, y)
-        img = self.render(text, color)
+        self.shown = key
+        img = self.render(stats, scale)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
@@ -3331,13 +3381,14 @@ class Widget:
         own = {self.hwnd, getattr(self.taskbar, "hwnd", None)}
         if fg and fg not in own and self.fps.running:
             pid = window_pid(fg)
-            fps = self.fps.fps(pid) if pid != os.getpid() else None
+            stats = self.fps.stats(pid) if pid != os.getpid() else None
+            fps = stats[0] if stats else None
             if fps is not None and process_name(pid) not in FPS_IGNORE:
                 last_pid, streak = self.fps_streak
                 streak = streak + 1 if (pid == last_pid and fps >= 25) else int(fps >= 25)
                 self.fps_streak = (pid, streak)
                 if fullscreen_app_active() or streak >= 3:
-                    shown = (fps, window_rect(fg))
+                    shown = (stats, window_rect(fg))
         if shown:
             self.fps_overlay.show(shown[0], shown[1], Scale(THEMES[self.cfg["theme"]][1]))
         else:
