@@ -1564,7 +1564,8 @@ def parse_version(text):
 
 
 def newer_release(info, current=APP_VERSION):
-    """(version, page url) from GitHub's 'latest release' JSON if it is newer than us."""
+    """(version, page url, zip asset or None) from GitHub's 'latest release' JSON
+    if it is newer than us."""
     if not isinstance(info, dict) or info.get("draft") or info.get("prerelease"):
         return None
     tag = info.get("tag_name")
@@ -1574,7 +1575,135 @@ def newer_release(info, current=APP_VERSION):
     url = info.get("html_url")
     if not isinstance(url, str) or not url.startswith(RELEASES_URL + "/"):
         url = RELEASES_URL + "/latest"  # only ever open our own release page
-    return ".".join(map(str, got)), url
+    return ".".join(map(str, got)), url, release_asset(info)
+
+
+def release_asset(info):
+    """PC-Monitor.zip of a release: {"url", "sha256", "size"}, or None when it's
+    missing or anything about it looks off (then only the page is offered)."""
+    for asset in info.get("assets") or []:
+        if not isinstance(asset, dict) or asset.get("name") != "PC-Monitor.zip":
+            continue
+        url, digest, size = asset.get("browser_download_url"), asset.get("digest"), asset.get("size")
+        if (isinstance(url, str) and url.startswith(f"https://github.com/{REPO}/releases/download/")
+                and isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+                and isinstance(size, int) and 0 < size < 200 * 2**20):
+            return {"url": url, "sha256": digest[7:], "size": size}
+    return None
+
+
+def update_target():
+    """(program folder, staging folder) when this copy can update itself, else None.
+    Elevated, only the protected Program Files copy is updated (its staging folder
+    is protected too); without admin rights, a copy in an ordinary folder."""
+    if not is_frozen() or not os.path.isdir(os.path.join(APP_DIR, "_internal")):
+        return None
+    if running_installed():
+        return (INSTALL_DIR, INSTALL_DIR + ".new") if is_admin() else None
+    if is_admin():
+        return None  # never run a download from a user-writable folder with admin rights
+    return APP_DIR, APP_DIR + ".new"
+
+
+class Updater(threading.Thread):
+    """Downloads PC-Monitor.zip into memory, checks its SHA-256 against GitHub's,
+    unpacks it into the staging folder; swap_and_restart() finishes the job."""
+
+    def __init__(self, asset, target):
+        super().__init__(daemon=True, name="updater")
+        self.asset = asset
+        self.app_dir, self.staging = target
+        self.progress = 0.0
+        self.state = "download"  # download -> install -> ready | error
+        self.error = None
+
+    def run(self):
+        try:
+            data = self._download()
+            self.state = "install"
+            self._unpack(data)
+            self.state = "ready"
+            log.info("update %s staged in %s", self.asset["url"], self.staging)
+        except Exception as exc:
+            log.exception("update failed")
+            self.error = str(exc) or exc.__class__.__name__
+            self.state = "error"
+
+    def _download(self):
+        import hashlib
+        req = urllib.request.Request(self.asset["url"], headers={"User-Agent": f"PC-Monitor/{APP_VERSION}"})
+        size = self.asset["size"]
+        data = bytearray()
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            # read exactly `size` bytes: GitHub's CDN may keep the connection open after them
+            while len(data) < size:
+                chunk = resp.read(min(256 * 1024, size - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+                self.progress = len(data) / size
+        if len(data) != size:
+            raise OSError(tr("файл скачался не полностью"))
+        if hashlib.sha256(data).hexdigest() != self.asset["sha256"]:
+            raise OSError(tr("контрольная сумма не совпала"))
+        return bytes(data)
+
+    def _unpack(self, data):
+        """Only files under PC-Monitor/ inside the zip, never outside the staging folder."""
+        import io
+        import shutil
+        import zipfile
+        shutil.rmtree(self.staging, ignore_errors=True)
+        os.makedirs(self.staging)
+        root = os.path.realpath(self.staging)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for item in zf.infolist():
+                name = item.filename.replace("\\", "/")
+                if not name.startswith("PC-Monitor/") or name.endswith("/"):
+                    continue
+                rel = name[len("PC-Monitor/"):]
+                target = os.path.realpath(os.path.join(self.staging, *rel.split("/")))
+                if os.path.commonpath([root, target]) != root:
+                    raise OSError("bad path in the archive: " + name)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(item) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        if not (os.path.isfile(os.path.join(self.staging, EXE_NAME))
+                and os.path.isdir(os.path.join(self.staging, "_internal"))):
+            raise OSError(tr("в архиве нет программы"))
+
+
+def swap_and_restart(app_dir, staging):
+    """After we exit: program folder -> .old, staging -> program folder, start it.
+    Done by PowerShell from System32 with the script passed in memory (nothing on
+    disk to tamper with); if the swap fails, the old version is started again."""
+    import base64
+    import subprocess
+    q = lambda p: "'" + p.replace("'", "''") + "'"
+    old = app_dir + ".old"
+    exe = os.path.join(app_dir, EXE_NAME)
+    script = f"""
+Wait-Process -Id {os.getpid()} -Timeout 30 -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
+Remove-Item -LiteralPath {q(old)} -Recurse -Force -ErrorAction SilentlyContinue
+try {{
+  Rename-Item -LiteralPath {q(app_dir)} -NewName {q(os.path.basename(old))} -ErrorAction Stop
+  try {{
+    Rename-Item -LiteralPath {q(staging)} -NewName {q(os.path.basename(app_dir))} -ErrorAction Stop
+  }} catch {{
+    Rename-Item -LiteralPath {q(old)} -NewName {q(os.path.basename(app_dir))} -ErrorAction SilentlyContinue
+  }}
+}} catch {{}}
+Start-Process -FilePath {q(exe)} -WorkingDirectory {q(app_dir)} -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 5
+Remove-Item -LiteralPath {q(old)} -Recurse -Force -ErrorAction SilentlyContinue
+"""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    ps = os.path.join(_system32(), "WindowsPowerShell", "v1.0", "powershell.exe")
+    subprocess.Popen([ps, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                      "-EncodedCommand", encoded],
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+    log.info("update: swap scheduled for %s", app_dir)
 
 
 def open_in_browser(url):
@@ -2175,14 +2304,24 @@ class Renderer:
 
     # --- sections: draw(d, texts, y, data, scale) ---
     def _draw_update(self, d, texts, y, data, scale):
-        """'Вышла версия 1.2 — скачать' pill; a click opens the release page."""
+        """'Вышла версия 1.2 — обновить' pill; a click updates (or opens the page)."""
         P, Wl = self.PAD, self.WIDTH
-        version, _ = data["update"]
+        version = data["update"][0]
+        state = data.get("update_state")  # None, ("download", 0..1) or ("install", None)
         accent = scale(0.0)
         self._rrect(d, P - 6, y - 2, Wl - P + 6, y + 22, 8, lerp(CARD, accent, 0.18))
+        if state and state[0] == "download":
+            done = P - 6 + (Wl - 2 * P + 12) * max(0.04, state[1])
+            self._rrect(d, P - 6, y - 2, done, y + 22, 8, lerp(CARD, accent, 0.4))
+            right = [(tr("скачиваю {p}%", p=int(state[1] * 100)), self.f_small, TEXT)]
+        elif state:
+            right = [(tr("устанавливаю…"), self.f_small, TEXT)]
+        elif data.get("update_auto"):
+            right = [(tr("обновить") + " ", self.f_small, accent), ("↻", self.f_sym, accent)]
+        else:
+            right = [(tr("скачать") + " ", self.f_small, accent), ("↗", self.f_sym, accent)]
         texts.append((P, y + 14, tr("Вышла версия {v}", v=version), self.f_value, TEXT, "ls"))
-        texts.append(("rich", Wl - P, y + 14, [(tr("скачать") + " ", self.f_small, accent),
-                                                ("↗", self.f_sym, accent)]))
+        texts.append(("rich", Wl - P, y + 14, right))
         self.update_box = (self.px(P - 6), self.px(y - 2), self.px(Wl - P + 6), self.px(y + 22))
 
     def _draw_procs(self, d, texts, y, data, scale):
@@ -3051,6 +3190,7 @@ class Widget:
         self.updates = UpdateChecker(lambda: bool(self.cfg["check_updates"]))
         self.updates.start()
         self.manual_check = None  # checks count when "Проверить сейчас" was clicked
+        self.updater = None       # a running Updater
         self.info = InfoCard(self) if _user32 is not None else None
         self.history_card = HistoryCard(self) if _user32 is not None else None
         self.visible = True
@@ -3484,7 +3624,7 @@ class Widget:
             self._set_procs(not self.show_procs)  # a click (not a drag) on the CPU block
         if (moved < 5 and self.data and self.data.get("update")
                 and self._in_box(self.renderer.update_box, event)):
-            open_in_browser(self.data["update"][1])
+            self._update_clicked()
         if moved < 5 and self._in_box(self.renderer.temps_box, event):
             self._show_history()
         if self.cfg["pinned"]:
@@ -3596,6 +3736,45 @@ class Widget:
         else:
             self.updates.check_now()
 
+    def _can_auto_update(self):
+        found = getattr(self, "updates", None) and self.updates.found
+        return bool(found and found[2] and update_target())
+
+    def _update_state(self):
+        up = getattr(self, "updater", None)
+        if up is None or up.state == "error":
+            return None
+        return (up.state, up.progress) if up.state == "download" else (up.state, None)
+
+    def _update_clicked(self):
+        """Update in place when this copy can, otherwise open the release page."""
+        found = self.updates.found
+        if not found or getattr(self, "updater", None) is not None:
+            return
+        target = update_target()
+        if found[2] and target:
+            self.updater = Updater(found[2], target)
+            self.updater.start()
+            self._draw()
+        else:
+            open_in_browser(found[1])
+
+    def _poll_updater(self):
+        up = getattr(self, "updater", None)
+        if up is None:
+            return
+        if up.state == "ready":
+            self.updater = None
+            swap_and_restart(up.app_dir, up.staging)
+            self.quit()
+        elif up.state == "error":
+            self.updater = None
+            url = self.updates.found[1] if self.updates.found else RELEASES_URL
+            scale = Scale(THEMES[self.cfg["theme"]][1])
+            self.toast.show(tr("Не удалось обновить"),
+                            tr("{error}. Нажми, чтобы открыть страницу загрузки.", error=up.error),
+                            scale(0.75), on_click=lambda: open_in_browser(url))
+
     def _update_notice(self):
         """Toast once per new version, and the answer to "Проверить сейчас"."""
         found = self.updates.found if self.cfg["check_updates"] else None
@@ -3604,12 +3783,13 @@ class Widget:
             self.manual_check = None
         scale = Scale(THEMES[self.cfg["theme"]][1])
         if found and (manual or found[0] != self.cfg["update_seen"]):
-            version, url = found
+            version = found[0]
             self.cfg["update_seen"] = version
             save_config(self.cfg)
-            self.toast.show(tr("Вышла версия {v}", v=version),
-                            tr("У тебя {v}. Нажми, чтобы открыть страницу загрузки.", v=APP_VERSION),
-                            scale(0.0), on_click=lambda: open_in_browser(url))
+            body = (tr("У тебя {v}. Нажми, чтобы обновить.", v=APP_VERSION) if self._can_auto_update()
+                    else tr("У тебя {v}. Нажми, чтобы открыть страницу загрузки.", v=APP_VERSION))
+            self.toast.show(tr("Вышла версия {v}", v=version), body, scale(0.0),
+                            on_click=self._update_clicked)
         elif manual:
             if self.updates.failed:
                 self.toast.show(tr("Не удалось проверить"), tr("Нет связи с GitHub. Попробуй позже."),
@@ -3800,6 +3980,8 @@ class Widget:
             "procs": top_processes() if self.show_procs else None,
             "update": (getattr(self, "updates", None) and self.cfg["check_updates"]
                        and self.updates.found) or None,
+            "update_auto": self._can_auto_update(),
+            "update_state": self._update_state(),
         }
 
     def _refresh(self):
@@ -3810,6 +3992,7 @@ class Widget:
         if getattr(self, "toast", None) is not None:
             self._check_alerts(self.data)
             self._update_notice()
+            self._poll_updater()
         card = getattr(self, "history_card", None)
         if card is not None and card.visible and int(time.time()) % 5 == 0:
             card.refresh()
