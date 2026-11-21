@@ -1550,6 +1550,9 @@ def read_lhm(tree):
             if hw is None or group is None or value is None:
                 return
             low = text.lower()
+            drive = _DRIVE_ID.search(node.get("SensorId") or "")
+            if drive and hw["drive"] is None:
+                hw["drive"] = int(drive.group(1))
             if group == "Temperatures":
                 if 0 < value < 150 and not any(w in low for w in TEMP_SKIP):
                     hw["temps"].append((low, value, _sensor_kind(node.get("SensorId"), hw["kind"])))
@@ -1573,7 +1576,7 @@ def read_lhm(tree):
             return
         new_hw = {"kind": _classify_hardware(node), "name": text, "temps": [], "loads": [],
                   "clocks": [], "powers": [], "energy": [], "fans": [], "data": [],
-                  "integrated": False}
+                  "integrated": False, "drive": None}
         hardware.append(new_hw)
         for kid in kids:
             walk(kid, new_hw, None)
@@ -1624,10 +1627,42 @@ def read_lhm(tree):
         cpu_clock = sum(cores) / len(cores) / 1000 if cores else None  # MHz -> GHz
         power = _pick(cpu_hw["powers"], POWER_PREFS)
         cpu_power = power if power and 0 < power < 1000 else None
+    drives = [h for h in (storage_health(hw) for hw in hardware if hw["kind"] == "storage") if h]
     return {"cpu": cpu, "gpu": gpu, "gpu_shared": gpu_shared, "gpu_load": gpu_load,
             "gpu_name": gpu_name, "ssd": ssd, "cpu_clock": cpu_clock, "cpu_power": cpu_power,
             "gpu_clock": gpu_clock, "vram_used": vram_used, "vram_total": vram_total,
-            "fans": fans[:3] or None, **battery}
+            "fans": fans[:3] or None, "cpu_approx": False, "drives": drives, **battery}
+
+
+_DRIVE_ID = re.compile(r"/(?:nvme|hdd|ssd|ata)/(\d+)/", re.I)
+
+
+def storage_health(hw):
+    """An NVMe drive's health as the sensor library reads it, in DriveHealth's form,
+    or None. The library knows more ways to ask a drive than Windows' own NVMe query
+    (Intel RST / VMD controllers refuse that one), but needs admin rights; it gives no
+    power-on hours nor the critical-warning flags."""
+    levels, data = dict(hw["energy"]), dict(hw["data"])
+    wear = levels.get("percentage used")
+    if wear is None:
+        return None
+    temps = [(n, v) for n, v, _ in hw["temps"]]
+    temp = _pick(temps, STORAGE_PREFS) if temps else None
+    written = data.get("data written")  # MB here (the library's GB x 1024); its GB = 10^9 bytes
+    return {"drive": hw["drive"], "model": hw["name"], "letters": [], "critical": 0,
+            "temp": round(temp) if temp is not None else None,
+            "spare": round(levels.get("available spare", 100)),
+            "spare_min": round(levels.get("available spare threshold", 0)),
+            "wear": int(min(100, round(wear))),
+            "written": round(written / 1024 * 1e9) if written is not None else None,
+            "hours": None, "source": "library"}
+
+
+def library_drives(sensors, health):
+    """The sensor library's drive health with each drive's letters (DriveHealth knows
+    them), for when Windows' NVMe query gave nothing (Intel RST / VMD refuses it)."""
+    letters = getattr(health, "letters", None) or {}
+    return [dict(d, letters=sorted(letters.get(d["drive"], []))) for d in sensors.get("drives") or []]
 
 
 def read_battery(hw):
@@ -1658,7 +1693,94 @@ EMPTY_SENSORS = {"cpu": None, "gpu": None, "gpu_shared": False, "gpu_load": None
                  "gpu_name": None, "ssd": None, "cpu_clock": None, "cpu_power": None,
                  "battery_design": None, "battery_full": None, "battery_wear": None,
                  "battery_rate": None, "fans": None, "gpu_clock": None, "vram_used": None,
-                 "vram_total": None}
+                 "vram_total": None, "cpu_approx": False, "drives": []}
+
+
+def pawnio_installed():
+    """Is the PawnIO driver (the sensor library needs it for CPU temperatures) installed?"""
+    try:
+        import winreg
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\PawnIO"))
+        return True
+    except OSError:
+        return False
+
+
+class _PdhValue(ctypes.Structure):  # PDH_FMT_COUNTERVALUE (the double member of its union)
+    _fields_ = [("CStatus", ctypes.c_ulong), ("doubleValue", ctypes.c_double)]
+
+
+class _PdhItem(ctypes.Structure):  # PDH_FMT_COUNTERVALUE_ITEM_W
+    _fields_ = [("szName", ctypes.c_wchar_p), ("FmtValue", _PdhValue)]
+
+
+class ThermalZones:
+    """The hottest ACPI thermal zone (°C), from Windows' "Thermal Zone Information"
+    counters: no driver and no admin rights needed. On many laptops that zone is
+    the CPU as the firmware reports it, so it stands in (shown with "≈") when the
+    sensor library has no CPU temperature, e.g. an Intel CPU without PawnIO.
+    read() is None when the PC has no such counters (or none plausible)."""
+
+    PATHS = ((r"\Thermal Zone Information(*)\High Precision Temperature", 10),  # tenths of a kelvin
+             (r"\Thermal Zone Information(*)\Temperature", 1))                   # kelvin
+    PDH_FMT_DOUBLE, PDH_MORE_DATA = 0x200, 0x800007D2
+
+    def __init__(self):
+        self.pdh = self.query = self.counter = None
+        self.divisor = 1
+        self.failed = False
+
+    def _open(self):
+        pdh = ctypes.WinDLL("pdh")
+        pdh.PdhOpenQueryW.argtypes = [ctypes.c_wchar_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
+        pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_size_t,
+                                              ctypes.POINTER(ctypes.c_void_p)]
+        pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+        pdh.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                                                     ctypes.POINTER(ctypes.c_ulong),
+                                                     ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+        for f in (pdh.PdhOpenQueryW, pdh.PdhAddEnglishCounterW, pdh.PdhCollectQueryData,
+                  pdh.PdhGetFormattedCounterArrayW):
+            f.restype = ctypes.c_ulong
+        query = ctypes.c_void_p()
+        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(query)) != 0:
+            return False
+        for path, divisor in self.PATHS:
+            counter = ctypes.c_void_p()
+            if pdh.PdhAddEnglishCounterW(query, path, 0, ctypes.byref(counter)) == 0:
+                self.pdh, self.query, self.counter, self.divisor = pdh, query, counter, divisor
+                return True
+        return False
+
+    def zones(self):
+        """[(zone name, °C)] of every zone, plausible or not."""
+        if self.failed:
+            return []
+        try:
+            if self.query is None and not self._open():
+                self.failed = True  # no such counters on this PC: don't ask again
+                return []
+            pdh = self.pdh
+            if pdh.PdhCollectQueryData(self.query) != 0:
+                return []
+            size, count = ctypes.c_ulong(0), ctypes.c_ulong(0)
+            if pdh.PdhGetFormattedCounterArrayW(self.counter, self.PDH_FMT_DOUBLE, ctypes.byref(size),
+                                                ctypes.byref(count), None) != self.PDH_MORE_DATA:
+                return []
+            buf = ctypes.create_string_buffer(size.value)
+            if pdh.PdhGetFormattedCounterArrayW(self.counter, self.PDH_FMT_DOUBLE, ctypes.byref(size),
+                                                ctypes.byref(count), buf) != 0:
+                return []
+            items = ctypes.cast(buf, ctypes.POINTER(_PdhItem))
+            return [(items[i].szName, items[i].FmtValue.doubleValue / self.divisor - 273.15)
+                    for i in range(count.value) if items[i].FmtValue.CStatus in (0, 1)]
+        except (AttributeError, OSError):
+            self.failed = True
+            return []
+
+    def read(self):
+        temps = [t for _, t in self.zones() if 10 < t < 115]
+        return round(max(temps), 1) if temps else None
 
 
 def is_admin():
@@ -1787,6 +1909,8 @@ class LhmReader(threading.Thread):
         self.native_ok = False
         self.admin = is_admin()
         self.stopping = threading.Event()
+        self.zones = ThermalZones()
+        self.described = False
 
     def stop(self, timeout=3.0):
         """Finish the current read and close the sensor library. Called before the
@@ -1818,6 +1942,17 @@ class LhmReader(threading.Thread):
         if self.online:
             return tr("Запусти LibreHardwareMonitor от админа")
         return tr("Нужен LibreHardwareMonitor с веб-сервером")
+
+    def _describe(self, found, source):
+        """Once, into the log: where the temperatures come from, and why not if they don't."""
+        try:
+            f = found or EMPTY_SENSORS
+            log.info("sensors: source=%s cpu=%s%s gpu=%s ssd=%s; drives from the library: %s; admin=%s "
+                     "PawnIO=%s; thermal zones: %s", source, f["cpu"], " (approx)" if f.get("cpu_approx") else "",
+                     f["gpu"], f["ssd"], [d["model"] for d in f.get("drives") or []] or "none", self.admin,
+                     pawnio_installed(), [(n, round(t, 1)) for n, t in self.zones.zones()] or "none")
+        except Exception:
+            log_error("describing the sensors")
 
     def run(self):
         native = None
@@ -1855,11 +1990,19 @@ class LhmReader(threading.Thread):
                     if found is None or web["cpu"] is not None:
                         merged = dict(web)
                         for key, value in (found or {}).items():
-                            if merged.get(key) is None:
+                            if merged.get(key) is None or (key == "drives" and not merged[key]):
                                 merged[key] = value
                         found, source = merged, "web"
                 except (OSError, ValueError):
                     pass
+            if found is None or found["cpu"] is None:
+                zone = self.zones.read()  # an approximate CPU temperature from the firmware
+                if zone is not None:
+                    found = dict(found or EMPTY_SENSORS, cpu=zone, cpu_approx=True)
+                    source = source or "thermal zone"
+            if not self.described:
+                self.described = True
+                self._describe(found, source)
             self.sensors = found or dict(EMPTY_SENSORS)
             self.online = found is not None
             self.source = source
@@ -2572,18 +2715,19 @@ class DriveHealth(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name="drives")
         self.drives = []  # replaced as a whole: readers always see one consistent list
+        self.letters = {}  # drive number -> its letters (for the sensor library's drives too)
 
     def poll(self):
         drives = [d for d in (nvme_health(n) for n in range(16)) if d]
         letters = {}
-        if drives:
-            for mount in scan_partitions():
-                letter = mount.rstrip("\\")
-                number = volume_drive(letter)
-                if number is not None:
-                    letters.setdefault(number, []).append(letter)
+        for mount in scan_partitions():
+            letter = mount.rstrip("\\")
+            number = volume_drive(letter)
+            if number is not None:
+                letters.setdefault(number, []).append(letter)
         for d in drives:
             d["letters"] = sorted(letters.get(d["drive"], []))
+        self.letters = letters
         self.drives = drives
 
     def run(self):
@@ -2928,7 +3072,7 @@ class Renderer:
             ("ram", None, pct(data["ram_pct"]), scale(data["ram_pct"] / 100), False, 2),
             ("gpu", None, pct(load), scale((load or 0) / 100), False, 1),
             ("disk", None, pct(disk_pct), scale((disk_pct or 0) / 100), False, None),
-            ("temp", "CPU", deg(cpu_t), heat(cpu_t), False, 0),
+            ("temp", "CPU", deg(cpu_t), heat(cpu_t), bool(data.get("temp_cpu_approx")), 0),
             ("temp", "GPU", deg(g), heat(g), shared, 1),
             ("ping", None, None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
              ping_color(scale, ping), False, 3),
@@ -3294,7 +3438,7 @@ class Renderer:
                 room = self.px(Wl - 2 * P - 12) - sum(f.getlength(t) for t, f, _ in ssd_chip)
                 texts.append((P, y + 8, ellipsize(hint, self.f_small, room), self.f_small, FAINT, "ls"))
             else:
-                texts.append(("rich_left", P, y + 8, chip("CPU", cpu_t)))
+                texts.append(("rich_left", P, y + 8, chip("CPU", cpu_t, approx=data.get("temp_cpu_approx"))))
                 texts.append(("rich_center", Wl / 2, y + 8,
                               chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
             texts.append(("rich", Wl - P, y + 8, ssd_chip))
@@ -3336,7 +3480,8 @@ class Renderer:
         temp = drive["temp"] if show_temp else None
         temp_parts = ([(f"{temp}°", self.f_small, scale((temp - 30) / 70)), ("   ", self.f_small, DIM)]
                       if temp is not None else [])
-        written = [(tr("записано {v}", v=fmt_written(drive["written"])) + "   ", self.f_small, DIM)]
+        written = ([(tr("записано {v}", v=fmt_written(drive["written"])) + "   ", self.f_small, DIM)]
+                   if drive["written"] is not None else [])
         room = self.px(Wl - P - P - self.ICON_W - 6) - self.f_label.getlength(label)
         for parts in (temp_parts + written + wear_parts, temp_parts + wear_parts, wear_parts):
             if sum(f.getlength(t) for t, f, _ in parts) <= room:
@@ -6128,6 +6273,8 @@ class Widget:
         sensors = self.lhm.sensors  # one consistent snapshot from the reader thread
         health = getattr(self, "drive_health", None)
         drives = list(health.drives) if health is not None else []
+        if not drives:
+            drives = library_drives(sensors, health)
         ssd_t = sensors["ssd"]
         if ssd_t is None and (sensors["cpu"] is not None or sensors["gpu"] is not None):
             # the drive's own log has it even without admin rights; used only when the
@@ -6151,6 +6298,7 @@ class Widget:
             "battery_left": left,
             "uptime": time.time() - psutil.boot_time(),
             "temp_cpu": sensors["cpu"],
+            "temp_cpu_approx": bool(sensors.get("cpu_approx")),
             "temp_gpu": sensors["gpu"],
             "gpu_shared": sensors["gpu_shared"],
             "gpu_load": sensors["gpu_load"],
@@ -6283,6 +6431,8 @@ def write_diagnostics():
             lines.append(f"{name}: {part()}")
         except Exception as exc:
             lines.append(f"{name} failed: {exc!r}")
+    lines.append(f"PawnIO: {'installed' if pawnio_installed() else 'missing'}")
+    lines.append(f"thermal zones: {ThermalZones().zones() or 'none'}")
     try:
         native = NativeSensors(lhm_dir())
         lines.append(f"native: {read_lhm(native.tree())}")

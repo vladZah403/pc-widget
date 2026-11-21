@@ -181,6 +181,15 @@ read through a driver. The widget does it itself with
   (`widget.pyw`) never gets such an autostart: Python and its packages live in
   folders anyone can write to.
 
+When there is no CPU temperature that way (no admin rights, or an Intel CPU
+without PawnIO), the widget takes the hottest ACPI thermal zone from Windows'
+"Thermal Zone Information" counters, if the PC has them, and marks it "≈": the
+firmware's own reading, close to the CPU's on many laptops, but not exact.
+
+SSD health comes from the drive's own log (Windows' NVMe query, no admin rights
+needed). Drives behind Intel RST / VMD refuse that query; with admin rights the
+widget then takes wear, spare and data written from LibreHardwareMonitorLib.
+
 **To remove** the copy in Program Files: switch off "Start with Windows" and
 "Admin rights" in Settings, close the widget and delete
 `C:\Program Files\PC-Monitor`.
