@@ -1,0 +1,10 @@
+[package]
+name = "pcm-render"
+description = "PC Monitor 2.0: draws the cards into pixel buffers (no windows)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+swash = "0.2"
+tiny-skia = "0.11"
