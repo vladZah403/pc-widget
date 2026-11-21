@@ -6,3 +6,4 @@ build/
 dist/
 *.spec
 pc-monitor-diag.txt
+.pytest_cache/

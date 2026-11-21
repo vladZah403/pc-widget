@@ -107,6 +107,11 @@ Run `start.bat` (or `widget.pyw`). `build_exe.bat` builds `PC-Monitor.zip`
 (needs the packages from `requirements-build.txt` and the LibreHardwareMonitor
 DLLs listed in `lhm-files.txt` in the `lhm/` folder, see below).
 
+### Tests
+`python -m pytest tests` (needs `pip install pytest`). They load `widget.pyw`
+with `%APPDATA%` in a temp folder and never touch the real settings, the
+taskbar or the sensors; GitHub Actions runs them before every build.
+
 ### Releasing a version
 GitHub Actions does the build (`.github/workflows/build.yml`): on every push
 to `main` it builds `PC-Monitor.zip` on Windows and checks that the program
