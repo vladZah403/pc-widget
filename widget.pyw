@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -834,6 +834,13 @@ from ctypes import wintypes as _w
 FPS_SESSION = "PCMonitorFPS"
 DXGI_PROVIDER = "{CA11C036-0102-4A2D-A6AD-F03CFED5D3C9}"
 DXGI_PRESENT_IDS = (42, 55)  # Present_Start, PresentMultiplaneOverlay_Start
+# Every present also reaches the kernel graphics driver, whatever the API — so
+# DirectX 9 (Terraria), OpenGL (Minecraft, STALCRAFT) and Vulkan show up here.
+# Measured on Vlad's PC: Present_Info comes exactly once per frame (Civ VI: 41.5/s
+# against 41.6 DXGI presents; Terraria: 60.0/s, no DXGI events at all).
+DXGKRNL_PROVIDER = "{802EC45A-1E99-4B83-9920-87C98277BA9D}"
+DXGKRNL_PRESENT_INFO = 184
+DXGKRNL_BASE = 0x1  # the keyword that carries Present_Info
 FPS_WINDOW_S = 2.0           # frames are averaged over this much of the latest events
 
 
@@ -917,6 +924,32 @@ class _EVENT_HEADER(ctypes.Structure):
 _EVENT_RECORD_CALLBACK = ctypes.WINFUNCTYPE(None, ctypes.POINTER(_EVENT_HEADER))
 
 
+class _EVENT_FILTER_DESCRIPTOR(ctypes.Structure):
+    _fields_ = [("Ptr", ctypes.c_uint64), ("Size", ctypes.c_ulong), ("Type", ctypes.c_ulong)]
+
+
+class _ENABLE_TRACE_PARAMETERS(ctypes.Structure):
+    _fields_ = [("Version", ctypes.c_ulong), ("EnableProperty", ctypes.c_ulong),
+                ("ControlFlags", ctypes.c_ulong), ("SourceId", _GUID),
+                ("EnableFilterDesc", ctypes.POINTER(_EVENT_FILTER_DESCRIPTOR)),
+                ("FilterDescCount", ctypes.c_ulong)]
+
+
+def _event_id_filter(ids):
+    """ENABLE_TRACE_PARAMETERS that let only these event ids through, so the
+    provider's other (very frequent) events never reach us. Returns the objects
+    that must stay alive while EnableTraceEx2 runs."""
+    class EVENT_FILTER_EVENT_ID(ctypes.Structure):
+        _fields_ = [("FilterIn", ctypes.c_ubyte), ("Reserved", ctypes.c_ubyte),
+                    ("Count", ctypes.c_ushort), ("Events", ctypes.c_ushort * len(ids))]
+    body = EVENT_FILTER_EVENT_ID(1, 0, len(ids), (ctypes.c_ushort * len(ids))(*ids))
+    desc = _EVENT_FILTER_DESCRIPTOR(ctypes.addressof(body), ctypes.sizeof(body),
+                                    0x80000200)  # EVENT_FILTER_TYPE_EVENT_ID
+    params = _ENABLE_TRACE_PARAMETERS(Version=2, EnableFilterDesc=ctypes.pointer(desc),
+                                      FilterDescCount=1)
+    return params, (body, desc)
+
+
 class _EVENT_TRACE_LOGFILEW(ctypes.Structure):
     _fields_ = [("LogFileName", ctypes.c_wchar_p), ("LoggerName", ctypes.c_wchar_p),
                 ("CurrentTime", ctypes.c_int64), ("BuffersRead", ctypes.c_ulong),
@@ -929,6 +962,16 @@ class _EVENT_TRACE_LOGFILEW(ctypes.Structure):
 
 FRAME_STATS_S = 10.0  # 1% low is taken over this many seconds of frames
 FRAME_PAUSE_S = 1.0   # a longer gap is a pause (alt-tab, loading), not a stutter
+
+
+def best_stats(sources, now=None):
+    """frame_stats() of the source (DXGI or kernel) that saw more frames."""
+    best = None
+    for times in sources:
+        st = frame_stats(times, now)
+        if st is not None and (best is None or st[0] > best[0]):
+            best = st
+    return best
 
 
 def frame_stats(times, now=None):
@@ -962,11 +1005,13 @@ def fps_from_times(times, now=None, window=FPS_WINDOW_S, stale=2.5):
 
 
 class FpsReader(threading.Thread):
-    """Real-time ETW session on the DXGI provider; fps(pid) for any process."""
+    """Real-time ETW session on the DXGI and DxgKrnl providers; stats(pid) for any
+    process. Each process's presents are kept per source; the one that saw more
+    frames counts (one present is seen by both for DirectX 10-12)."""
 
     def __init__(self):
         super().__init__(daemon=True, name="fps")
-        self.frames = {}       # pid -> list of present times (QPC seconds), last few seconds
+        self.frames = {}       # (pid, "dxgi" | "krnl") -> present times (QPC s), last seconds
         self.lock = threading.Lock()
         self.error = None      # why it doesn't work, shown in a toast
         self.needs_admin = False
@@ -1002,13 +1047,12 @@ class FpsReader(threading.Thread):
     # --- per-process frame times ---
     def stats(self, pid):
         with self.lock:
-            times = list(self.frames.get(pid, ()))
-        return frame_stats(times)
+            sources = [list(self.frames.get((pid, src), ())) for src in ("dxgi", "krnl")]
+        return best_stats(sources)
 
     def fps(self, pid):
-        with self.lock:
-            times = list(self.frames.get(pid, ()))
-        return fps_from_times(times)
+        st = self.stats(pid)
+        return st[0] if st else None
 
     def run(self):
         try:
@@ -1046,13 +1090,22 @@ class FpsReader(threading.Thread):
         self.session = handle.value
         guid = _GUID()
         ctypes.oledll.ole32.CLSIDFromString(DXGI_PROVIDER, ctypes.byref(guid))
+        params, keep_alive = _event_id_filter(DXGI_PRESENT_IDS)
         rc = adv.EnableTraceEx2(handle.value, ctypes.byref(guid), 1, 4,  # ENABLE, INFORMATION
-                                0xFFFFFFFFFFFFFFFF, 0, 0, None)
+                                0xFFFFFFFFFFFFFFFF, 0, 0, ctypes.byref(params))
         if rc != 0:
             self.error = tr("ошибка ETW {rc}", rc=rc)
             log.warning("FPS: EnableTraceEx2 failed with %d", rc)
             self.stop_session()
             return
+        dxgi_guid = (guid.Data1, guid.Data2)
+        kguid = _GUID()
+        ctypes.oledll.ole32.CLSIDFromString(DXGKRNL_PROVIDER, ctypes.byref(kguid))
+        params, keep_alive2 = _event_id_filter((DXGKRNL_PRESENT_INFO,))
+        rc = adv.EnableTraceEx2(handle.value, ctypes.byref(kguid), 1, 4,
+                                DXGKRNL_BASE, 0, 0, ctypes.byref(params))
+        if rc != 0:  # DirectX 10-12 games still work through DXGI
+            log.warning("FPS: the kernel graphics provider failed with %d", rc)
 
         freq = ctypes.c_int64()
         ctypes.windll.kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
@@ -1061,12 +1114,19 @@ class FpsReader(threading.Thread):
 
         def on_event(rec):
             h = rec.contents
-            if h.EventDescriptor.Id not in DXGI_PRESENT_IDS:
+            eid = h.EventDescriptor.Id
+            if (h.ProviderId.Data1, h.ProviderId.Data2) == dxgi_guid:
+                if eid not in DXGI_PRESENT_IDS:
+                    return
+                source = "dxgi"
+            elif eid == DXGKRNL_PRESENT_INFO:
+                source = "krnl"
+            else:
                 return
             t = h.TimeStamp / qpc
             pid = h.ProcessId
             with self.lock:
-                times = self.frames.setdefault(pid, [])
+                times = self.frames.setdefault((pid, source), [])
                 times.append(t)
                 if len(times) > 64 and times[0] < t - keep:
                     del times[:len(times) // 2]

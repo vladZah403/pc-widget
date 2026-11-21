@@ -74,3 +74,20 @@ def test_fps_and_one_percent_low(w):
     assert w.fps_from_times(times, times[-1] + 10) is None  # stopped drawing
     pause = [i / 60 for i in range(300)] + [8 + i / 60 for i in range(300)]
     assert w.frame_stats(pause, pause[-1])[1] > 55  # alt-tab is not a stutter
+
+
+def test_best_source_wins(w):
+    dxgi = [i / 60 for i in range(600)]
+    krnl = [i / 60 for i in range(600)]
+    assert abs(w.best_stats([dxgi, krnl], dxgi[-1])[0] - 60) < 0.1   # same frames, no double count
+    assert abs(w.best_stats([[], krnl], krnl[-1])[0] - 60) < 0.1     # DX9 / OpenGL: kernel only
+    assert w.best_stats([[], []], 1.0) is None
+
+
+def test_event_id_filter_layout(w):
+    import ctypes
+    params, keep = w._event_id_filter((184,))
+    body, desc = keep
+    assert params.Version == 2 and params.FilterDescCount == 1
+    assert desc.Type == 0x80000200 and desc.Size == ctypes.sizeof(body) and body.Count == 1
+    assert list(body.Events) == [184] and body.FilterIn == 1

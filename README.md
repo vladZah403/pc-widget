@@ -58,11 +58,11 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
 - **FPS in games** — a small "FPS 60 · 1% 48" in the corner of the game window
   with a frame-time graph where stutters stand out in red (clicks go through
-  it). 1% low = the 99th percentile frame time over the last 10 s. Frames are counted from Windows' events for every
-  DirectX 10/11/12 frame (like PresentMon), so Vulkan/OpenGL games aren't
-  seen, and Windows doesn't let anything draw over exclusive fullscreen — use
-  windowed or borderless. Usually needs admin rights. Browsers, chats and
-  players don't count as games.
+  it). Frames are counted from Windows' own events for every presented frame
+  (like PresentMon), so DirectX 9–12, OpenGL and Vulkan games all count.
+  1% low = the 99th percentile frame time over the last 10 s. Windows doesn't
+  let anything draw over *exclusive* fullscreen — use windowed or borderless.
+  Browsers, chats and players don't count as games.
 - **Hides itself** while a game (FPS shown) or a fullscreen video is in front
   and comes back afterwards; or just dims to 30%, or does nothing (Settings →
   Look). Ctrl+Alt+W during a game shows it anyway.
