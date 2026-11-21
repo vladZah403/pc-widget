@@ -83,12 +83,18 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   red: "Click again to close"), so a slip next to 📌 doesn't quit it.
 
 ## Installation
-Windows 10 is needed (for Windows 11 see below).
+Windows 10 is needed (for Windows 11 see below). Website:
+[vladzah403.github.io/pc-widget](https://vladzah403.github.io/pc-widget/).
 
-1. Download `PC-Monitor.zip` from
-   [Releases](https://github.com/vladZah403/pc-widget/releases) and unpack it
-   into any folder.
-2. Run `PC-Monitor.exe`.
+1. Download `PC-Monitor-Setup.exe` from
+   [Releases](https://github.com/vladZah403/pc-widget/releases) and run it. It
+   installs for your user only (no admin rights) into
+   `%LOCALAPPDATA%\Programs\PC-Monitor`, adds a Start menu shortcut and can be
+   removed from "Apps & features".
+2. Or take `PC-Monitor.zip`, unpack it into any folder and run
+   `PC-Monitor.exe` — a portable copy.
+
+Later versions install from the widget itself: "Version … is out — update".
 
 **SmartScreen warning.** The program isn't signed with a certificate (that
 costs money), so Windows shows "Windows protected your PC". Click "More info"
