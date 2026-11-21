@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["prototypes/fps"]
+members = ["prototypes/fps", "prototypes/ring-window"]
 
 [workspace.package]
 edition = "2024"
