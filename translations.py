@@ -145,6 +145,7 @@ TEXTS = {
     "Непрозрачность": ("Opacity", "Непрозорість", "Deckkraft"),
     "Тускнеть в играх и видео": ("Dim during games and videos", "Тьмяніти в іграх і відео",
                                  "In Spielen und Videos abdunkeln"),
+    "Размер": ("Size", "Розмір", "Größe"),
     "Поверх всех окон": ("Always on top", "Поверх усіх вікон", "Immer im Vordergrund"),
     "В правый верхний угол": ("Move to the top right corner", "У правий верхній кут",
                               "In die obere rechte Ecke"),

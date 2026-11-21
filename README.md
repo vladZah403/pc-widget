@@ -68,7 +68,7 @@ Compact mode, the hover card of the mini panel and the panel itself:
 - **Languages**: Russian, English, Ukrainian, German — as in Windows or from
   the menu "Язык / Language".
 - **Hotkey Ctrl+Alt+W** — show/hide the widget.
-- **Start with Windows**, **compact mode**, palettes, opacity — all in the
+- **Start with Windows**, **compact mode**, **size** (100/125/150%), palettes, opacity — all in the
   right-click menu. Starting it twice doesn't open a second copy.
 - **Updates** — every 6 hours the widget asks GitHub whether a new version is
   out and, if so, shows a "Version … is out" row and one card. It never

@@ -177,7 +177,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
-                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "dim": True}
+                  "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "dim": True, "size": 100}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -327,7 +327,8 @@ def sanitize_config(raw):
 
 # key -> allowed values
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
-                  "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de")}
+                  "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de"),
+                  "size": (100, 125, 150)}
 # sections that can be hidden from the menu: key -> menu title
 SECTIONS = {"cores": "Ядра", "ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
@@ -2586,7 +2587,7 @@ class TaskbarPanel:
 
     def __init__(self, widget):
         self.widget = widget
-        px = self.px = widget.renderer.px
+        px = self.px = getattr(widget, "ui_renderer", widget.renderer).px
         self.gap = px(6)
         self.font = load_font(px(12))
         self.font_val = load_font(px(12), "SemiBold")
@@ -2811,7 +2812,7 @@ class PopupCard:
 
     def __init__(self, widget):
         self.widget = widget
-        self.px = widget.renderer.px
+        self.px = getattr(widget, "ui_renderer", widget.renderer).px
         self.top = top = tk.Toplevel(widget.root)
         top.overrideredirect(True)
         top.configure(bg=KEY_HEX)
@@ -3114,7 +3115,7 @@ class FpsOverlay:
     OFFSCREEN = "1x1+-9000+-9000"
 
     def __init__(self, widget):
-        self.px = px = widget.renderer.px
+        self.px = px = getattr(widget, "ui_renderer", widget.renderer).px
         self.f_label = load_font(px(11), "SemiBold")
         self.f_value = load_font(px(17), "SemiBold Condensed")
         self.top = top = tk.Toplevel(widget.root)
@@ -3241,7 +3242,9 @@ class Widget:
         if os.path.exists(icon):
             self._icon = tk.PhotoImage(file=icon)
             root.iconphoto(True, self._icon)
-        self.renderer = Renderer(root.winfo_fpixels("1i") / 96)
+        self.dpi_scale = root.winfo_fpixels("1i") / 96
+        self.ui_renderer = Renderer(self.dpi_scale)  # cards, panel, overlay: Windows' scale
+        self.renderer = Renderer(self.dpi_scale * self.cfg["size"] / 100)  # the widget: + its size
         self.view = tk.Label(root, bg=KEY_HEX, bd=0, highlightthickness=0)
         self.view.pack()
         self.photo = None
@@ -3401,6 +3404,16 @@ class Widget:
         if alpha != getattr(self, "_alpha_now", None):
             self._alpha_now = alpha
             self.root.attributes("-alpha", alpha)
+
+    def _set_size(self):
+        """Scale the widget (fonts and all) without restarting."""
+        self.cfg["size"] = self.size_var.get()
+        save_config(self.cfg)
+        self.renderer = Renderer(self.dpi_scale * self.cfg["size"] / 100)
+        self.height = None  # force the new window size
+        self._draw()
+        self.root.update_idletasks()
+        self._place()  # keep it on screen when it grew
 
     def _toggle_dim(self):
         self.cfg["dim"] = self.dim_var.get()
@@ -3613,6 +3626,12 @@ class Widget:
             alpha_menu.add_radiobutton(label=f"{pct}%", value=pct / 100,
                                        variable=self.alpha_var, command=self._set_alpha)
         menu.add_cascade(label=tr("Непрозрачность"), menu=alpha_menu)
+        size_menu = tk.Menu(menu, tearoff=0)
+        self.size_var = tk.IntVar(value=self.cfg["size"])
+        for pct in CONFIG_CHOICES["size"]:
+            size_menu.add_radiobutton(label=f"{pct}%", value=pct, variable=self.size_var,
+                                      command=self._set_size)
+        menu.add_cascade(label=tr("Размер"), menu=size_menu)
         self.dim_var = tk.BooleanVar(value=bool(self.cfg["dim"]))
         menu.add_checkbutton(label=tr("Тускнеть в играх и видео"), variable=self.dim_var,
                              command=self._toggle_dim)
