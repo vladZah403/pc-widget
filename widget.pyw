@@ -3265,7 +3265,7 @@ class FpsOverlay:
         return sum(font.getlength(t) for t, font, _ in parts)
 
     def system_parts(self, info, scale):
-        """'CPU 45% 66°  GPU 23% ≈66°  пинг 24 мс' from the widget's readings."""
+        """'CPU 45% 66°  GPU 23% ≈66°  ping 24 ms' from the widget's readings."""
         f, fv = self.f_label, self.f_small_value
         heat = lambda t: scale(max(0.0, min(1.0, (t - 30) / 70)))
         parts = []
@@ -3287,8 +3287,8 @@ class FpsOverlay:
         if ping is not None:
             if parts:
                 parts.append(("   ", f, DIM))
-            parts += [(tr("пинг") + " ", f, DIM), (str(ping), fv, ping_color(scale, ping)),
-                      (" " + tr("{v} мс", v="").strip(), f, DIM)]
+            # English like FPS / low / CPU / GPU in this pill, whatever the language
+            parts += [("ping ", f, DIM), (str(ping), fv, ping_color(scale, ping)), (" ms", f, DIM)]
         return parts
 
     def render(self, stats, scale, info=None):
