@@ -34,6 +34,7 @@ TEXTS = {
     "Процессор": ("Processor", "Процесор", "Prozessor"),
     "Программа": ("Program", "Програма", "Programm"),
     "собираю данные…": ("collecting data…", "збираю дані…", "sammle Daten…"),
+    "Ядра": ("Cores", "Ядра", "Kerne"),
     "Память": ("Memory", "Пам'ять", "RAM"),
     "Видео": ("GPU", "Відео", "GPU"),
     "Видеокарта": ("Graphics", "Відеокарта", "Grafikkarte"),

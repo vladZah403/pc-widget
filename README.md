@@ -21,6 +21,8 @@ Compact mode, the hover card of the mini panel and the panel itself:
 - **Processor** — the load and a histogram of the last minute, clock and
   power (with admin rights). Click the block to see the top 5 programs by
   load (processes with the same name are added up, memory as in Task Manager).
+- **Cores** — a bar per logical processor, so one overloaded core (a game,
+  a stuck program) is visible even when the average is low.
 - **Memory, graphics, disks** — segment meters; a plugged-in USB stick shows
   up by itself.
 - **CPU / GPU / SSD temperatures** — with admin rights (see below).

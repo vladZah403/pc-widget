@@ -315,7 +315,7 @@ def sanitize_config(raw):
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
                   "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de")}
 # sections that can be hidden from the menu: key -> menu title
-SECTIONS = {"ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
+SECTIONS = {"cores": "Ядра", "ram": "Память", "gpu": "Видеокарта", "disks": "Диски", "temps": "Температура",
             "net": "Сеть", "net_graph": "График сети", "ping": "Пинг",
             "disk_io": "Чтение и запись диска", "battery": "Износ батареи", "fans": "Вентиляторы",
             "uptime": "Время без перезагрузки"}
@@ -2172,6 +2172,8 @@ class Renderer:
             secs.append((30, self._draw_update))
         if data.get("procs") is not None:
             secs.append((120, self._draw_procs))
+        if "cores" not in hidden and data.get("cores"):
+            secs.append((38, self._draw_cores))
         if "ram" not in hidden:
             secs.append((38, self._draw_ram))
         if "gpu" not in hidden:
@@ -2350,6 +2352,26 @@ class Renderer:
             texts.append(("rich", col_mem, by, [(fmt_mem(mem), self.f_small, DIM)]))
         if not procs:
             texts.append((P, y0 + 36, tr("собираю данные…"), self.f_small, FAINT, "ls"))
+
+    def _draw_cores(self, d, texts, y, data, scale):
+        """One bar per logical processor: shows a single overloaded core that the
+        average hides (a game or a stuck program often loads just one)."""
+        P, Wl = self.PAD, self.WIDTH
+        cores = data["cores"]
+        top = max(cores)
+        texts.append((P, y + 14, tr("Ядра"), self.f_label, TEXT, "ls"))
+        texts.append(("rich", Wl - P, y + 14, [(tr("макс") + " ", self.f_small, DIM),
+                                               (f"{top:.0f}%", self.f_value, scale(top / 100))]))
+        n = len(cores)
+        gap = 2 if n <= 16 else 1
+        bar_w = (Wl - 2 * P - gap * (n - 1)) / n
+        y0, y1 = y + 20, y + 32
+        for i, load in enumerate(cores):
+            bx = P + i * (bar_w + gap)
+            self._rrect(d, bx, y0, bx + bar_w, y1, 1.2, TRACK)
+            h = (y1 - y0) * max(0.0, min(100.0, load)) / 100
+            if h >= 0.6:
+                self._rrect(d, bx, y1 - h, bx + bar_w, y1, 1.2, scale(load / 100))
 
     def _draw_ram(self, d, texts, y, data, scale):
         P, Wl = self.PAD, self.WIDTH
@@ -3178,6 +3200,7 @@ class Widget:
 
         # prime counters so the first readings are meaningful
         psutil.cpu_percent(interval=None)
+        psutil.cpu_percent(interval=None, percpu=True)
         self.last_net = psutil.net_io_counters()
         self.last_disk = psutil.disk_io_counters()
         self.last_t = time.monotonic()
@@ -3922,6 +3945,7 @@ class Widget:
         self.last_t = now
 
         cpu = psutil.cpu_percent(interval=None)
+        cores = psutil.cpu_percent(interval=None, percpu=True)
         self.cpu_hist = (self.cpu_hist + [cpu])[-HISTORY_LEN:]
         mem = psutil.virtual_memory()
 
@@ -3967,6 +3991,7 @@ class Widget:
         return {
             "cpu": cpu,
             "cpu_hist": list(self.cpu_hist),
+            "cores": cores,
             "ram_pct": mem.percent,
             "ram_used": mem.used,
             "ram_total": mem.total,
