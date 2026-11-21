@@ -3274,19 +3274,20 @@ class FpsOverlay:
             if load is None and temp is None:
                 continue
             if parts:
-                parts.append(("   ", f, DIM))
+                parts.append(("     ", f, DIM))
             parts.append((name + " ", f, DIM))
             if load is not None:
                 parts.append((f"{load:.0f}%", fv, scale(load / 100)))
             if temp is not None:
-                parts.append((" ", fv, DIM))
+                # a dot between load and temperature, so "45% 66°" don't run together
+                parts.append(("  ·  " if load is not None else " ", f, FAINT))
                 if approx:
                     parts.append(("≈", self.f_sym, heat(temp)))
                 parts.append((f"{temp:.0f}°", fv, heat(temp)))
         ping = info.get("ping")
         if ping is not None:
             if parts:
-                parts.append(("   ", f, DIM))
+                parts.append(("     ", f, DIM))
             # English like FPS / low / CPU / GPU in this pill, whatever the language
             parts += [("ping ", f, DIM), (str(ping), fv, ping_color(scale, ping)), (" ms", f, DIM)]
         return parts
