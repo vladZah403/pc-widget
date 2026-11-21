@@ -11,3 +11,4 @@ target/
 .cargo/
 sensors-helper/bin/
 sensors-helper/snapshot-*.json
+diag-v2-*.txt
