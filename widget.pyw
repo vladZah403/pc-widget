@@ -1066,6 +1066,7 @@ class FpsReader(threading.Thread):
         self.running = False
         self.session = None
         self._first_logged = False
+        self._pruned = 0.0
 
     # --- session control ---
     def _props(self):
@@ -1093,6 +1094,23 @@ class FpsReader(threading.Thread):
             self.stop_session()
 
     # --- per-process frame times ---
+    KEEP_S = FRAME_STATS_S + 4  # frame times older than this are not needed any more
+    PRUNE_EVERY_S = 30
+
+    def add_frame(self, pid, source, t):
+        """One present of `pid` at QPC time t (seconds); called for every frame."""
+        with self.lock:
+            times = self.frames.setdefault((pid, source), [])
+            times.append(t)
+            if len(times) > 64 and times[0] < t - self.KEEP_S:
+                del times[:len(times) // 2]
+            if t - self._pruned > self.PRUNE_EVERY_S:
+                # forget programs that stopped drawing or have ended, or their last
+                # frames would stay in memory until the widget is closed
+                self._pruned = t
+                for key in [k for k, v in self.frames.items() if v[-1] < t - self.KEEP_S]:
+                    del self.frames[key]
+
     def stats(self, pid):
         with self.lock:
             sources = [list(self.frames.get((pid, src), ())) for src in ("dxgi", "krnl")]
@@ -1158,7 +1176,6 @@ class FpsReader(threading.Thread):
         freq = ctypes.c_int64()
         ctypes.windll.kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
         qpc = float(freq.value)
-        keep = FRAME_STATS_S + 4
 
         def on_event(rec):
             h = rec.contents
@@ -1171,13 +1188,8 @@ class FpsReader(threading.Thread):
                 source = "krnl"
             else:
                 return
-            t = h.TimeStamp / qpc
             pid = h.ProcessId
-            with self.lock:
-                times = self.frames.setdefault((pid, source), [])
-                times.append(t)
-                if len(times) > 64 and times[0] < t - keep:
-                    del times[:len(times) // 2]
+            self.add_frame(pid, source, h.TimeStamp / qpc)
             if not self._first_logged:
                 self._first_logged = True
                 log.info("FPS: first frame seen (pid %d)", pid)
@@ -1669,9 +1681,15 @@ class NativeSensors:
              "Children": [self._node(hw) for hw in self.computer.Hardware]}]}
 
 
+LHM_MAX_BYTES = 4 * 2**20  # LHM's tree is ~50 KB; anything can listen on that port
+
+
 def _fetch_web():
     with urllib.request.urlopen(LHM_URL, timeout=1) as resp:
-        return read_lhm(json.loads(resp.read().decode("utf-8")))
+        raw = resp.read(LHM_MAX_BYTES + 1)
+    if len(raw) > LHM_MAX_BYTES:
+        raise ValueError("the sensor web server answered with too much data")
+    return read_lhm(json.loads(raw.decode("utf-8")))
 
 
 class LhmReader(threading.Thread):
@@ -1765,6 +1783,9 @@ RELEASES_URL = f"https://github.com/{REPO}/releases"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 UPDATE_FIRST_S = 20        # first check soon after the start
 UPDATE_EVERY_S = 6 * 3600
+UNPACK_MAX_FILES = 5000
+UNPACK_MAX_BYTES = 500 * 2**20
+_RELEASE_PAGE_RE = re.compile(re.escape(RELEASES_URL) + r"/tag/v\d+(?:\.\d+){0,3}")
 
 
 def parse_version(text):
@@ -1783,7 +1804,7 @@ def newer_release(info, current=APP_VERSION):
     if not have or not got or got <= have:
         return None
     url = info.get("html_url")
-    if not isinstance(url, str) or not url.startswith(RELEASES_URL + "/"):
+    if not isinstance(url, str) or not _RELEASE_PAGE_RE.fullmatch(url):
         url = RELEASES_URL + "/latest"  # only ever open our own release page
     return ".".join(map(str, got)), url, release_asset(info)
 
@@ -1867,7 +1888,11 @@ class Updater(threading.Thread):
         os.makedirs(self.staging)
         root = os.path.realpath(self.staging)
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for item in zf.infolist():
+            items = zf.infolist()
+            # the program unpacks to ~1000 files, ~45 MB: a far bigger archive is not ours
+            if len(items) > UNPACK_MAX_FILES or sum(i.file_size for i in items) > UNPACK_MAX_BYTES:
+                raise OSError(tr("в архиве нет программы"))
+            for item in items:
                 name = item.filename.replace("\\", "/")
                 if not name.startswith("PC-Monitor/") or name.endswith("/"):
                     continue
@@ -1985,10 +2010,13 @@ HISTORY_FLUSH_S = 60
 
 
 def _num(text):
+    """A number from history.csv; None for an empty field, garbage, 'nan' or 'inf'
+    (those would break the charts)."""
     try:
-        return float(text) if text else None
+        value = float(text) if text else None
     except ValueError:
         return None
+    return value if value is not None and math.isfinite(value) else None
 
 
 class History:
@@ -2423,7 +2451,7 @@ class DriveHealth(threading.Thread):
             try:
                 self.poll()
             except Exception:
-                log.exception("reading the drive health failed")
+                log_error("reading the drive health")
             time.sleep(DRIVES_POLL_S)
 
 
@@ -2459,6 +2487,8 @@ class Renderer:
 
     # --- static card (cached per height) ---
     def _card(self, H):
+        """The empty card, supersampled: every frame draws its shapes on a copy and
+        shrinks it once (an RGB image, so no alpha layer to convert back and forth)."""
         if H in self._card_cache:
             return self._card_cache[H]
         W, S = self.W, SS
@@ -2468,9 +2498,8 @@ class Renderer:
         d.rounded_rectangle((0, 0, W * S - 1, H * S - 1), radius=r, fill=BORDER)
         bw = max(1, self.px(1)) * S
         d.rounded_rectangle((bw, bw, W * S - 1 - bw, H * S - 1 - bw), radius=r - bw, fill=CARD)
-        card = big.reduce(S)
-        self._card_cache = {H: card}
-        return card
+        self._card_cache = {H: big}
+        return big
 
     # --- primitives on the supersampled layer (logical coords in) ---
     def _ss(self, *vals):
@@ -2671,9 +2700,7 @@ class Renderer:
         if compact:
             data = dict(data, procs=None, update=None)
         H = self.layout_height(data, compact, hidden)
-        card = self._card(H)
-
-        layer = Image.new("RGBA", (self.W * SS, H * SS), (0, 0, 0, 0))
+        layer = self._card(H).copy()  # shapes go straight onto the supersampled card
         d = ImageDraw.Draw(layer)
         texts = []  # deferred text: (x, y, text, font, fill, anchor)
 
@@ -2721,7 +2748,7 @@ class Renderer:
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
             self._compact_rows(d, texts, data, scale, HERO_H)
-            return self._compose(card, layer, texts)
+            return self._compose(layer, texts)
         chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
@@ -2731,7 +2758,7 @@ class Renderer:
             if draw is not None:
                 draw(d, texts, y, data, scale)
             y += h
-        return self._compose(card, layer, texts)
+        return self._compose(layer, texts)
 
     # --- section icons: small line drawings, so a row is recognised before it is read ---
     ICON_W = 16  # icon + gap before the label, logical px
@@ -3052,9 +3079,10 @@ class Renderer:
         texts.append((self.PAD + self.ICON_W, y + 18,
                       tr("Без перезагрузки {t}", t=fmt_uptime(data['uptime'])), self.f_small, FAINT, "ls"))
 
-    def _compose(self, card, layer, texts):
-        img = card.convert("RGBA")
-        img.alpha_composite(layer.reduce(SS))
+    def _compose(self, layer, texts):
+        """Shrink the supersampled card with its shapes (that smooths their edges),
+        then the text on top at full size."""
+        img = layer.reduce(SS)
         td = ImageDraw.Draw(img)
         for item in texts:
             if item[0] == "rich":
@@ -3064,7 +3092,7 @@ class Renderer:
             else:
                 x, ty, text, font, fill, anchor = item
                 self._t(td, x, ty, text, font, fill, anchor)
-        return img.convert("RGB")
+        return img
 
 
 # ---------- taskbar mini panel ----------
@@ -4060,6 +4088,10 @@ class Widget:
         root.attributes("-transparentcolor", KEY_HEX)
         root.attributes("-topmost", bool(self.cfg["topmost"]))
         root.attributes("-alpha", float(self.cfg["alpha"]))
+        # Alt+F4 closes it properly too (FPS session, tray icon, history), and signing
+        # out of Windows keeps the last minute of history
+        root.protocol("WM_DELETE_WINDOW", self.quit)
+        root.protocol("WM_SAVE_YOURSELF", self._save_history)
 
         icon = os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "app.png")
         if os.path.exists(icon):
@@ -4162,6 +4194,7 @@ class Widget:
             self.game_override = _user32.GetForegroundWindow()
             self.root.geometry("+%d+%d" % self.game_hidden_at)
             self.game_hidden_at = None
+        self._draw(force=True)  # not drawn while it was hidden
         if not self.visible:
             self.root.deiconify()
             self.visible = True
@@ -4265,6 +4298,7 @@ class Widget:
             self.root.geometry("+-9000+-9000")
         elif not hide and hidden_at is not None:
             self.game_hidden_at = None
+            self._draw()  # it was not drawn while parked
             self.root.geometry("+%d+%d" % hidden_at)
         alpha = float(self.cfg["alpha"])
         if busy and mode == "dim":
@@ -4537,12 +4571,15 @@ class Widget:
         self._alpha_now = self.cfg["alpha"]
         save_config(self.cfg)
 
+    def _save_history(self):
+        if getattr(self, "history", None) is not None:
+            self.history.flush()
+
     def quit(self):
         if getattr(self, "fps", None) is not None:
             self.fps.stop()  # an ETW session outlives the process unless stopped
             self.fps = None
-        if getattr(self, "history", None) is not None:
-            self.history.flush()
+        self._save_history()
         if getattr(self, "tray", None) is not None:
             self.tray.stop()  # or a dead icon stays in the tray until hovered
             self.tray = None
@@ -5171,9 +5208,12 @@ class Widget:
         if self.cfg["pinned"] and self.hwnd and not owner_alive(self.hwnd):
             self._apply_pin()
 
-    def _draw(self):
+    def _draw(self, force=False):
         if self.data is None:
             return
+        if not force and self.height is not None and (
+                not getattr(self, "visible", True) or getattr(self, "game_hidden_at", None) is not None):
+            return  # hidden, or parked off-screen during a game: drawn again when it is back
         img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
                                    bool(self.cfg["pinned"]), self.pin_hover,
                                    compact=bool(self.cfg["compact"]),
