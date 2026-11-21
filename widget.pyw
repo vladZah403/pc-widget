@@ -3223,6 +3223,8 @@ class FpsOverlay:
         self.px = px = getattr(widget, "ui_renderer", widget.renderer).px
         self.f_label = load_font(px(11), "SemiBold")
         self.f_value = load_font(px(17), "SemiBold Condensed")
+        self.f_small_value = load_font(px(13), "SemiBold")
+        self.f_sym = load_symbol_font(px(12))  # "≈": not in Bahnschrift
         self.top = top = tk.Toplevel(widget.root)
         top.overrideredirect(True)
         top.configure(bg=KEY_HEX)
@@ -3250,29 +3252,61 @@ class FpsOverlay:
     def fps_color(scale, fps):
         return scale(0.05 if fps >= 55 else 0.55 if fps >= 30 else 0.95)
 
-    def render(self, stats, scale, ping=None):
-        """'FPS 60  low 48', a graph of the last frame times (spikes = stutter) and the ping."""
+    def _row(self, d, x, baseline, parts):
+        px = self.px
+        for t, font, color in parts:
+            d.text((x, baseline + (px(1) if font is self.f_value else 0)), t, font=font, fill=color,
+                   anchor="ls")
+            x += font.getlength(t)
+        return x
+
+    @staticmethod
+    def _width(parts):
+        return sum(font.getlength(t) for t, font, _ in parts)
+
+    def system_parts(self, info, scale):
+        """'CPU 45% 66°  GPU 23% ≈66°  пинг 24 мс' from the widget's readings."""
+        f, fv = self.f_label, self.f_small_value
+        heat = lambda t: scale(max(0.0, min(1.0, (t - 30) / 70)))
+        parts = []
+        for name, load, temp, approx in (("CPU", info.get("cpu"), info.get("cpu_t"), False),
+                                         ("GPU", info.get("gpu"), info.get("gpu_t"), info.get("gpu_approx"))):
+            if load is None and temp is None:
+                continue
+            if parts:
+                parts.append(("   ", f, DIM))
+            parts.append((name + " ", f, DIM))
+            if load is not None:
+                parts.append((f"{load:.0f}%", fv, scale(load / 100)))
+            if temp is not None:
+                parts.append((" ", fv, DIM))
+                if approx:
+                    parts.append(("≈", self.f_sym, heat(temp)))
+                parts.append((f"{temp:.0f}°", fv, heat(temp)))
+        ping = info.get("ping")
+        if ping is not None:
+            if parts:
+                parts.append(("   ", f, DIM))
+            parts += [(tr("пинг") + " ", f, DIM), (str(ping), fv, ping_color(scale, ping)),
+                      (" " + tr("{v} мс", v="").strip(), f, DIM)]
+        return parts
+
+    def render(self, stats, scale, info=None):
+        """Row 1: 'FPS 60  low 48' and a graph of the last frame times (spikes = stutter).
+        Row 2 (when there is anything): CPU and GPU load and temperature, the ping."""
         px = self.px
         fps, low, times = stats
-        parts = [("FPS ", self.f_label, DIM), (f"{fps:.0f}", self.f_value, self.fps_color(scale, fps))]
+        top = [("FPS ", self.f_label, DIM), (f"{fps:.0f}", self.f_value, self.fps_color(scale, fps))]
         if low is not None:
-            parts += [("   low ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
-        tail = []
-        if ping is not None:
-            tail = [(tr("пинг") + " ", self.f_label, DIM), (str(ping), self.f_value, ping_color(scale, ping)),
-                    (" " + tr("{v} мс", v="").strip(), self.f_label, DIM)]
-        tail_w = sum(font.getlength(t) for t, font, _ in tail)
-        text_w = sum(font.getlength(t) for t, font, _ in parts)
+            top += [("   low ", self.f_label, DIM), (f"{low:.0f}", self.f_value, self.fps_color(scale, low))]
+        bottom = self.system_parts(info or {}, scale)
         graph = bool(times)
-        w = int(text_w + px(22) + (px(self.GRAPH_W + 10) if graph else 0)
-                + (tail_w + px(12) if tail else 0))
-        h = px(30)
+        top_w = self._width(top) + (px(self.GRAPH_W + 10) if graph else 0)
+        w = int(max(top_w, self._width(bottom)) + px(22))
+        h = px(30) + (px(18) if bottom else 0)
         img = card_image(px, w, h)
         d = ImageDraw.Draw(img)
-        x = px(11)
-        for t, font, color in parts:
-            d.text((x, px(21) if font is self.f_value else px(20)), t, font=font, fill=color, anchor="ls")
-            x += font.getlength(t)
+        x = self._row(d, px(11), px(20), top)
         if graph:
             # bars of frame time: the median is a third of the height, a spike reaches the top
             med = sorted(times)[len(times) // 2]
@@ -3284,22 +3318,21 @@ class FpsOverlay:
                 spike = ms > med * 1.8
                 d.rectangle((gx0 + i * bar, gy1 - hgt, gx0 + i * bar + max(1, bar - 1), gy1),
                             fill=scale(0.95) if spike else scale(0.05))
-            x = gx0 + px(self.GRAPH_W)
-        x += px(12)
-        for t, font, color in tail:
-            d.text((x, px(21) if font is self.f_value else px(20)), t, font=font, fill=color, anchor="ls")
-            x += font.getlength(t)
+        if bottom:
+            self._row(d, px(11), px(39), bottom)
         return img
 
-    def show(self, stats, rect, scale, ping=None):
+    def show(self, stats, rect, scale, info=None):
         x, y = rect[0] + self.px(12), rect[1] + self.px(12)
         fps, low, times = stats
+        info = info or {}
         key = (round(fps), None if low is None else round(low), tuple(round(t) for t in times[-48:]),
-               ping, x, y)
+               tuple(sorted((k, None if v is None else round(v)) for k, v in info.items()
+                            if not isinstance(v, bool))), x, y)
         if self.shown == key:
             return
         self.shown = key
-        img = self.render(stats, scale, ping)
+        img = self.render(stats, scale, info)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
         self.top.geometry(f"{img.width}x{img.height}+{x}+{y}")
@@ -3721,6 +3754,16 @@ class Widget:
         self.root.update_idletasks()
         self._place()  # keep it on screen when it grew
 
+    def _overlay_info(self):
+        """CPU / GPU load and temperature and the ping for the second row of the FPS pill."""
+        d = self.data or {}
+        cpu_t, gpu_t = d.get("temp_cpu"), d.get("temp_gpu")
+        shared = bool(d.get("gpu_shared")) and gpu_t is None and cpu_t is not None
+        ping = getattr(self, "ping", None)
+        return {"cpu": d.get("cpu"), "cpu_t": cpu_t, "gpu": d.get("gpu_load"),
+                "gpu_t": cpu_t if shared else gpu_t, "gpu_approx": shared,
+                "ping": ping.ms if ping is not None and ping.ready else None}
+
     def _update_fps_overlay(self):
         """Show the counter over the window in front if it is a game: not ignored, and
         fullscreen or drawing 25+ frames a second for 3 seconds in a row."""
@@ -3738,8 +3781,8 @@ class Widget:
                 if fullscreen_app_active() or streak >= 3:
                     shown = (stats, window_rect(fg))
         if shown:
-            ping = self.ping.ms if getattr(self, "ping", None) and self.ping.ready else None
-            self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]), ping)
+            self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]),
+                                  self._overlay_info())
         else:
             self.fps_overlay.hide()
 

@@ -125,3 +125,22 @@ def test_in_games_hide_dim_and_override(w, widget, monkeypatch):
     state["fg"] = 3  # another window in front: the override ends
     widget._apply_dim()
     assert widget.game_override is None
+
+
+def test_fps_pill_second_row(w, widget):
+    from conftest import fake_data
+
+    class Ping:
+        ms, ready = 24, True
+
+    widget.data, widget.ping = fake_data(cpu=45.0, temp_cpu=66.0, temp_gpu=None, gpu_shared=True,
+                                         gpu_load=23.0), Ping()
+    info = widget._overlay_info()
+    assert info == {"cpu": 45.0, "cpu_t": 66.0, "gpu": 23.0, "gpu_t": 66.0, "gpu_approx": True, "ping": 24}
+    widget.renderer = w.Renderer(1.0)  # the stub has no __init__
+    ov = w.FpsOverlay(widget)
+    one_row = ov.render((60.0, 50.0, [16.7] * 30), w.theme_scale("heat"), {})
+    two_rows = ov.render((60.0, 50.0, [16.7] * 30), w.theme_scale("heat"), info)
+    assert two_rows.height > one_row.height
+    texts = [t for t, _, _ in ov.system_parts(info, w.theme_scale("heat"))]
+    assert "≈" in texts and "24" in texts and "45%" in texts
