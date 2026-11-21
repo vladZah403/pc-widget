@@ -20,7 +20,10 @@ class Ev:
 def ui(w, live, monkeypatch):
     saved = []
     monkeypatch.setattr(w, "save_config", lambda cfg: saved.append(dict(cfg)))
-    monkeypatch.setattr(w, "monitor_work_area", lambda x, y: (0, 0, 3000, 3000))  # roomy screen
+    # a roomy screen whatever the real one is (GitHub's runner has 1024 x 768)
+    monkeypatch.setattr(w, "monitor_work_area", lambda x, y: (0, 0, 3000, 3000))
+    monkeypatch.setattr(w, "virtual_screen", lambda root: (0, 0, 3000, 3000))
+    live.root.wm_maxsize(3000, 3000)  # Tk keeps a window within the real screen otherwise
     live.saved = saved
     live.tip = w.Tooltip(live.root)
     live.resizing, live.mouse_in, live.row_hover, live.edge_hover = None, False, None, None
