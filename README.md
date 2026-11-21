@@ -8,7 +8,7 @@ on the desktop and in a mini panel right on the taskbar.
 
 Every value is coloured on one "cool → hot" scale: the redder, the higher the
 load or temperature. Three palettes to choose from, or your own two colours
-(menu "Colours → Choose custom colours…"):
+(Settings → Look → "Choose custom colours…"):
 
 ![Palettes: Warm, Neon, Ice](docs/themes.png)
 
@@ -30,8 +30,8 @@ Compact mode, the hover card of the mini panel and the panel itself:
   Integrated graphics without a sensor of its own shows the shared chip
   temperature marked with "≈".
 - **Network** (↓ ↑) with a one-minute graph (download up, upload down),
-  **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — menu
-  "Ping to"), disk activity, uptime.
+  **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — Settings →
+  Network and games), disk activity, uptime.
 - **History** — click the temperature block (or the menu "History (hour and
   day)"): CPU temperature and load charts for the last hour or day with the
   maximum and average. Kept in `%APPDATA%\PC-Monitor\history.csv` (a point
@@ -41,7 +41,7 @@ Compact mode, the hover card of the mini panel and the panel itself:
   unplugged.
 - **Fans** — fan speeds, when the PC reports them (board fans need admin
   rights; many laptops don't report fans at all).
-- **Show** (menu) — hide the rows you don't need: graphics, disks, network
+- **Show** (Settings) — hide the rows you don't need: graphics, disks, network
   graph, ping and so on.
 - **Mini panel on the taskbar**, left of the tray icons: CPU/RAM, network,
   ping, temperatures. Hover for a detailed card, click to open the widget.
@@ -49,7 +49,7 @@ Compact mode, the hover card of the mini panel and the panel itself:
   fullscreen games and when the taskbar auto-hides.
 - **Alerts** as a card in the corner: CPU overheating (from 90° by default,
   GPU 3° earlier), memory from 90% (with the program that ate it), battery
-  below 15% when unplugged. The limits are in the "Alerts" menu. Each alert at
+  below 15% when unplugged. The limits are in Settings → Alerts. Each alert at
   most once in 10 minutes; they never take the focus from a game.
 - **Pin to the desktop** (📌 button): the widget lives under the windows,
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
@@ -61,15 +61,16 @@ Compact mode, the hover card of the mini panel and the panel itself:
   windowed or borderless. Usually needs admin rights. Browsers, chats and
   players don't count as games.
 - **Dims itself** to 30% while a game (FPS shown) or a fullscreen video is in
-  front, back to normal afterwards (menu "Dim during games and videos").
+  front, back to normal afterwards (Settings → Look).
 - **Tray icon** next to the clock: left click shows/hides the widget, right
   click opens the menu, hover shows CPU, RAM and temperature. Can be switched
-  off in the menu.
+  off in Settings.
 - **Languages**: Russian, English, Ukrainian, German — as in Windows or from
-  the menu "Язык / Language".
+  Settings → General.
 - **Hotkey Ctrl+Alt+W** — show/hide the widget.
 - **Start with Windows**, **compact mode**, **size** (100/125/150%), palettes, opacity — all in the
-  right-click menu. Starting it twice doesn't open a second copy.
+  **Settings** window (right-click → "Settings…"); the right-click menu keeps
+  only the everyday items. Starting it twice doesn't open a second copy.
 - **Updates** — every 6 hours the widget asks GitHub whether a new version is
   out and, if so, shows a "Version … is out" row and one card. It never
   downloads or installs anything by itself. Off in "About → Check for updates".
@@ -124,7 +125,7 @@ read through a driver. The widget does it itself with
 
 - by default the widget runs **without** admin rights: everything but the
   temperatures is shown right away;
-- temperatures are switched on in the menu: **"Admin rights (temperatures)"**.
+- temperatures are switched on in Settings: **"Admin rights (temperatures)"**.
   The PawnIO driver is needed (installed once; LibreHardwareMonitor installs
   it too);
 - in this mode the program copies itself to `C:\Program Files\PC-Monitor` and
@@ -137,7 +138,7 @@ read through a driver. The widget does it itself with
   folders anyone can write to.
 
 **To remove** the copy in Program Files: switch off "Start with Windows" and
-"Admin rights" in the menu, close the widget and delete
+"Admin rights" in Settings, close the widget and delete
 `C:\Program Files\PC-Monitor`.
 
 **LibreHardwareMonitor** as a separate program isn't needed any more. If the
@@ -154,7 +155,7 @@ To run from source, put the DLLs from a LibreHardwareMonitor release
 ## Windows 11
 Windows 11 has a different taskbar: the task buttons can't be moved aside, so
 the mini panel may cover icons. That's why it's off there by default — switch
-it on in the menu "Mini panel on the taskbar". Tested only on Windows 10.
+it on in Settings → "Mini panel on the taskbar". Tested only on Windows 10.
 
 ## How it works
 - `widget.pyw` (+ translations in `translations.py`): a borderless tkinter

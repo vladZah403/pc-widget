@@ -3217,6 +3217,169 @@ def process_name(pid):
     return _names[pid]
 
 
+class SettingsWindow:
+    """All settings in one window with tabs. The controls use the widget's own
+    Tk variables and handlers, so the menu, the window and the config agree."""
+
+    TABS = ("Общие", "Вид", "Показывать", "Предупреждения", "Сеть и игры")
+
+    def __init__(self, widget, tab=0):
+        from tkinter import ttk
+        self.w = w = widget
+        self.top = top = tk.Toplevel(w.root)
+        top.title(tr("Настройки") + " — PC Monitor")
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        self.book = book = ttk.Notebook(top)
+        book.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        self.pages = []
+        for title in self.TABS:
+            frame = ttk.Frame(book, padding=12)
+            book.add(frame, text=tr(title))
+            self.pages.append(frame)
+        self._general(self.pages[0])
+        self._look(self.pages[1])
+        self._sections(self.pages[2])
+        self._alerts(self.pages[3])
+        self._network(self.pages[4])
+        bottom = ttk.Frame(top, padding=(10, 8))
+        bottom.pack(fill="x")
+        ttk.Label(bottom, text=f"PC Monitor {APP_VERSION}", foreground="#888").pack(side="left")
+        ttk.Button(bottom, text=tr("Закрыть"), command=self.close).pack(side="right")
+        book.select(tab)
+        self.sync()
+        top.update_idletasks()
+        # next to the widget's screen corner, fully on screen
+        wl, wt, wr, wb = work_area()
+        x = min(max(wl, w.root.winfo_rootx() - top.winfo_width() - 12), wr - top.winfo_width())
+        y = min(max(wt, w.root.winfo_rooty()), wb - top.winfo_height())
+        top.geometry(f"+{x}+{y}")
+        top.lift()
+        top.focus_force()
+
+    # --- small builders ---
+    @staticmethod
+    def _check(parent, text, var, command):
+        from tkinter import ttk
+        b = ttk.Checkbutton(parent, text=text, variable=var, command=command)
+        b.pack(anchor="w", pady=2)
+        return b
+
+    @staticmethod
+    def _radios(parent, title, var, items, command):
+        from tkinter import ttk
+        box = ttk.LabelFrame(parent, text=title, padding=(10, 4))
+        box.pack(fill="x", pady=(8, 0))
+        for value, label in items:
+            ttk.Radiobutton(box, text=label, value=value, variable=var,
+                            command=command).pack(side="left", padx=(0, 10))
+        return box
+
+    # --- tabs ---
+    def _general(self, p):
+        from tkinter import ttk
+        w = self.w
+        self._check(p, tr("Закрепить на рабочем столе"), w.pinned_var, w._toggle_pin)
+        self.topmost_box = self._check(p, tr("Поверх всех окон"), w.topmost_var, w._toggle_topmost)
+        self._check(p, tr("Мини-панель на панели задач"), w.taskbar_var, w._toggle_taskbar)
+        self._check(p, tr("Значок в трее"), w.tray_var, w._toggle_tray)
+        self._check(p, tr("Запускать вместе с Windows"), w.autostart_var, w._toggle_autostart)
+        if lhm_dir():
+            self._check(p, tr("Права администратора (температуры)"), w.admin_var, w._toggle_admin)
+        self._check(p, tr("Проверять обновления"), w.updates_var, w._toggle_updates)
+        langs = [("auto", tr("Как в Windows"))] + list(LANGS.items())
+        box = ttk.LabelFrame(p, text="Язык / Language", padding=(10, 4))
+        box.pack(fill="x", pady=(8, 0))
+        for i, (value, label) in enumerate(langs):
+            ttk.Radiobutton(box, text=label, value=value, variable=w.lang_var,
+                            command=w._set_language).grid(row=i // 3, column=i % 3, sticky="w",
+                                                          padx=(0, 12))
+        ttk.Button(p, text=tr("В правый верхний угол"), command=w._reset_position).pack(
+            anchor="w", pady=(10, 0))
+
+    def _look(self, p):
+        from tkinter import ttk
+        w = self.w
+        themes = [(key, tr(title)) for key, (title, _) in THEMES.items()] + [("custom", tr("Свои"))]
+        box = self._radios(p, tr("Цвета"), w.theme_var, themes, w._set_theme)
+        ttk.Button(box, text=tr("Выбрать свои цвета…"), command=w._pick_colors).pack(side="left")
+        self._radios(p, tr("Непрозрачность"), w.alpha_var,
+                     [(pct / 100, f"{pct}%") for pct in (100, 97, 90, 80, 70)], w._set_alpha)
+        self._radios(p, tr("Размер"), w.size_var,
+                     [(pct, f"{pct}%") for pct in CONFIG_CHOICES["size"]], w._set_size)
+        ttk.Frame(p, height=6).pack()
+        self._check(p, tr("Компактный режим"), w.compact_var, w._toggle_compact)
+        self._check(p, tr("Тускнеть в играх и видео"), w.dim_var, w._toggle_dim)
+
+    def _sections(self, p):
+        for key, title in SECTIONS.items():
+            self._check(p, tr(title), self.w.section_vars[key],
+                        lambda k=key: self.w._toggle_section(k))
+
+    def _alerts(self, p):
+        w = self.w
+        self._check(p, tr("Показывать предупреждения"), w.alerts_var, w._toggle_alerts)
+        for key, title, unit in (("alert_temp", "Перегрев CPU от", "°"),
+                                 ("alert_ram", "Память занята от", "%"),
+                                 ("alert_battery", "Батарея ниже", "%")):
+            self._radios(p, tr(title), w.limit_vars[key],
+                         [(v, f"{v}{unit}") for v in CONFIG_CHOICES[key]],
+                         lambda k=key: w._set_limit(k))
+
+    def _network(self, p):
+        from tkinter import ttk
+        w = self.w
+        box = ttk.LabelFrame(p, text=tr("Пинг до"), padding=(10, 4))
+        box.pack(fill="x")
+        for host, name in PING_PRESETS:
+            ttk.Radiobutton(box, text=f"{host}  ({name})", value=host, variable=w.ping_var,
+                            command=lambda h=host: w._set_ping_host(h)).pack(anchor="w")
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(4, 4))
+        ttk.Label(row, text=tr("Свой адрес…").rstrip("…") + ":").pack(side="left")
+        custom = w.cfg["ping_host"] if w.cfg["ping_host"] not in dict(PING_PRESETS) else ""
+        self.host_entry = ttk.Entry(row, width=24)
+        self.host_entry.insert(0, custom)
+        self.host_entry.pack(side="left", padx=6)
+        self.host_entry.bind("<Return>", lambda e: self._apply_host())
+        ttk.Button(row, text="OK", width=4, command=self._apply_host).pack(side="left")
+        ttk.Frame(p, height=8).pack()
+        self._check(p, tr("FPS в играх"), w.fps_var, w._toggle_fps)
+
+    def _apply_host(self):
+        from tkinter import messagebox
+        text = self.host_entry.get()
+        host = clean_host(text)
+        if host is None:
+            messagebox.showwarning(tr("Пинг до"), tr("«{text}» не похоже на адрес.", text=text),
+                                   parent=self.top)
+            return
+        self.w._set_ping_host(host)
+
+    # --- state ---
+    def sync(self):
+        """'Always on top' is meaningless while pinned to the desktop."""
+        if self.alive():
+            self.topmost_box.state(["disabled"] if self.w.cfg["pinned"] else ["!disabled"])
+
+    def alive(self):
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def current_tab(self):
+        try:
+            return self.book.index(self.book.select())
+        except tk.TclError:
+            return 0
+
+    def close(self):
+        if self.alive():
+            self.top.destroy()
+
+
 # ---------- window ----------
 
 class Widget:
@@ -3544,8 +3707,8 @@ class Widget:
         else:
             set_owner(self.hwnd, None)
             self.root.attributes("-topmost", bool(self.cfg["topmost"]))
-        self.menu.entryconfigure(self.topmost_index,
-                                 state="disabled" if pinned else "normal")
+        if getattr(self, "settings", None) is not None:
+            self.settings.sync()
 
     def _toggle_pin(self):
         self.cfg["pinned"] = self.pinned_var.get()
@@ -3559,108 +3722,45 @@ class Widget:
 
     # --- menu ---
     def _build_menu(self):
-        self.pinned_var = tk.BooleanVar(value=bool(self.cfg["pinned"]))
-        self.topmost_var = tk.BooleanVar(value=bool(self.cfg["topmost"]))
-        self.alpha_var = tk.DoubleVar(value=float(self.cfg["alpha"]))
-        self.theme_var = tk.StringVar(value=self.cfg["theme"])
+        """Tk variables for every setting (shared by the menu and the settings
+        window) and the short right-click menu; the rest is in "Настройки…"."""
+        cfg = self.cfg
+        self.pinned_var = tk.BooleanVar(value=bool(cfg["pinned"]))
+        self.topmost_var = tk.BooleanVar(value=bool(cfg["topmost"]))
+        self.alpha_var = tk.DoubleVar(value=float(cfg["alpha"]))
+        self.theme_var = tk.StringVar(value=cfg["theme"])
+        self.taskbar_var = tk.BooleanVar(value=bool(cfg["taskbar"]))
+        self.tray_var = tk.BooleanVar(value=bool(cfg["tray"]))
+        self.fps_var = tk.BooleanVar(value=bool(cfg["fps"]))
+        self.procs_var = tk.BooleanVar(value=self.show_procs if hasattr(self, "show_procs") else False)
+        self.compact_var = tk.BooleanVar(value=bool(cfg["compact"]))
+        self.autostart_var = tk.BooleanVar(value=autostart_enabled() or admin_task_enabled())
+        self.admin_var = tk.BooleanVar(value=bool(cfg["run_as_admin"]))
+        self.section_vars = {key: tk.BooleanVar(value=key not in cfg["hidden"]) for key in SECTIONS}
+        self.alerts_var = tk.BooleanVar(value=bool(cfg["alerts"]))
+        self.limit_vars = {key: tk.IntVar(value=cfg[key])
+                           for key in ("alert_temp", "alert_ram", "alert_battery")}
+        self.size_var = tk.IntVar(value=cfg["size"])
+        self.dim_var = tk.BooleanVar(value=bool(cfg["dim"]))
+        self.ping_var = tk.StringVar(value=cfg["ping_host"])
+        self.updates_var = tk.BooleanVar(value=bool(cfg["check_updates"]))
+        self.lang_var = tk.StringVar(value=cfg["lang"])
+
         menu = tk.Menu(self.root, tearoff=0)
-        self.taskbar_var = tk.BooleanVar(value=bool(self.cfg["taskbar"]))
-        menu.add_checkbutton(label=tr("Закрепить на рабочем столе"), variable=self.pinned_var,
-                             command=self._toggle_pin)
-        menu.add_checkbutton(label=tr("Мини-панель на панели задач"), variable=self.taskbar_var,
-                             command=self._toggle_taskbar)
-        self.tray_var = tk.BooleanVar(value=bool(self.cfg["tray"]))
-        menu.add_checkbutton(label=tr("Значок в трее"), variable=self.tray_var,
-                             command=self._toggle_tray)
-        self.fps_var = tk.BooleanVar(value=bool(self.cfg["fps"]))
-        menu.add_checkbutton(label=tr("FPS в играх"),
-                             variable=self.fps_var, command=self._toggle_fps)
-        self.procs_var = tk.BooleanVar(value=False)
+        menu.add_command(label=tr("Настройки…"), command=self._show_settings)
+        menu.add_command(label=tr("История за час и сутки"), command=self._show_history)
         menu.add_checkbutton(label=tr("Список процессов"), variable=self.procs_var,
                              command=lambda: self._set_procs(self.procs_var.get()))
-        self.compact_var = tk.BooleanVar(value=bool(self.cfg["compact"]))
         menu.add_checkbutton(label=tr("Компактный режим"), variable=self.compact_var,
                              command=self._toggle_compact)
-        self.autostart_var = tk.BooleanVar(value=autostart_enabled() or admin_task_enabled())
-        menu.add_checkbutton(label=tr("Запускать вместе с Windows"), variable=self.autostart_var,
-                             command=self._toggle_autostart)
-        self.admin_var = tk.BooleanVar(value=bool(self.cfg["run_as_admin"]))
-        if lhm_dir():
-            menu.add_checkbutton(label=tr("Права администратора (температуры)"),
-                                 variable=self.admin_var, command=self._toggle_admin)
+        menu.add_checkbutton(label=tr("Закрепить на рабочем столе"), variable=self.pinned_var,
+                             command=self._toggle_pin)
         menu.add_separator()
-        show_menu = tk.Menu(menu, tearoff=0)
-        self.section_vars = {}
-        for key, title in SECTIONS.items():
-            var = self.section_vars[key] = tk.BooleanVar(value=key not in self.cfg["hidden"])
-            show_menu.add_checkbutton(label=tr(title), variable=var,
-                                      command=lambda k=key: self._toggle_section(k))
-        menu.add_cascade(label=tr("Показывать"), menu=show_menu)
-        alerts_menu = tk.Menu(menu, tearoff=0)
-        self.alerts_var = tk.BooleanVar(value=bool(self.cfg["alerts"]))
-        alerts_menu.add_checkbutton(label=tr("Показывать предупреждения"), variable=self.alerts_var,
-                                    command=self._toggle_alerts)
-        alerts_menu.add_separator()
-        self.limit_vars = {}
-        for key, title, unit in (("alert_temp", "Перегрев CPU от", "°"),
-                                 ("alert_ram", "Память занята от", "%"),
-                                 ("alert_battery", "Батарея ниже", "%")):
-            sub = tk.Menu(alerts_menu, tearoff=0)
-            var = self.limit_vars[key] = tk.IntVar(value=self.cfg[key])
-            for value in CONFIG_CHOICES[key]:
-                sub.add_radiobutton(label=f"{value}{unit}", value=value, variable=var,
-                                    command=lambda k=key: self._set_limit(k))
-            alerts_menu.add_cascade(label=tr(title), menu=sub)
-        menu.add_cascade(label=tr("Предупреждения"), menu=alerts_menu)
-        theme_menu = tk.Menu(menu, tearoff=0)
-        for key, (title, _) in THEMES.items():
-            theme_menu.add_radiobutton(label=tr(title), value=key, variable=self.theme_var,
-                                       command=self._set_theme)
-        theme_menu.add_radiobutton(label=tr("Свои"), value="custom", variable=self.theme_var,
-                                   command=self._set_theme)
-        theme_menu.add_separator()
-        theme_menu.add_command(label=tr("Выбрать свои цвета…"), command=self._pick_colors)
-        menu.add_cascade(label=tr("Цвета"), menu=theme_menu)
-        alpha_menu = tk.Menu(menu, tearoff=0)
-        for pct in (100, 97, 90, 80, 70):
-            alpha_menu.add_radiobutton(label=f"{pct}%", value=pct / 100,
-                                       variable=self.alpha_var, command=self._set_alpha)
-        menu.add_cascade(label=tr("Непрозрачность"), menu=alpha_menu)
-        size_menu = tk.Menu(menu, tearoff=0)
-        self.size_var = tk.IntVar(value=self.cfg["size"])
-        for pct in CONFIG_CHOICES["size"]:
-            size_menu.add_radiobutton(label=f"{pct}%", value=pct, variable=self.size_var,
-                                      command=self._set_size)
-        menu.add_cascade(label=tr("Размер"), menu=size_menu)
-        self.dim_var = tk.BooleanVar(value=bool(self.cfg["dim"]))
-        menu.add_checkbutton(label=tr("Тускнеть в играх и видео"), variable=self.dim_var,
-                             command=self._toggle_dim)
-        menu.add_checkbutton(label=tr("Поверх всех окон"), variable=self.topmost_var,
-                             command=self._toggle_topmost)
-        self.topmost_index = menu.index("end")
-        menu.add_command(label=tr("В правый верхний угол"), command=self._reset_position)
-        menu.add_command(label=tr("История за час и сутки"), command=self._show_history)
-        self.ping_menu = tk.Menu(menu, tearoff=0)
-        self.ping_var = tk.StringVar(value=self.cfg["ping_host"])
-        self._fill_ping_menu()
-        menu.add_cascade(label=tr("Пинг до"), menu=self.ping_menu)
         about = tk.Menu(menu, tearoff=0)
         about.add_command(label=f"PC Monitor {APP_VERSION}", state="disabled")
-        self.updates_var = tk.BooleanVar(value=bool(self.cfg["check_updates"]))
-        about.add_checkbutton(label=tr("Проверять обновления"), variable=self.updates_var,
-                              command=self._toggle_updates)
         about.add_command(label=tr("Проверить сейчас"), command=self._check_updates_now)
         about.add_command(label=tr("Страница программы"), command=lambda: open_in_browser(RELEASES_URL))
         menu.add_cascade(label=tr("О программе"), menu=about)
-        lang_menu = tk.Menu(menu, tearoff=0)
-        self.lang_var = tk.StringVar(value=self.cfg["lang"])
-        lang_menu.add_radiobutton(label=tr("Как в Windows"), value="auto", variable=self.lang_var,
-                                  command=self._set_language)
-        lang_menu.add_separator()
-        for code, name in LANGS.items():
-            lang_menu.add_radiobutton(label=name, value=code, variable=self.lang_var,
-                                      command=self._set_language)
-        menu.add_cascade(label="Язык / Language", menu=lang_menu)
         menu.add_separator()
         menu.add_command(label=tr("Скрыть  ({hotkey} — показать)", hotkey=HOTKEY_TEXT),
                          command=self.hide_widget)
@@ -3829,9 +3929,14 @@ class Widget:
         save_config(self.cfg)
         set_language(self.cfg["lang"])
         old = self.menu
-        self._build_menu()
-        self._apply_pin()  # also re-disables "always on top" in the new menu when pinned
+        self._build_menu()  # new texts, new variables
         old.destroy()
+        settings = getattr(self, "settings", None)
+        if settings is not None and settings.alive():  # reopen in the new language
+            tab = settings.current_tab()
+            settings.close()
+            self.settings = None
+            self.root.after(0, lambda: self._show_settings(tab))
         if self.taskbar is not None:
             self.taskbar.measure()
         self.data = self._collect() if self.data is not None else None
@@ -3840,39 +3945,18 @@ class Widget:
             self.taskbar.draw(self.data, self.cfg["theme"])
 
     # --- ping target ---
-    def _fill_ping_menu(self):
-        m = self.ping_menu
-        m.delete(0, "end")
-        hosts = [(h, f"{h}  ({name})") for h, name in PING_PRESETS]
-        if self.cfg["ping_host"] not in dict(PING_PRESETS):
-            hosts.append((self.cfg["ping_host"], self.cfg["ping_host"]))
-        for host, label in hosts:
-            m.add_radiobutton(label=label, value=host, variable=self.ping_var,
-                              command=lambda h=host: self._set_ping_host(h))
-        m.add_separator()
-        m.add_command(label=tr("Свой адрес…"), command=self._ask_ping_host)
-
     def _set_ping_host(self, host):
         self.cfg["ping_host"] = host
         self.ping_var.set(host)
         save_config(self.cfg)
         self.ping.set_host(host)
-        self._fill_ping_menu()
 
-    def _ask_ping_host(self):
-        from tkinter import simpledialog, messagebox
-        text = simpledialog.askstring(
-            tr("Пинг до"), tr("Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
-                              "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа»."),
-            initialvalue=self.cfg["ping_host"], parent=self.root)
-        if text is None:
+    def _show_settings(self, tab=0):
+        if getattr(self, "settings", None) is not None and self.settings.alive():
+            self.settings.top.lift()
+            self.settings.top.focus_force()
             return
-        host = clean_host(text)
-        if host is None:
-            messagebox.showwarning(tr("Пинг до"), tr("«{text}» не похоже на адрес.", text=text),
-                                   parent=self.root)
-            return
-        self._set_ping_host(host)
+        self.settings = SettingsWindow(self, tab)
 
     def _show_history(self):
         if self.history_card is None:

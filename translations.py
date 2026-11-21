@@ -121,7 +121,12 @@ TEXTS = {
         "Увімкни в меню «Права адміністратора (температури)».",
         "Schalte im Menü „Administratorrechte (Temperaturen)“ ein."),
 
-    # menu
+    # menu and settings window
+    "Настройки…": ("Settings…", "Налаштування…", "Einstellungen…"),
+    "Настройки": ("Settings", "Налаштування", "Einstellungen"),
+    "Общие": ("General", "Загальні", "Allgemein"),
+    "Вид": ("Look", "Вигляд", "Aussehen"),
+    "Сеть и игры": ("Network and games", "Мережа та ігри", "Netzwerk und Spiele"),
     "Закрепить на рабочем столе": ("Pin to desktop", "Закріпити на робочому столі",
                                    "Auf dem Desktop fixieren"),
     "Мини-панель на панели задач": ("Mini panel on the taskbar", "Міні-панель на панелі завдань",
@@ -162,15 +167,7 @@ TEXTS = {
                                       "Ausblenden  ({hotkey} zum Anzeigen)"),
     "Закрыть": ("Close", "Закрити", "Schließen"),
 
-    # ping address dialog
-    "Адрес сервера или сайта (например, eu.battle.net или 192.168.1.1).\n"
-    "Некоторые игровые серверы на пинг не отвечают — тогда будет «нет ответа».": (
-        "Server or site address (e.g. eu.battle.net or 192.168.1.1).\n"
-        "Some game servers don't answer pings — then it shows “no reply”.",
-        "Адреса сервера або сайту (наприклад, eu.battle.net або 192.168.1.1).\n"
-        "Деякі ігрові сервери не відповідають на пінг — тоді буде «немає відповіді».",
-        "Server- oder Website-Adresse (z. B. eu.battle.net oder 192.168.1.1).\n"
-        "Manche Spielserver antworten nicht auf Ping – dann steht dort „keine Antwort“."),
+    # ping address
     "«{text}» не похоже на адрес.": ("“{text}” doesn't look like an address.",
                                      "«{text}» не схоже на адресу.",
                                      "„{text}“ sieht nicht wie eine Adresse aus."),
