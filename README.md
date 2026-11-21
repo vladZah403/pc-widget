@@ -54,6 +54,10 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   GPU 3° earlier), memory from 90% (with the program that ate it), battery
   below 15% when unplugged. The limits are in Settings → Alerts. Each alert at
   most once in 10 minutes; they never take the focus from a game.
+- **Alerts in Telegram** — the same alerts also go to your own Telegram bot
+  (Settings → Telegram: paste the token from @BotFather, click Connect, write
+  to the bot, click Connect again). The token is kept encrypted with Windows'
+  DPAPI, readable only by your Windows user.
 - **Pin to the desktop** (📌 button): the widget lives under the windows,
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
 - **FPS in games** — a small panel in the corner of the game window (clicks go

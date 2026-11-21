@@ -144,3 +144,60 @@ def test_fps_pill_second_row(w, widget):
     assert two_rows.height > one_row.height
     texts = [t for t, _, _ in ov.system_parts(info, w.theme_scale("heat"))]
     assert "≈" in texts and "24" in texts and "45%" in texts
+
+
+def test_secret_is_encrypted_and_comes_back(w):
+    token = "123456789:AAH-example_token_example_token_1234"
+    stored = w.protect_secret(token)
+    assert stored and token not in stored and "example_token" not in stored
+    assert w.unprotect_secret(stored) == token
+    assert w.unprotect_secret("") == "" and w.unprotect_secret("bm90LWRwYXBp") == ""  # garbage -> ''
+    assert w.sanitize_config({"tg_token": stored})["tg_token"] == stored
+
+
+def test_connect_telegram_flow(w, widget, monkeypatch):
+    calls = []
+
+    def fake_call(token, method, params=None, timeout=10):
+        calls.append((method, params))
+        if method == "getMe":
+            return {"username": "my_pc_bot"}
+        if method == "getUpdates":
+            return [{"message": {"chat": {"id": 42, "type": "private", "first_name": "Vlad"}}}] if state["msg"] else []
+        return {}
+
+    state = {"msg": False}
+    monkeypatch.setattr(w, "tg_call", fake_call)
+    token = "123456789:AAH-example_token_example_token_1234"
+    first = widget.connect_telegram(token)
+    assert "my_pc_bot" in first and widget.cfg["tg_chat"] == 0 and not widget.cfg["tg_enabled"]
+    state["msg"] = True
+    second = widget.connect_telegram(token)
+    assert widget.cfg["tg_chat"] == 42 and widget.cfg["tg_enabled"] and "Vlad" in second
+    assert w.unprotect_secret(widget.cfg["tg_token"]) == token
+    assert calls[-1][0] == "sendMessage" and calls[-1][1]["chat_id"] == 42
+
+
+def test_alert_goes_to_telegram(w, widget, monkeypatch):
+    from conftest import fake_data
+    sent = []
+
+    class Toast:
+        def show(self, *a, **k):
+            pass
+
+    class Sender:
+        def send(self, token, chat, text):
+            sent.append((token, chat, text))
+
+    widget.toast, widget.tg_sender = Toast(), Sender()
+    widget.cfg.update(alerts=True, tg_enabled=True, tg_chat=42,
+                      tg_token=w.protect_secret("123456789:AAH-example_token_example_token_1234"))
+    widget._check_alerts(fake_data(battery=(10.0, False), battery_left=None))
+    assert sent and sent[0][1] == 42 and "Батарея садится" in sent[0][2]
+
+
+def test_bad_token_is_refused_before_any_request(w):
+    import pytest as _pytest
+    with _pytest.raises(OSError):
+        w.tg_call("not a token", "getMe")

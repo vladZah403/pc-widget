@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.error
 import urllib.request
 
 import psutil
@@ -178,7 +179,7 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
                   "check_updates": True, "update_seen": "", "tray": True,
                   "ping_host": "1.1.1.1", "fps": True, "lang": "auto", "in_games": "hide",
-                  "size": 100}
+                  "size": 100, "tg_enabled": False, "tg_token": "", "tg_chat": 0, "tg_name": ""}
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
 # (above it for the battery), so a value hovering around the limit doesn't spam;
@@ -348,6 +349,15 @@ def sanitize_config(raw):
                 cfg[key] = [s for s in v if s in SECTIONS]
         elif key == "ping_host":
             if isinstance(v, str) and clean_host(v) == v:
+                cfg[key] = v
+        elif key == "tg_token":
+            if isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9+/=]{0,4096}", v):
+                cfg[key] = v
+        elif key == "tg_chat":
+            if isinstance(v, int) and not isinstance(v, bool):
+                cfg[key] = v
+        elif key == "tg_name":
+            if isinstance(v, str) and len(v) <= 64:
                 cfg[key] = v
         elif key == "update_seen":
             if isinstance(v, str) and (v == "" or parse_version(v)):
@@ -1194,6 +1204,106 @@ FPS_IGNORE = {"chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "brows
               "potplayermini64", "spotify", "code", "devenv", "obs64", "pc-monitor", "python",
               "pythonw", "dwm", "winword", "excel", "powerpnt", "outlook", "onenote", "teams",
               "ms-teams", "zoom", "slack", "whatsapp"}
+
+
+# ---------- Telegram alerts ----------
+# The same alerts as the cards in the corner, also sent to the user's own
+# Telegram bot. The bot token is a secret: it's kept encrypted with Windows'
+# DPAPI (only this Windows user can decrypt it), never in plain text.
+
+class _DATA_BLOB(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+def _dpapi(data, protect):
+    """CryptProtectData / CryptUnprotectData for the current Windows user."""
+    import base64
+    raw = data if protect else base64.b64decode(data)
+    buf = ctypes.create_string_buffer(raw, len(raw))
+    blob_in = _DATA_BLOB(len(raw), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DATA_BLOB()
+    crypt32 = ctypes.windll.crypt32
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    ok = fn(ctypes.byref(blob_in), None, None, None, None, 0x1, ctypes.byref(blob_out))  # UI_FORBIDDEN
+    if not ok:
+        raise OSError("DPAPI failed")
+    try:
+        out = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+    return base64.b64encode(out).decode("ascii") if protect else out
+
+
+def protect_secret(text):
+    """Encrypted, base64 text to keep in the config ('' for '')."""
+    return _dpapi(text.encode("utf-8"), True) if text else ""
+
+
+def unprotect_secret(text):
+    """The secret back, or '' if there is none or it can't be decrypted (other user/PC)."""
+    if not text:
+        return ""
+    try:
+        return _dpapi(text, False).decode("utf-8")
+    except (OSError, ValueError):
+        return ""
+
+
+TG_API = "https://api.telegram.org/bot{token}/{method}"
+_TOKEN_RE = re.compile(r"\d{5,12}:[A-Za-z0-9_-]{30,50}")
+
+
+def tg_call(token, method, params=None, timeout=10):
+    """One Bot API call; returns 'result' or raises OSError with Telegram's description."""
+    if not _TOKEN_RE.fullmatch(token or ""):
+        raise OSError(tr("это не похоже на токен бота"))
+    data = None
+    if params is not None:
+        data = json.dumps(params).encode("utf-8")
+    req = urllib.request.Request(TG_API.format(token=token, method=method), data=data,
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": f"PC-Monitor/{APP_VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            answer = json.loads(exc.read().decode("utf-8"))
+        except ValueError:
+            raise OSError(f"HTTP {exc.code}") from None
+    if not answer.get("ok"):
+        raise OSError(answer.get("description") or "Telegram error")
+    return answer.get("result")
+
+
+def tg_find_chat(token):
+    """(chat id, name) of the latest private message to the bot, or None."""
+    updates = tg_call(token, "getUpdates", {"limit": 20, "allowed_updates": ["message"]})
+    for upd in reversed(updates or []):
+        chat = (upd.get("message") or {}).get("chat") or {}
+        if chat.get("type") == "private" and isinstance(chat.get("id"), int):
+            return chat["id"], chat.get("first_name") or chat.get("username") or ""
+    return None
+
+
+class TelegramSender(threading.Thread):
+    """Sends queued messages one by one in the background (never blocks the widget)."""
+
+    def __init__(self):
+        super().__init__(daemon=True, name="telegram")
+        self.queue = queue.Queue()
+
+    def send(self, token, chat_id, text):
+        self.queue.put((token, chat_id, text))
+
+    def run(self):
+        while True:
+            token, chat_id, text = self.queue.get()
+            try:
+                tg_call(token, "sendMessage", {"chat_id": chat_id, "text": text,
+                                                "disable_web_page_preview": True})
+            except OSError as exc:
+                log.warning("telegram: sending failed: %s", exc)
 
 
 # ---------- tray icon ----------
@@ -3493,7 +3603,7 @@ class SettingsWindow:
     """All settings in one window with tabs. The controls use the widget's own
     Tk variables and handlers, so the menu, the window and the config agree."""
 
-    TABS = ("Общие", "Вид", "Показывать", "Предупреждения", "Сеть и игры")
+    TABS = ("Общие", "Вид", "Показывать", "Предупреждения", "Сеть и игры", "Telegram")
 
     def __init__(self, widget, tab=0):
         from tkinter import ttk
@@ -3515,6 +3625,7 @@ class SettingsWindow:
         self._sections(self.pages[2])
         self._alerts(self.pages[3])
         self._network(self.pages[4])
+        self._telegram(self.pages[5])
         bottom = ttk.Frame(top, padding=(10, 8))
         bottom.pack(fill="x")
         ttk.Label(bottom, text=f"PC Monitor {APP_VERSION}", foreground="#888").pack(side="left")
@@ -3620,6 +3731,37 @@ class SettingsWindow:
         ttk.Button(row, text="OK", width=4, command=self._apply_host).pack(side="left")
         ttk.Frame(p, height=8).pack()
         self._check(p, tr("FPS в играх"), w.fps_var, w._toggle_fps)
+
+    def _telegram(self, p):
+        from tkinter import ttk
+        w = self.w
+        ttk.Label(p, wraplength=420, justify="left", text=tr(
+            "Предупреждения (перегрев, память, батарея) будут приходить и в твой Telegram-бот, "
+            "даже когда ты не у компьютера.")).pack(anchor="w")
+        ttk.Label(p, wraplength=420, justify="left", foreground="#666", text=tr(
+            "1. В Telegram открой @BotFather, отправь /newbot и получи токен.\n"
+            "2. Вставь токен сюда и нажми «Подключить».\n"
+            "3. Напиши своему боту любое сообщение и нажми «Подключить» ещё раз.")).pack(anchor="w", pady=(8, 8))
+        row = ttk.Frame(p)
+        row.pack(fill="x")
+        ttk.Label(row, text=tr("Токен бота:")).pack(side="left")
+        self.tg_entry = ttk.Entry(row, width=34, show="•")
+        if w.cfg["tg_token"]:
+            self.tg_entry.insert(0, unprotect_secret(w.cfg["tg_token"]))
+        self.tg_entry.pack(side="left", padx=6)
+        ttk.Button(row, text=tr("Подключить"), command=self._connect_tg).pack(side="left")
+        status = (tr("Подключено: @{bot}", bot=w.cfg["tg_name"]) if w.cfg["tg_chat"] and w.cfg["tg_name"]
+                  else tr("Не подключено"))
+        self.tg_status = ttk.Label(p, text=status, wraplength=420, justify="left")
+        self.tg_status.pack(anchor="w", pady=(8, 4))
+        self._check(p, tr("Присылать предупреждения в Telegram"), w.tg_var, w._toggle_telegram)
+        ttk.Button(p, text=tr("Отправить проверку"),
+                   command=lambda: w._telegram(tr("Проверка: всё работает 👍"))).pack(anchor="w", pady=(4, 0))
+
+    def _connect_tg(self):
+        self.tg_status.configure(text=tr("Проверяю…"))
+        self.top.update_idletasks()
+        self.tg_status.configure(text=self.w.connect_telegram(self.tg_entry.get()))
 
     def _apply_host(self):
         from tkinter import messagebox
@@ -4049,6 +4191,7 @@ class Widget:
         self.ping_var = tk.StringVar(value=cfg["ping_host"])
         self.updates_var = tk.BooleanVar(value=bool(cfg["check_updates"]))
         self.lang_var = tk.StringVar(value=cfg["lang"])
+        self.tg_var = tk.BooleanVar(value=bool(cfg["tg_enabled"]))
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label=tr("Настройки…"), command=self._show_settings)
@@ -4355,6 +4498,53 @@ class Widget:
                 self.toast.show(tr("Обновлений нет"), tr("У тебя последняя версия, {v}.", v=APP_VERSION),
                                 scale(0.0))
 
+    # --- Telegram ---
+    def _telegram(self, text):
+        """Send to the user's bot when Telegram alerts are on and connected."""
+        cfg = self.cfg
+        if not (cfg["tg_enabled"] and cfg["tg_chat"]):
+            return
+        token = unprotect_secret(cfg["tg_token"])
+        if not token:
+            return
+        if getattr(self, "tg_sender", None) is None:
+            self.tg_sender = TelegramSender()
+            self.tg_sender.start()
+        self.tg_sender.send(token, cfg["tg_chat"], f"{text}\n— PC Monitor, {socket.gethostname()}")
+
+    def connect_telegram(self, token):
+        """Check the token, find the chat (the user's last message to the bot), save
+        both (token encrypted) and send a test message. Returns a status text."""
+        token = token.strip()
+        try:
+            me = tg_call(token, "getMe")
+            found = tg_find_chat(token)
+        except OSError as exc:
+            return tr("Не получилось: {error}", error=exc)
+        name = me.get("username") or ""
+        self.cfg["tg_token"] = protect_secret(token)
+        self.cfg["tg_name"] = name
+        if not found:
+            self.cfg["tg_chat"] = 0
+            save_config(self.cfg)
+            return tr("Бот @{bot} найден. Напиши ему любое сообщение в Telegram и нажми «Подключить» ещё раз.",
+                      bot=name)
+        self.cfg["tg_chat"], who = found
+        self.cfg["tg_enabled"] = True
+        self.tg_var.set(True)
+        save_config(self.cfg)
+        try:
+            tg_call(token, "sendMessage", {"chat_id": self.cfg["tg_chat"],
+                                           "text": tr("✅ PC Monitor подключён. Сюда будут приходить предупреждения с {pc}.",
+                                                      pc=socket.gethostname())})
+        except OSError as exc:
+            return tr("Не получилось: {error}", error=exc)
+        return tr("Подключено: @{bot} → {who}. Проверь Telegram.", bot=name, who=who)
+
+    def _toggle_telegram(self):
+        self.cfg["tg_enabled"] = self.tg_var.get()
+        save_config(self.cfg)
+
     def _toggle_alerts(self):
         self.cfg["alerts"] = self.alerts_var.get()
         save_config(self.cfg)
@@ -4384,7 +4574,9 @@ class Widget:
             if (st["armed"] and now - st["since"] >= hold_s
                     and now - st["last"] >= ALERT_COOLDOWN_S):
                 st["armed"], st["last"] = False, now
-                self.toast.show(title, body() if callable(body) else body, color)
+                text = body() if callable(body) else body
+                self.toast.show(title, text, color)
+                self._telegram(f"⚠️ {title}\n{text}")
         else:
             st["since"] = None
             if cleared:
