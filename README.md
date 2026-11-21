@@ -37,8 +37,9 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Network** (↓ ↑) with a one-minute graph (download up, upload down),
   **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — Settings →
   Network and games), disk activity, uptime.
-- **History** — click the temperature block (or the menu "History (hour and
-  day)"): charts of CPU, GPU, memory or network for the last hour or day with
+- **History** — click a row (cores, memory, graphics, temperature, network —
+  the row under the mouse lights up) or the menu "History (hour and day)":
+  charts of CPU, GPU, memory or network for the last hour or day with
   the maximum and average, and "Save CSV" for the whole day. Kept in
   `%APPDATA%\PC-Monitor\history.csv` (a point every 10 s, one day at most),
   so it survives restarts.
@@ -86,7 +87,12 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Languages**: Russian, English, Ukrainian, German — as in Windows or from
   Settings → General.
 - **Hotkey Ctrl+Alt+W** — show/hide the widget.
-- **Start with Windows**, **compact mode**, **size** (100/125/150%), palettes, opacity — all in the
+- **Any size from 80 to 200%** — drag the widget's bottom-right corner (it shows
+  when the mouse is over the widget), or Ctrl + mouse wheel over it, or the
+  slider in Settings → Look. Double-click the corner for 100%.
+- **Sticks to screen edges** while you drag it (hold Shift to place it freely),
+  and stays above the taskbar when it grows.
+- **Start with Windows**, **compact mode**, palettes, opacity — all in the
   **Settings** window (right-click → "Settings…"); the right-click menu keeps
   only the everyday items. Starting it twice doesn't open a second copy.
 - **Updates** — every 6 hours the widget asks GitHub whether a new version is

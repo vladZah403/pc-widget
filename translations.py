@@ -162,6 +162,19 @@ TEXTS = {
     "тускнеть": ("dim", "тьмяніти", "abdunkeln"),
     "ничего": ("nothing", "нічого", "nichts"),
     "Размер": ("Size", "Розмір", "Größe"),
+    # resize corner and hints
+    "Потяни за уголок, чтобы изменить размер (или Ctrl + колёсико). Двойной клик — 100%.": (
+        "Drag the corner to resize (or Ctrl + mouse wheel). Double-click: 100%.",
+        "Потягни за куточок, щоб змінити розмір (або Ctrl + коліщатко). Подвійний клік — 100%.",
+        "Ziehe an der Ecke, um die Größe zu ändern (oder Strg + Mausrad). Doppelklick: 100 %."),
+    "Или потяни за уголок виджета, или Ctrl + колёсико над ним": (
+        "Or drag the widget's corner, or Ctrl + mouse wheel over it",
+        "Або потягни за куточок віджета, або Ctrl + коліщатко над ним",
+        "Oder an der Ecke des Widgets ziehen oder Strg + Mausrad darüber"),
+    "Открепить от рабочего стола": ("Unpin from desktop", "Відкріпити від робочого столу",
+                                    "Vom Desktop lösen"),
+    "Закрыть: нажми два раза": ("Close: click twice", "Закрити: натисни двічі",
+                                "Schließen: zweimal klicken"),
     "Поверх всех окон": ("Always on top", "Поверх усіх вікон", "Immer im Vordergrund"),
     "В правый верхний угол": ("Move to the top right corner", "У правий верхній кут",
                               "In die obere rechte Ecke"),

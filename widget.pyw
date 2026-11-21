@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.7"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -150,6 +150,7 @@ TEXT = (232, 234, 239)
 DIM = (139, 147, 163)
 FAINT = (88, 96, 112)
 CLOSE_HOVER = (232, 68, 90)
+ROW_HOVER = (35, 41, 53)  # a row under the mouse that a click opens (between CARD and TRACK)
 
 # colour scales: low load -> high load
 THEMES = {
@@ -184,6 +185,13 @@ DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": 
 
 # what a profile ("work" / "game") remembers: how the widget looks
 PROFILE_KEYS = ("compact", "hidden", "size", "theme", "alpha", "taskbar", "pinned", "topmost")
+# widget size in % (dragging its corner, Ctrl + mouse wheel, the slider in the settings)
+SIZE_MIN, SIZE_MAX, SIZE_STEP = 80, 200, 5
+
+
+def clean_size(value):
+    """Any number -> a size the widget can take: SIZE_MIN..SIZE_MAX in SIZE_STEP steps."""
+    return int(min(SIZE_MAX, max(SIZE_MIN, round(float(value) / SIZE_STEP) * SIZE_STEP)))
 GAME_ON_S, GAME_OFF_S = 3, 10  # a game in front this long switches to / back from "game"
 
 # alerts fire at the limit chosen in the menu and re-arm ALERT_HYST below it
@@ -343,6 +351,9 @@ def sanitize_config(raw):
             if (isinstance(v, list) and len(v) == 2
                     and all(isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) for c in v)):
                 cfg[key] = [c.lower() for c in v]
+        elif key == "size":
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+                cfg[key] = clean_size(v)
         elif isinstance(default, bool):
             if isinstance(v, bool):
                 cfg[key] = v
@@ -368,7 +379,7 @@ def sanitize_config(raw):
 # key -> allowed values
 CONFIG_CHOICES = {"alert_temp": (80, 85, 90, 95), "alert_ram": (80, 85, 90, 95),
                   "alert_battery": (10, 15, 20, 30), "lang": ("auto", "ru", "en", "uk", "de"),
-                  "size": (100, 125, 150), "in_games": ("hide", "dim", "off"),
+                  "in_games": ("hide", "dim", "off"),
                   "profile": ("work", "game"), "alert_disk": (5, 10, 15, 20),
                   "fps_corner": ("tl", "tr", "bl", "br"), "fps_size": (100, 125, 150)}
 # sections that can be hidden from the menu: key -> menu title
@@ -2558,6 +2569,12 @@ class DriveHealth(threading.Thread):
 
 # ---------- rendering ----------
 
+# rows that open the history card on a click: row key -> HistoryCard.SUBJECTS index
+HISTORY_ROWS = {"cores": 0, "temps": 0, "gpu": 1, "ram": 2, "net": 3}
+GRIP = 22  # the resize corner, logical px
+SNAP_GAP, SNAP_REACH = 10, 16  # a dragged widget sticks 10 px off a screen edge within 16 px
+
+
 class Renderer:
     """Draws the widget into a Pillow image. All sizes are in logical px."""
 
@@ -2581,7 +2598,8 @@ class Renderer:
         self.hero_box = (0, 0, 0, 0)
         self.update_box = (0, 0, 0, 0)
         self.proc_boxes = []  # [(program name, × box)] in the process list
-        self.temps_box = (0, 0, 0, 0)
+        self.row_boxes = []   # [(history subject, box)]: rows a click opens the history of
+        self.grip_box = (0, 0, 0, 0)
 
     def px(self, v):
         return int(round(v * self.s))
@@ -2697,26 +2715,28 @@ class Renderer:
     # the same list gives the window height and draws it, so they always agree.
 
     def _sections(self, data, hidden):
+        """[(height, draw function or None, key)]; the key names the row (for the
+        hover highlight and HISTORY_ROWS)."""
         secs = []
         if data.get("update"):
-            secs.append((30, self._draw_update))
+            secs.append((30, self._draw_update, "update"))
         if data.get("procs") is not None:
-            secs.append((120, self._draw_procs))
+            secs.append((120, self._draw_procs, "procs"))
         if "cores" not in hidden and data.get("cores"):
-            secs.append((38, self._draw_cores))
+            secs.append((38, self._draw_cores, "cores"))
         if "ram" not in hidden:
-            secs.append((38, self._draw_ram))
+            secs.append((38, self._draw_ram, "ram"))
         if "gpu" not in hidden:
-            secs.append((38, self._draw_gpu))
+            secs.append((38, self._draw_gpu, "gpu"))
         if "disks" not in hidden:
             for disk in data["disks"]:
                 secs.append((38, lambda d, texts, y, data, scale, disk=disk:
-                             self._draw_disk(d, texts, y, disk, scale)))
+                             self._draw_disk(d, texts, y, disk, scale), "disk"))
         sensors = []
         if "temps" not in hidden:
-            sensors.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps))
+            sensors.append((40 + (20 if self._temps_online(data) else 16), self._draw_temps, "temps"))
         if "battery" not in hidden and data.get("battery_wear") is not None:
-            sensors.append((38, self._draw_battery))
+            sensors.append((38, self._draw_battery, "battery"))
         if "ssd" not in hidden:
             drives = data.get("drives") or []
             # a single drive whose temperature the strip above already shows: not twice
@@ -2724,31 +2744,45 @@ class Renderer:
                      and data.get("temp_ssd") is not None and len(drives) == 1)
             for drive in drives:
                 sensors.append((38, lambda d, texts, y, data, scale, drive=drive:
-                                self._draw_ssd(d, texts, y, drive, scale, show_temp=not twice)))
+                                self._draw_ssd(d, texts, y, drive, scale, show_temp=not twice), "ssd"))
         if "fans" not in hidden and data.get("fans"):
-            sensors.append((24, self._draw_fans))
+            sensors.append((24, self._draw_fans, "fans"))
         if sensors and secs:
-            secs.append((16, self._draw_divider))
+            secs.append((16, self._draw_divider, None))
         secs += sensors
         lower = []
         if "net" not in hidden:
-            lower.append((22, self._draw_net))
+            lower.append((22, self._draw_net, "net"))
             if "net_graph" not in hidden:
-                lower.append((26, self._draw_net_graph))
+                lower.append((26, self._draw_net_graph, "net"))
         if "ping" not in hidden:
-            lower.append((22, self._draw_ping))
+            lower.append((22, self._draw_ping, "ping"))
         if "disk_io" not in hidden:
-            lower.append((22, self._draw_disk_io))
+            lower.append((22, self._draw_disk_io, "disk_io"))
         if lower and secs:
-            secs.append((16, self._draw_divider))
+            secs.append((16, self._draw_divider, None))
         secs += lower
-        secs.append((30, self._draw_footer) if "uptime" not in hidden else (10, None))
+        secs.append((30, self._draw_footer, "uptime") if "uptime" not in hidden else (10, None, None))
         return secs
 
     def layout_height(self, data, compact=False, hidden=()):
         if compact:
             return self.px(178)
-        return self.px(HERO_H + sum(h for h, _ in self._sections(data, hidden)))
+        return self.px(HERO_H + sum(h for h, _, _ in self._sections(data, hidden)))
+
+    def _row_spans(self, data, hidden):
+        """[(history subject, top, bottom)] in logical px for the rows a click opens
+        the history of; a row and its graph (network) make one span."""
+        spans, y = [], HERO_H
+        for h, _, key in self._sections(data, hidden):
+            subject = HISTORY_ROWS.get(key)
+            if subject is not None:
+                if spans and spans[-1][0] == subject and spans[-1][2] == y:
+                    spans[-1] = (subject, spans[-1][1], y + h)
+                else:
+                    spans.append((subject, y, y + h))
+            y += h
+        return spans
 
     def _compact_rows(self, d, texts, data, scale, y):
         """Compact mode: two rows of three readings under the CPU block, each an icon
@@ -2793,11 +2827,13 @@ class Renderer:
             data.get(k) is not None for k in ("temp_cpu", "temp_gpu", "temp_ssd"))
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
-               compact=False, close_armed=False, hidden=()):
+               compact=False, close_armed=False, hidden=(), hover_row=None, grip=0):
+        """hover_row: history subject of the row under the mouse (highlighted);
+        grip: 0 = no resize corner, 1 = shown (mouse over the widget), 2 = in use."""
         scale = theme_scale(theme)
         P, Wl = self.PAD, self.WIDTH
-        self.update_box = self.temps_box = (0, 0, 0, 0)
-        self.proc_boxes = []
+        self.update_box = self.grip_box = (0, 0, 0, 0)
+        self.proc_boxes, self.row_boxes = [], []
         if compact:
             data = dict(data, procs=None, update=None)
         H = self.layout_height(data, compact, hidden)
@@ -2849,17 +2885,37 @@ class Renderer:
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
             self._compact_rows(d, texts, data, scale, HERO_H)
+            self._grip(d, H, grip)
             return self._compose(layer, texts)
         chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
         self.hero_box = (self.px(P - 4), self.px(42), self.px(Wl - P + 4), self.px(118))
 
+        # rows that open their history: a soft highlight under the one the mouse is on
+        for subject, top, bottom in self._row_spans(data, hidden):
+            if subject == hover_row:
+                self._rrect(d, P - 7, top + 1, Wl - P + 7, bottom - 3, 8, ROW_HOVER)
+            self.row_boxes.append((subject, (self.px(P - 7), self.px(top + 1),
+                                             self.px(Wl - P + 7), self.px(bottom - 3))))
         y = HERO_H
-        for h, draw in self._sections(data, hidden):
+        for h, draw, _ in self._sections(data, hidden):
             if draw is not None:
                 draw(d, texts, y, data, scale)
             y += h
+        self._grip(d, H, grip)
         return self._compose(layer, texts)
+
+    def _grip(self, d, H, state):
+        """Resize corner: three short diagonal strokes inside the bottom-right curve."""
+        if not state:
+            return
+        Wl, Hl = self.WIDTH, H / self.s
+        color = TEXT if state == 2 else DIM
+        width = max(1, round(1.3 * self.s * SS))
+        cx, cy = Wl - 6, Hl - 6
+        for k in (3.5, 7.0, 10.5):
+            d.line(self._ss(cx - k, cy, cx, cy - k), fill=color, width=width)
+        self.grip_box = (self.px(Wl - GRIP), H - self.px(GRIP), self.px(Wl), H)
 
     # --- section icons: small line drawings, so a row is recognised before it is read ---
     ICON_W = 16  # icon + gap before the label, logical px
@@ -3043,7 +3099,6 @@ class Renderer:
         cpu_t, gpu_t, ssd_t = data["temp_cpu"], data["temp_gpu"], data.get("temp_ssd")
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         online = self._temps_online(data)
-        self.temps_box = (self.px(P - 4), self.px(y), self.px(Wl - P + 4), self.px(y + 58))
         self._label(d, texts, y + 14, tr("Температура"), "temp")
         if not online:
             texts.append(("rich", Wl - P, y + 14, [(tr("нет данных"), self.f_small, FAINT)]))
@@ -3414,6 +3469,90 @@ def work_area():
     r = _wt.RECT()
     ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(r), 0)  # SPI_GETWORKAREA
     return r.left, r.top, r.right, r.bottom
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _w.RECT), ("rcWork", _w.RECT),
+                ("dwFlags", ctypes.c_ulong)]
+
+
+def monitor_work_area(x, y):
+    """Work area (without the taskbar) of the monitor at screen point x, y."""
+    try:
+        u = ctypes.WinDLL("user32")
+        u.MonitorFromPoint.restype = ctypes.c_void_p
+        u.MonitorFromPoint.argtypes = [_w.POINT, ctypes.c_ulong]
+        u.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MONITORINFO)]
+        monitor = u.MonitorFromPoint(_w.POINT(int(x), int(y)), 2)  # MONITOR_DEFAULTTONEAREST
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if monitor and u.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            r = info.rcWork
+            return r.left, r.top, r.right, r.bottom
+    except (AttributeError, OSError):
+        pass
+    return work_area()
+
+
+def snap_position(x, y, w, h, area, gap, reach):
+    """A window dragged near an edge of the work area sticks to it, `gap` px off
+    (so the rounded card doesn't touch the screen edge); farther away it stays put."""
+    left, top, right, bottom = area
+
+    def snap(v, size, lo, hi):
+        for target in (lo + gap, hi - gap - size):
+            if abs(v - target) <= reach:
+                return target
+        return v
+
+    return snap(x, w, left, right), snap(y, h, top, bottom)
+
+
+class Tooltip:
+    """A short hint by the mouse after it rests on a control for a moment."""
+
+    DELAY_MS = 600
+
+    def __init__(self, root):
+        self.root = root
+        self.top = None
+        self.key = None
+        self.job = None
+
+    def request(self, key, text, x, y):
+        """Show `text` near x, y unless the mouse moves to something else first."""
+        if key == self.key:
+            return
+        self.cancel()
+        self.key = key
+        self.job = self.root.after(self.DELAY_MS, lambda: self._show(text, x, y))
+
+    def _show(self, text, x, y):
+        self.job = None
+        top = self.top = tk.Toplevel(self.root)
+        top.overrideredirect(True)
+        top.attributes("-topmost", True)
+        tk.Label(top, text=text, bg="#%02x%02x%02x" % CARD, fg="#%02x%02x%02x" % TEXT,
+                 font=("Segoe UI", 9), padx=8, pady=4, justify="left", wraplength=320,
+                 highlightthickness=1, highlightbackground="#%02x%02x%02x" % BORDER).pack()
+        top.update_idletasks()
+        w, h = top.winfo_reqwidth(), top.winfo_reqheight()
+        left, top_edge, right, bottom = monitor_work_area(x, y)
+        tx = max(left, min(x + 14, right - w - 4))
+        ty = y + 22 if y + 22 + h <= bottom else y - h - 10
+        top.geometry(f"+{tx}+{max(top_edge, ty)}")
+
+    def cancel(self):
+        if self.job is not None:
+            self.root.after_cancel(self.job)
+            self.job = None
+        if self.top is not None:
+            try:
+                self.top.destroy()
+            except tk.TclError:
+                pass
+            self.top = None
+        self.key = None
 
 
 def card_image(px, W, H, accent=None):
@@ -4091,13 +4230,37 @@ class SettingsWindow:
         ttk.Button(box, text=tr("Выбрать свои цвета…"), command=w._pick_colors).pack(side="left")
         self._radios(p, tr("Непрозрачность"), w.alpha_var,
                      [(pct / 100, f"{pct}%") for pct in (100, 97, 90, 80, 70)], w._set_alpha)
-        self._radios(p, tr("Размер"), w.size_var,
-                     [(pct, f"{pct}%") for pct in CONFIG_CHOICES["size"]], w._set_size)
+        self._size_slider(p)
         ttk.Frame(p, height=6).pack()
         self._check(p, tr("Компактный режим"), w.compact_var, w._toggle_compact)
         self._radios(p, tr("В играх и видео на весь экран"), w.in_games_var,
                      [("hide", tr("прятать")), ("dim", tr("тускнеть")), ("off", tr("ничего"))],
                      w._set_in_games)
+
+    def _size_slider(self, p):
+        """Widget size 80-200%: the widget follows the slider live; the number next to
+        it also follows the corner and Ctrl + wheel while the window is open."""
+        from tkinter import ttk
+        w = self.w
+        box = ttk.LabelFrame(p, text=tr("Размер"), padding=(10, 4))
+        box.pack(fill="x", pady=(8, 0))
+        value = ttk.Label(box, width=5, anchor="e")
+        value.pack(side="right")
+        ttk.Button(box, text="100%", width=6, command=lambda: w._set_size(100)).pack(side="right", padx=(0, 8))
+        ttk.Scale(box, from_=SIZE_MIN, to=SIZE_MAX, variable=w.size_var,
+                  command=lambda v: w._set_size(float(v))).pack(side="left", fill="x", expand=True,
+                                                                padx=(0, 10))
+        ttk.Label(p, text=tr("Или потяни за уголок виджета, или Ctrl + колёсико над ним"),
+                  foreground="#888").pack(anchor="w", padx=(12, 0), pady=(2, 0))
+
+        def show(*_):
+            try:
+                value.configure(text=f"{clean_size(w.size_var.get())}%")
+            except (tk.TclError, ValueError):
+                pass
+
+        self._size_trace = w.size_var.trace_add("write", show)
+        show()
 
     def _sections(self, p):
         for key, title in SECTIONS.items():
@@ -4173,6 +4336,13 @@ class SettingsWindow:
             return 0
 
     def close(self):
+        trace = getattr(self, "_size_trace", None)
+        if trace is not None:
+            try:
+                self.w.size_var.trace_remove("write", trace)
+            except (tk.TclError, ValueError):
+                pass
+            self._size_trace = None
         if self.alive():
             self.top.destroy()
 
@@ -4219,16 +4389,27 @@ class Widget:
         self.close_job = None
         self.pin_hover = False
         self.pin_pressed = False
+        self.grip_hover = self.grip_pressed = False
+        self.resizing = None   # (mouse x, y, size, width, height) while the corner is dragged
+        self.mouse_in = False  # the resize corner shows while the mouse is over the widget
+        self.row_hover = None  # history subject of the highlighted row
+        self.tip = Tooltip(root)
+        # set before the first refresh below: with a fullscreen app in front it already
+        # decides whether to hide the widget ("no attribute 'visible'" otherwise)
+        self.visible = True
         self._drag = (0, 0)
         self.hwnd = None
 
         self._build_menu()
         self.view.bind("<ButtonPress-1>", self._press)
+        self.view.bind("<Double-Button-1>", self._double_click)
         self.view.bind("<B1-Motion>", self._drag_move)
         self.view.bind("<ButtonRelease-1>", self._release)
         self.view.bind("<Motion>", self._hover)
+        self.view.bind("<Enter>", self._enter)
         self.view.bind("<Leave>", self._leave)
         self.view.bind("<Button-3>", self._show_menu)
+        self.view.bind("<Control-MouseWheel>", self._wheel_size)
 
         # prime counters so the first readings are meaningful
         psutil.cpu_percent(interval=None)
@@ -4422,15 +4603,79 @@ class Widget:
         self.cfg["in_games"] = self.in_games_var.get()
         save_config(self.cfg)
         self._apply_dim()
-    def _set_size(self):
-        """Scale the widget (fonts and all) without restarting."""
-        self.cfg["size"] = self.size_var.get()
-        save_config(self.cfg)
-        self.renderer = Renderer(self.dpi_scale * self.cfg["size"] / 100)
+
+    def _set_size(self, size=None, save=True, keep_on_screen=True):
+        """Scale the widget (fonts and all) without restarting; size in %, by default
+        from the settings slider. The top-left corner stays where it is."""
+        size = clean_size(self.size_var.get() if size is None else size)
+        if self.size_var.get() != size:
+            self.size_var.set(size)  # the slider snaps to the step
+        if size == self.cfg["size"] and self.renderer.s == self.dpi_scale * size / 100:
+            return
+        self.cfg["size"] = size
+        if save:
+            save_config(self.cfg)
+        self.renderer = Renderer(self.dpi_scale * size / 100)
         self.height = None  # force the new window size
-        self._draw()
+        self._draw(force=True)
         self.root.update_idletasks()
-        self._place()  # keep it on screen when it grew
+        if keep_on_screen:
+            self._place()
+            self._keep_inside()
+
+    def _wheel_size(self, event):
+        """Ctrl + mouse wheel over the widget: bigger or smaller in 10% steps."""
+        self.tip.cancel()
+        step = 10 if event.delta > 0 else -10
+        self._set_size(self.cfg["size"] + step)
+
+    # --- resize corner ---
+    def _start_resize(self, event):
+        self.resizing = (event.x_root, event.y_root, self.cfg["size"],
+                         self.root.winfo_width(), self.root.winfo_height())
+        self.row_hover = None  # no row stays lit while (and after) the corner is dragged
+        self._draw(force=True)
+
+    def _resize_move(self, event):
+        """The corner follows the mouse along the widget's diagonal (it keeps its
+        proportions); redrawn only when the size reaches the next step."""
+        x0, y0, size0, w0, h0 = self.resizing
+        dx, dy = event.x_root - x0, event.y_root - y0
+        factor = 1 + (dx * w0 + dy * h0) / float(w0 * w0 + h0 * h0)
+        size = clean_size(size0 * factor)
+        if size != self.cfg["size"]:
+            self._set_size(size, save=False, keep_on_screen=False)
+
+    def _finish_resize(self):
+        self.resizing = None
+        save_config(self.cfg)
+        self._draw(force=True)
+        self._place()
+        self._keep_inside()
+
+    def _keep_inside(self):
+        """After growing, move the widget so all of it is on its monitor, above the
+        taskbar (as far as it fits there); the new place is remembered."""
+        if not self.visible or getattr(self, "game_hidden_at", None) is not None:
+            return
+        self.root.update_idletasks()
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        left, top, right, bottom = monitor_work_area(x + w // 2, y + 20)
+        nx, ny = max(left, min(x, right - w)), max(top, min(y, bottom - h))
+        if (nx, ny) != (x, y):
+            self.root.geometry(f"+{nx}+{ny}")
+            self.root.update_idletasks()
+            self._save_position()
+
+    def _double_click(self, event):
+        """Tk sends only this for the second press of a double click."""
+        if self._in_box(self.renderer.grip_box, event):
+            self.resizing = None
+            self.grip_pressed = True  # nothing else happens on its release
+            self._set_size(100)  # double click on the corner: back to 100%
+        else:
+            self._press(event)  # elsewhere it is an ordinary click (two quick ones on × close)
 
     def _overlay_info(self):
         """CPU / GPU load and temperature and the ping for the second row of the FPS pill."""
@@ -4606,7 +4851,7 @@ class Widget:
         self.alerts_var = tk.BooleanVar(value=bool(cfg["alerts"]))
         self.limit_vars = {key: tk.IntVar(value=cfg[key])
                            for key in ("alert_temp", "alert_ram", "alert_battery", "alert_disk")}
-        self.size_var = tk.IntVar(value=cfg["size"])
+        self.size_var = tk.DoubleVar(value=cfg["size"])  # the settings slider writes fractions
         self.in_games_var = tk.StringVar(value=cfg["in_games"])
         self.ping_var = tk.StringVar(value=cfg["ping_host"])
         self.updates_var = tk.BooleanVar(value=bool(cfg["check_updates"]))
@@ -4749,7 +4994,18 @@ class Widget:
                 return name
         return None
 
+    def _row_at(self, event):
+        """History subject of the row under the mouse, or None."""
+        for subject, box in getattr(self.renderer, "row_boxes", []):
+            if self._in_box(box, event):
+                return subject
+        return None
+
     def _press(self, event):
+        self.tip.cancel()
+        self.grip_pressed = self._in_box(self.renderer.grip_box, event)
+        if self.grip_pressed:
+            self._start_resize(event)
         self.proc_pressed = self._proc_at(event)
         self.close_pressed = self._in_close(event)
         self.pin_pressed = self._in_box(self.renderer.pin_box, event)
@@ -4758,12 +5014,29 @@ class Widget:
         self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
 
     def _drag_move(self, event):
-        if self.close_pressed or self.pin_pressed or self.proc_pressed or self.cfg["pinned"]:
+        if self.resizing:
+            self._resize_move(event)
+            return
+        if (self.grip_pressed or self.close_pressed or self.pin_pressed or self.proc_pressed
+                or self.cfg["pinned"]):
             return
         dx, dy = self._drag
-        self.root.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
+        x, y = event.x_root - dx, event.y_root - dy
+        if not event.state & 0x1:  # Shift held: no sticking to the edges
+            k = self.dpi_scale
+            x, y = snap_position(x, y, self.root.winfo_width(), self.root.winfo_height(),
+                                 monitor_work_area(event.x_root, event.y_root),
+                                 round(SNAP_GAP * k), round(SNAP_REACH * k))
+        self.root.geometry(f"+{x}+{y}")
 
     def _release(self, event):
+        if self.resizing:
+            self.grip_pressed = False
+            self._finish_resize()
+            return
+        if self.grip_pressed:
+            self.grip_pressed = False
+            return
         if self.proc_pressed:
             name, self.proc_pressed = self.proc_pressed, None
             if self._proc_at(event) == name:
@@ -4789,26 +5062,44 @@ class Widget:
         if (moved < 5 and self.data and self.data.get("update")
                 and self._in_box(self.renderer.update_box, event)):
             self._update_clicked()
-        if moved < 5 and self._in_box(self.renderer.temps_box, event):
-            self._show_history()
+        row = self._row_at(event)
+        if moved < 5 and row is not None:
+            self._show_history(row)
         if self.cfg["pinned"]:
             self._back_if_pinned()
             return
         self._save_position()
 
+    def _enter(self, event):
+        self.mouse_in = True
+        self._draw()  # the resize corner shows up
+
     def _hover(self, event):
         self._set_hover(self._in_close(event))
         on_pin = self._in_box(self.renderer.pin_box, event)
-        if on_pin != self.pin_hover:
-            self.pin_hover = on_pin
+        on_grip = self._in_box(self.renderer.grip_box, event)
+        row = None if on_grip else self._row_at(event)
+        if (on_pin, on_grip, row) != (self.pin_hover, self.grip_hover, self.row_hover) or not self.mouse_in:
+            self.pin_hover, self.grip_hover, self.row_hover = on_pin, on_grip, row
+            self.mouse_in = True
             self._draw()
-        hand = (self._in_close(event) or on_pin or self._proc_at(event)
+        hand = (self._in_close(event) or on_pin or self._proc_at(event) or row is not None
                 or self._in_box(self.renderer.hero_box, event)
-                or self._in_box(self.renderer.update_box, event)
-                or self._in_box(self.renderer.temps_box, event))
-        cursor = "hand2" if hand else ""
+                or self._in_box(self.renderer.update_box, event))
+        cursor = "size_nw_se" if on_grip else ("hand2" if hand else "")
         if self.view.cget("cursor") != cursor:
             self.view.configure(cursor=cursor)
+        # a hint after the mouse rests on a control
+        if on_grip:
+            self.tip.request("grip", tr("Потяни за уголок, чтобы изменить размер (или Ctrl + "
+                                        "колёсико). Двойной клик — 100%."), event.x_root, event.y_root)
+        elif on_pin:
+            self.tip.request("pin", tr("Открепить от рабочего стола") if self.cfg["pinned"]
+                             else tr("Закрепить на рабочем столе"), event.x_root, event.y_root)
+        elif self._in_close(event):
+            self.tip.request("close", tr("Закрыть: нажми два раза"), event.x_root, event.y_root)
+        else:
+            self.tip.cancel()  # rows need no hint: the highlight and the hand cursor say it
 
     # --- processes & alerts ---
     def _close_program_clicked(self, name):
@@ -4878,11 +5169,19 @@ class Widget:
             return
         self.settings = SettingsWindow(self, tab)
 
-    def _show_history(self):
+    def _show_history(self, subject=None):
+        """Open the history card (on `subject`: HistoryCard.SUBJECTS index); a click on
+        the row it already shows closes it, another row switches it over."""
         if self.history_card is None:
             return
-        if self.history_card.visible:
-            self.history_card.hide()
+        card = self.history_card
+        if card.visible and (subject is None or subject == card.subject):
+            card.hide()
+            return
+        if subject is not None:
+            card.subject = subject
+        if card.visible:
+            card.refresh()
             return
         if self.visible:
             rect = (self.root.winfo_rootx(), self.root.winfo_rooty(),
@@ -5172,7 +5471,11 @@ class Widget:
                         hot)
 
     def _leave(self, event):
-        self.pin_hover = False
+        self.tip.cancel()
+        self.pin_hover = self.grip_hover = False
+        self.row_hover = None
+        if not self.resizing:  # the mouse runs ahead of a shrinking widget
+            self.mouse_in = False
         self._set_hover(False)
         self._draw()
 
@@ -5330,15 +5633,19 @@ class Widget:
         if not force and self.height is not None and (
                 not getattr(self, "visible", True) or getattr(self, "game_hidden_at", None) is not None):
             return  # hidden, or parked off-screen during a game: drawn again when it is back
+        resizing = getattr(self, "resizing", None)
+        grip = 2 if resizing or getattr(self, "grip_hover", False) else int(getattr(self, "mouse_in", False))
         img = self.renderer.render(self.data, self.cfg["theme"], self.close_hover,
                                    bool(self.cfg["pinned"]), self.pin_hover,
                                    compact=bool(self.cfg["compact"]),
                                    close_armed=self.close_armed,
-                                   hidden=tuple(self.cfg["hidden"]))
+                                   hidden=tuple(self.cfg["hidden"]),
+                                   hover_row=None if resizing else getattr(self, "row_hover", None),
+                                   grip=grip)
         self.photo = ImageTk.PhotoImage(img)
         self.view.configure(image=self.photo)
-        if img.height != self.height:
-            self.height = img.height
+        if img.height != self.height or img.width != getattr(self, "width_px", None):
+            self.height, self.width_px = img.height, img.width
             self.root.geometry(f"{img.width}x{img.height}")
 
     def run(self):
