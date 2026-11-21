@@ -25,7 +25,7 @@ def test_updater_refuses_an_oversized_archive(w, tmp_path, monkeypatch):
         zf.writestr("PC-Monitor/PC-Monitor.exe", b"e")
         zf.writestr("PC-Monitor/_internal/a.dll", b"d" * 5000)
     data = buf.getvalue()
-    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None: _Resp(data))
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None, context=None: _Resp(data))
     asset = {"url": "https://example.invalid/PC-Monitor.zip",
              "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
     for limits in ({"UNPACK_MAX_BYTES": 4000}, {"UNPACK_MAX_FILES": 1}):

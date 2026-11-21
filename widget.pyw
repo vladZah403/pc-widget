@@ -35,7 +35,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -1743,6 +1743,15 @@ class LhmReader(threading.Thread):
         self.source = None   # "native", "web" or None
         self.native_ok = False
         self.admin = is_admin()
+        self.stopping = threading.Event()
+
+    def stop(self, timeout=3.0):
+        """Finish the current read and close the sensor library. Called before the
+        program exits: pythonnet unloads .NET at exit, and a read still running then
+        fails ("'PropertyObject' object is not iterable") or crashes."""
+        self.stopping.set()
+        if self.is_alive() and threading.current_thread() is not self:
+            self.join(timeout)
 
     @property
     def cpu(self):
@@ -1755,11 +1764,13 @@ class LhmReader(threading.Thread):
     def hint(self):
         """What the user can do to get temperatures, or None when they are there."""
         s = self.sensors
-        if any(s[k] is not None for k in ("cpu", "gpu", "ssd")):
-            return None
+        if s["cpu"] is not None or s["gpu"] is not None:
+            return None  # an SSD temperature alone still needs the hint for the other two
         if self.native_ok and not self.admin:
             return tr("Температуры включаются в меню (ПКМ)")
-        if self.native_ok:
+        if self.native_ok:  # admin rights, but no PawnIO driver for the CPU's sensors
+            if s["ssd"] is not None:  # shares the row with the SSD's temperature
+                return tr("CPU и GPU: нужен PawnIO")
             return tr("Нет доступа к датчикам: нужен PawnIO")
         if self.online:
             return tr("Запусти LibreHardwareMonitor от админа")
@@ -1776,7 +1787,7 @@ class LhmReader(threading.Thread):
                 log.exception("built-in sensor library failed to load")
                 native = None
         failures = 0
-        while True:
+        while not self.stopping.is_set():
             found, source = None, None
             if native is not None:
                 try:
@@ -1809,7 +1820,9 @@ class LhmReader(threading.Thread):
             self.sensors = found or dict(EMPTY_SENSORS)
             self.online = found is not None
             self.source = source
-            time.sleep(LHM_POLL_S)
+            self.stopping.wait(LHM_POLL_S)
+        if native is not None:
+            native.close()
 
 
 # ---------- updates ----------
@@ -1824,6 +1837,27 @@ UPDATE_EVERY_S = 6 * 3600
 UNPACK_MAX_FILES = 5000
 UNPACK_MAX_BYTES = 500 * 2**20
 _RELEASE_PAGE_RE = re.compile(re.escape(RELEASES_URL) + r"/tag/v\d+(?:\.\d+){0,3}")
+
+
+_https = None
+
+
+def https_context():
+    """Certificates trusted for GitHub: Windows' own plus certifi's list. A fresh
+    Windows fetches most root certificates only when a browser first needs one, and
+    Python can't ask for them, so on a new PC GitHub's root may be missing (seen on
+    a new Windows 11 laptop: every update check failed, CERTIFICATE_VERIFY_FAILED)."""
+    global _https
+    if _https is None:
+        import ssl
+        ctx = ssl.create_default_context()
+        try:
+            import certifi
+            ctx.load_verify_locations(cafile=certifi.where())
+        except (ImportError, OSError, ssl.SSLError):
+            log.warning("certifi missing: only Windows' certificates are used", exc_info=True)
+        _https = ctx
+    return _https
 
 
 def parse_version(text):
@@ -1903,7 +1937,7 @@ class Updater(threading.Thread):
         req = urllib.request.Request(self.asset["url"], headers={"User-Agent": f"PC-Monitor/{APP_VERSION}"})
         size = self.asset["size"]
         data = bytearray()
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=https_context()) as resp:
             # read exactly `size` bytes: GitHub's CDN may keep the connection open after them
             while len(data) < size:
                 chunk = resp.read(min(256 * 1024, size - len(data)))
@@ -2027,7 +2061,7 @@ class UpdateChecker(threading.Thread):
                     req = urllib.request.Request(LATEST_API, headers={
                         "User-Agent": f"PC-Monitor/{APP_VERSION}",
                         "Accept": "application/vnd.github+json"})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
+                    with urllib.request.urlopen(req, timeout=10, context=https_context()) as resp:
                         self.found = newer_release(json.loads(resp.read().decode("utf-8")))
                     self.failed = False
                 except (OSError, ValueError) as exc:  # offline is normal for a laptop
@@ -3023,10 +3057,17 @@ class Renderer:
                 color = scale((t - 30) / 70)
                 return (head + ([("≈", self.f_sym, color)] if approx else [])
                         + [(f"{t:.0f}°", self.f_value, color)])
-            texts.append(("rich_left", P, y + 8, chip("CPU", cpu_t)))
-            texts.append(("rich_center", Wl / 2, y + 8,
-                          chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
-            texts.append(("rich", Wl - P, y + 8, chip("SSD", ssd_t)))
+            ssd_chip = chip("SSD", ssd_t)
+            hint = data.get("sensor_hint")
+            if cpu_t is None and gpu_t is None and hint:
+                # only the SSD answers (admin rights, but no PawnIO driver): say why
+                room = self.px(Wl - 2 * P - 12) - sum(f.getlength(t) for t, f, _ in ssd_chip)
+                texts.append((P, y + 8, ellipsize(hint, self.f_small, room), self.f_small, FAINT, "ls"))
+            else:
+                texts.append(("rich_left", P, y + 8, chip("CPU", cpu_t)))
+                texts.append(("rich_center", Wl / 2, y + 8,
+                              chip("GPU", cpu_t if shared else gpu_t, approx=shared)))
+            texts.append(("rich", Wl - P, y + 8, ssd_chip))
         else:
             hint = ellipsize(data.get("sensor_hint") or tr("Нет данных о температуре"), self.f_small,
                              self.px(Wl - 2 * P))
@@ -4644,9 +4685,15 @@ class Widget:
             self.history.flush()
 
     def quit(self):
+        try:
+            self.root.withdraw()  # gone at once: closing the sensor library may take a second
+        except tk.TclError:
+            pass
         if getattr(self, "fps", None) is not None:
             self.fps.stop()  # an ETW session outlives the process unless stopped
             self.fps = None
+        if getattr(self, "lhm", None) is not None:
+            self.lhm.stop()  # no sensor read may run while .NET unloads at exit
         self._save_history()
         if getattr(self, "tray", None) is not None:
             self.tray.stop()  # or a dead icon stays in the tray until hovered
@@ -5335,6 +5382,11 @@ def write_diagnostics():
     """`PC-Monitor.exe --diag`: write what the sensors give into pc-monitor-diag.txt."""
     lines = [f"version: {APP_VERSION}", f"windows build: {windows_build()}", f"admin: {is_admin()}",
              f"frozen: {getattr(sys, 'frozen', False)}", f"lhm dir: {lhm_dir()}"]
+    try:
+        import certifi
+        lines.append(f"certificates: certifi {'ok' if os.path.isfile(certifi.where()) else 'file missing'}")
+    except ImportError:
+        lines.append("certificates: certifi missing")
     for name, part in (("drives", probe_drives), ("taskbar", describe_taskbar)):
         try:
             lines.append(f"{name}: {part()}")

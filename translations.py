@@ -82,6 +82,8 @@ TEXTS = {
     "Нет доступа к датчикам: нужен PawnIO": ("No sensor access: PawnIO needed",
                                              "Немає доступу до датчиків: треба PawnIO",
                                              "Kein Sensorzugriff: PawnIO nötig"),
+    "CPU и GPU: нужен PawnIO": ("CPU and GPU: PawnIO needed", "CPU і GPU: треба PawnIO",
+                                "CPU und GPU: PawnIO nötig"),
     "Запусти LibreHardwareMonitor от админа": ("Run LibreHardwareMonitor as admin",
                                                "Запусти LibreHardwareMonitor від адміна",
                                                "LibreHardwareMonitor als Admin starten"),

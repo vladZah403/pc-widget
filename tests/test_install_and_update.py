@@ -95,7 +95,7 @@ class _Resp(io.BytesIO):
 ])
 def test_updater(w, tmp_path, monkeypatch, entries, digest_ok, extra, error):
     data = _zip(entries)
-    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None: _Resp(data))
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None, context=None: _Resp(data))
     digest = hashlib.sha256(data).hexdigest() if digest_ok else "0" * 64
     asset = {"url": "https://example.invalid/PC-Monitor.zip", "sha256": digest, "size": len(data) + extra}
     up = w.Updater(asset, (str(tmp_path / "App"), str(tmp_path / "App.new")))
@@ -126,7 +126,7 @@ def test_leave_program_folder(w, tmp_path, monkeypatch):
 def test_updater_keeps_the_uninstaller(w, tmp_path, monkeypatch):
     """A setup install has unins000.exe/.dat in the program folder: an update keeps them."""
     data = _zip({"PC-Monitor/PC-Monitor.exe": b"new", "PC-Monitor/_internal/a.dll": b"d"})
-    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None: _Resp(data))
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=None, context=None: _Resp(data))
     app = tmp_path / "App"
     app.mkdir()
     (app / "unins000.exe").write_bytes(b"u")
