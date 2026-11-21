@@ -4,6 +4,7 @@
 //! [--helper PATH] [--ping HOST]` reads every source once and prints it;
 //! `--png FILE` draws the widget with live data into a PNG (no window).
 
+mod alerts;
 mod collect;
 mod diag;
 mod layered;

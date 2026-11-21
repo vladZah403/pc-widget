@@ -1411,6 +1411,41 @@ pub fn tray_icon(fonts: &mut Fonts, size: u32, text: &str, color: Rgb) -> Option
     Some(c.pm)
 }
 
+/// Logical width of an alert card.
+pub const CARD_W: f32 = 300.0;
+
+/// An alert card (1.8's Toast): a coloured bar, the title, the text wrapped
+/// in lines.
+pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent: Rgb) -> Option<Pixmap> {
+    // wrap the text at the card's inner width
+    let probe = Canvas::new(1, 1, scale)?;
+    let max = CARD_W - 46.0;
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in body.split_whitespace() {
+        let trial = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        if !line.is_empty() && probe.width(fonts, &trial, Style::Regular, 12.0) > max {
+            lines.push(std::mem::replace(&mut line, word.to_string()));
+        } else {
+            line = trial;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    let h = 46.0 + 17.0 * lines.len() as f32;
+    let mut c = Canvas::new((CARD_W * scale).round() as u32, (h * scale).round() as u32, scale)?;
+    c.rrect(0.0, 0.0, CARD_W, h, 12.0, BORDER);
+    let bw = 1.0 / scale * scale.round().max(1.0);
+    c.rrect(bw, bw, CARD_W - bw, h - bw, 12.0 - bw, CARD);
+    c.rrect(14.0, 16.0, 18.0, h - 16.0, 2.0, accent);
+    c.text(fonts, 30.0, 29.0, title, Style::SemiBold, 14.0, TEXT);
+    for (i, l) in lines.iter().enumerate() {
+        c.text(fonts, 30.0, 48.0 + 17.0 * i as f32, l, Style::Regular, 12.0, DIM);
+    }
+    Some(c.pm)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1424,6 +1459,17 @@ pub(crate) mod tests {
         let compact = View { compact: true, ..View::default() };
         assert_eq!(Renderer::layout_height(&d, &compact), HERO_H + 50.0);
         assert_eq!(Renderer::columns(792.0), 3);
+    }
+
+    #[test]
+    fn alert_cards_wrap() {
+        let mut fonts = Fonts::system();
+        let short = alert_card(&mut fonts, 1.0, "Батарея садится", "Осталось 12%.", (200, 100, 0)).unwrap();
+        let long_text = "Свободно 9,8 ГБ (2%). Очисти корзину и «Загрузки» или удали ненужные программы.";
+        let long = alert_card(&mut fonts, 1.0, "Мало места на диске C:", long_text, (200, 100, 0)).unwrap();
+        assert_eq!(short.width(), 300);
+        assert_eq!(short.height(), 63, "one line");
+        assert!(long.height() >= 80, "the text wraps: {}", long.height());
     }
 
     #[test]

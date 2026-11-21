@@ -72,6 +72,18 @@ pub struct Config {
     pub widget: bool,
     /// What the tray icons show, 1 to 3 of TRAY_KINDS.
     pub tray: Vec<String>,
+    /// Alert cards (overheating, memory, battery, disk space, SSD).
+    pub alerts: bool,
+    /// °C
+    pub alert_temp: u32,
+    /// % of memory in use
+    pub alert_ram: u32,
+    /// % of battery left
+    pub alert_battery: u32,
+    /// % free on the system drive
+    pub alert_disk: u32,
+    /// Alerts wait until a game or a fullscreen video is over.
+    pub quiet_games: bool,
 }
 
 impl Default for Config {
@@ -95,6 +107,12 @@ impl Default for Config {
             tab_y: None,
             widget: true,
             tray: vec!["cpu".into()],
+            alerts: true,
+            alert_temp: 90,
+            alert_ram: 90,
+            alert_battery: 15,
+            alert_disk: 10,
+            quiet_games: true,
         }
     }
 }
@@ -157,6 +175,10 @@ impl Config {
             }
         }
         self.tray = if tray.is_empty() { d.tray.clone() } else { tray };
+        self.alert_temp = self.alert_temp.clamp(60, 105);
+        self.alert_ram = self.alert_ram.clamp(50, 99);
+        self.alert_battery = self.alert_battery.clamp(5, 50);
+        self.alert_disk = self.alert_disk.clamp(1, 50);
         self.hidden.dedup();
         self.ping_host = clean_host(&self.ping_host).unwrap_or(d.ping_host);
     }

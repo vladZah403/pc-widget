@@ -13,7 +13,9 @@ use std::sync::atomic::Ordering;
 use pcm_core::config::{self, Config};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
-use pcm_render::widget::{BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, View, side_tab};
+use pcm_render::widget::{
+    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, View, alert_card, side_tab,
+};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -30,6 +32,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 /// The mouse left the window (TrackMouseEvent); from CommCtrl.h.
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
+use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
 use crate::layered::{self, Surface};
 use crate::tray::{self, Tray, WM_APP_TRAY};
@@ -45,6 +48,9 @@ const TIMER_DISARM: usize = 1;
 const TIMER_GAMES: usize = 2;
 const TIMER_TAB: usize = 3;
 const TIMER_SLIDE: usize = 4;
+const TIMER_TOAST: usize = 5;
+/// An alert card stays this long (ms) unless clicked.
+const TOAST_MS: u32 = 9000;
 /// The widget slides behind the screen edge (and back) this long.
 const TUCK_MS: f32 = 180.0;
 /// Opacity while a game or a fullscreen video is in front ("dim").
@@ -139,6 +145,10 @@ struct App {
     game_hidden: bool,
     tab: TabState,
     tray: Option<Tray>,
+    alerts: Alerts,
+    started: std::time::Instant,
+    toast: HWND,
+    toast_surface: Option<Surface>,
 }
 
 thread_local! {
@@ -636,6 +646,56 @@ impl App {
         }
     }
 
+    /// The biggest program by memory, for the memory alert.
+    fn top_ram() -> Option<(String, u64)> {
+        let mut by_name: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for s in pcm_win::processes::ProcessReader::default().sample() {
+            if s.pid == 0 {
+                continue;
+            }
+            let name = s.image.strip_suffix(".exe").unwrap_or(&s.image).to_string();
+            *by_name.entry(name).or_insert(0) += s.private_ws;
+        }
+        by_name.into_iter().max_by_key(|(_, m)| *m)
+    }
+
+    fn check_alerts(&mut self) {
+        if !self.cfg.alerts {
+            return;
+        }
+        let Some(d) = self.data.clone() else { return };
+        let limits = Limits {
+            temp: self.cfg.alert_temp as f32,
+            ram: self.cfg.alert_ram as f32,
+            battery: self.cfg.alert_battery as f32,
+            disk: self.cfg.alert_disk as f32,
+        };
+        let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        let in_game = self.busy && self.cfg.quiet_games;
+        let now = self.started.elapsed().as_secs_f64();
+        if let Some(alert) = self.alerts.check(now, &d, &limits, &system, in_game, Self::top_ram) {
+            self.show_toast(&alert);
+        }
+    }
+
+    /// The alert card in the bottom-right corner of the work area; a click closes it.
+    fn show_toast(&mut self, a: &Alert) {
+        let scale = self.tab_scale();
+        let sc = self.theme().scale();
+        let accent = if a.hot { sc.at(1.0) } else { sc.at(0.75) };
+        let Some(pm) = alert_card(&mut self.fonts, scale, &a.title, &a.body, accent) else { return };
+        let mut wa = RECT::default();
+        unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut _ as *mut _, 0) };
+        let gap = (14.0 * scale).round() as i32;
+        let pos = (wa.right - pm.width() as i32 - gap, wa.bottom - pm.height() as i32 - gap);
+        layered::show(self.toast, &mut self.toast_surface, &pm, 1.0, Some(pos));
+        unsafe {
+            ShowWindow(self.toast, SW_SHOWNOACTIVATE);
+            SetWindowPos(self.toast, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetTimer(self.hwnd, TIMER_TOAST, TOAST_MS, None);
+        }
+    }
+
     fn update_tray(&mut self) {
         let scale = self.theme().scale();
         if let (Some(t), Some(d)) = (&mut self.tray, &self.data) {
@@ -715,6 +775,7 @@ impl App {
         const TOPMOST: usize = 2;
         const CLOSE: usize = 3;
         const WIDGET: usize = 4;
+        const ALERTS: usize = 5;
         const TRAY: usize = 60;
         const THEME: usize = 10;
         const SIZE: usize = 20;
@@ -781,6 +842,7 @@ impl App {
                 AppendMenuW(trm, flags, TRAY + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, trm as usize, wide("Значки в трее").as_ptr());
+            AppendMenuW(m, MF_STRING | check(self.cfg.alerts), ALERTS, wide("Предупреждения").as_ptr());
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING, CLOSE, wide("Выход").as_ptr());
             let mut pt = POINT::default();
@@ -791,6 +853,7 @@ impl App {
             DestroyMenu(m);
             match cmd {
                 COMPACT => self.cfg.compact = !self.cfg.compact,
+                ALERTS => self.cfg.alerts = !self.cfg.alerts,
                 WIDGET => {
                     let on = !self.cfg.widget;
                     self.set_widget(on);
@@ -904,6 +967,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.present();
                 a.tab_cpu();
                 a.update_tray();
+                a.check_alerts();
             });
             0
         }
@@ -1069,6 +1133,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             0
         }
+        WM_TIMER if wp == TIMER_TOAST => {
+            with_app(|a| unsafe {
+                KillTimer(hwnd, TIMER_TOAST);
+                ShowWindow(a.toast, SW_HIDE);
+            });
+            0
+        }
         WM_TIMER if wp == TIMER_TAB => {
             with_app(|a| a.tab_watch());
             0
@@ -1133,6 +1204,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
         }
+    }
+}
+
+unsafe extern "system" fn toast_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_LBUTTONUP => {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
     }
 }
 
@@ -1214,7 +1295,30 @@ pub fn run() -> i32 {
             ..Default::default()
         };
         RegisterClassW(&tc);
+        let toast_class = wide("PCMonitor2Toast");
+        let toc = WNDCLASSW {
+            lpfnWndProc: Some(toast_proc),
+            hInstance: hinst,
+            lpszClassName: toast_class.as_ptr(),
+            hCursor: LoadCursorW(null_mut(), IDC_HAND),
+            ..Default::default()
+        };
+        RegisterClassW(&toc);
         let tab_ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST;
+        let toast_hwnd = CreateWindowExW(
+            tab_ex,
+            toast_class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            300,
+            80,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         let tab_hwnd = CreateWindowExW(
             tab_ex,
             tab_class.as_ptr(),
@@ -1260,6 +1364,10 @@ pub fn run() -> i32 {
                     cpu_shown: None,
                 },
                 tray: Some(Tray::new(hwnd)),
+                alerts: Alerts::default(),
+                started: std::time::Instant::now(),
+                toast: toast_hwnd,
+                toast_surface: None,
             })
         });
         collect::start(shared.clone());
