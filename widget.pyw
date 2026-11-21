@@ -36,7 +36,7 @@ import urllib.request
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 
 # folder of the .exe when frozen, else of this script
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
@@ -2083,7 +2083,9 @@ def _num(text):
 
 
 class History:
-    """(time, cpu %, cpu °C or None, gpu °C or None) rows for the last 24 hours."""
+    """Rows for the last 24 hours: (time, cpu %, cpu °C, gpu °C, gpu %, ram %,
+    download B/s, upload B/s); anything but time and cpu may be None. Files from
+    before 1.6 have only the first four columns."""
 
     def __init__(self, path=HISTORY_PATH):
         self.path = path
@@ -2099,12 +2101,13 @@ class History:
             with open(self.path, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(",")
-                    if len(parts) != 4:
+                    if len(parts) not in (4, 8):
                         continue
                     t, cpu = _num(parts[0]), _num(parts[1])
                     if t is None or cpu is None or not now - HISTORY_KEEP_S <= t <= now + 60:
                         continue
-                    self.rows.append((t, cpu, _num(parts[2]), _num(parts[3])))
+                    rest = [_num(x) for x in parts[2:]] + [None] * (8 - len(parts))
+                    self.rows.append((t, cpu, *rest))
         except FileNotFoundError:
             return
         except OSError:
@@ -2114,9 +2117,9 @@ class History:
 
     @staticmethod
     def _line(row):
-        t, cpu, t_cpu, t_gpu = row
+        t, cpu, *rest = tuple(row) + (None,) * (8 - len(row))
         opt = lambda v: "" if v is None else f"{v:.1f}"
-        return f"{t:.0f},{cpu:.1f},{opt(t_cpu)},{opt(t_gpu)}\n"
+        return f"{t:.0f},{cpu:.1f}," + ",".join(opt(v) for v in rest) + "\n"
 
     def _rewrite(self):
         tmp = self.path + ".tmp"
@@ -2127,12 +2130,12 @@ class History:
         except OSError:
             log_error("writing history")
 
-    def add(self, cpu, t_cpu, t_gpu, now=None):
+    def add(self, cpu, t_cpu, t_gpu, gpu=None, ram=None, down=None, up=None, now=None):
         now = time.time() if now is None else now
         if now - self.last_add < HISTORY_STEP_S:
             return
         self.last_add = now
-        row = (now, cpu, t_cpu, t_gpu)
+        row = (now, cpu, t_cpu, t_gpu, gpu, ram, down, up)
         self.rows.append(row)
         self.pending.append(row)
         if now - self.last_flush >= HISTORY_FLUSH_S:
@@ -3337,12 +3340,14 @@ class InfoCard(PopupCard):
 
 
 class HistoryCard(PopupCard):
-    """CPU temperature and load for the last hour or day. The 'час / сутки'
-    switch changes the period, a click anywhere else closes the card."""
+    """History of CPU, GPU, memory or network for the last hour or day. Tabs at the
+    top pick the period and the subject, 'CSV' saves the history to a file, a click
+    anywhere else closes the card."""
 
     WIDTH = 380
-    HEIGHT = 262
+    HEIGHT = 292
     PERIODS = (("час", 3600), ("сутки", 24 * 3600))
+    SUBJECTS = ("CPU", "GPU", "Память", "Сеть")
     COLUMNS = 120
 
     def __init__(self, widget):
@@ -3353,17 +3358,41 @@ class HistoryCard(PopupCard):
         self.fv = load_font(px(12), "SemiBold")
         self.f_small = load_font(px(11))
         self.period = 0
+        self.subject = 0
         self.tab_boxes = []
+        self.subject_boxes = []
+        self.csv_box = (0, 0, 0, 0)
         self.pos = (0, 0)
         self.view.bind("<ButtonRelease-1>", self._click)
 
     def _click(self, event):
-        for i, (x0, y0, x1, y1) in enumerate(self.tab_boxes):
-            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+        inside = lambda b: b and b[0] <= event.x <= b[2] and b[1] <= event.y <= b[3]
+        for i, box in enumerate(self.tab_boxes):
+            if inside(box):
                 self.period = i
                 self.refresh()
                 return
+        for i, box in enumerate(self.subject_boxes):
+            if inside(box):
+                self.subject = i
+                self.refresh()
+                return
+        if inside(self.csv_box):
+            self.save_csv()
+            return
         self.hide()
+
+    # --- what each subject shows: (label, row index, value text, lo, hi or None = auto, empty text)
+    def _charts(self):
+        pct = lambda v: f"{v:.0f}%"
+        deg = lambda v: f"{v:.0f}°"
+        no_temp = "нет данных: нужны права администратора"
+        return {
+            0: (("Температура CPU", 2, deg, 30, 100, no_temp), ("Загрузка CPU", 1, pct, 0, 100, "нет данных")),
+            1: (("Температура GPU", 3, deg, 30, 100, no_temp), ("Загрузка GPU", 4, pct, 0, 100, "нет данных")),
+            2: (("Занято памяти", 5, pct, 0, 100, "нет данных"),),
+            3: (("Приём", 6, fmt_speed, 0, None, "нет данных"), ("Отдача", 7, fmt_speed, 0, None, "нет данных")),
+        }[self.subject]
 
     def _chart(self, d, x0, y0, x1, y1, cols, lo, hi, scale):
         """Bars of the average per time slice, coloured on the theme scale."""
@@ -3379,20 +3408,33 @@ class HistoryCard(PopupCard):
             top = y1 - max(1.0, (y1 - y0) * t)
             d.rectangle((bx0, px(top), bx1, px(y1)), fill=scale(t))
 
-    def _summary(self, rows, index, unit, lo, hi, scale):
-        values = [r[index] for r in rows if r[index] is not None]
-        if not values:
-            return None
+    def _summary(self, values, fmt, lo, hi, scale):
         peak, avg = max(values), sum(values) / len(values)
         color = lambda v: scale(max(0.0, min(1.0, (v - lo) / (hi - lo))))
-        return [(tr("макс") + " ", self.f_small, DIM), (f"{peak:.0f}{unit}", self.fv, color(peak)),
-                ("   " + tr("средн.") + " ", self.f_small, DIM),
-                (f"{avg:.0f}{unit}", self.fv, color(avg))]
+        return [(tr("макс") + " ", self.f_small, DIM), (fmt(peak), self.fv, color(peak)),
+                ("   " + tr("средн.") + " ", self.f_small, DIM), (fmt(avg), self.fv, color(avg))]
+
+    def _tabs(self, d, labels, active_i, right, y0, y1, scale):
+        """Pill tabs ending at `right`; returns their click boxes in label order."""
+        px = self.px
+        boxes = [None] * len(labels)
+        x = right
+        for i in reversed(range(len(labels))):
+            w = self.f.getlength(labels[i]) / px(1) + 16
+            tx0, tx1 = x - w, x
+            x -= w + 4
+            if i == active_i:
+                d.rounded_rectangle((px(tx0), px(y0), px(tx1), px(y1)), radius=px(7),
+                                    fill=lerp(CARD, scale(0.0), 0.25))
+            d.text((px((tx0 + tx1) / 2), px(y1 - 6)), labels[i], font=self.f,
+                   fill=TEXT if i == active_i else DIM, anchor="ms")
+            boxes[i] = (px(tx0), px(y0 - 4), px(tx1), px(y1 + 4))
+        return boxes
 
     def render(self, rows, theme, now):
         px = self.px
         scale = theme_scale(theme)
-        name, seconds = self.PERIODS[self.period]
+        seconds = self.PERIODS[self.period][1]
         W, H = px(self.WIDTH), px(self.HEIGHT)
         img = card_image(px, W, H)
         d = ImageDraw.Draw(img)
@@ -3400,47 +3442,56 @@ class HistoryCard(PopupCard):
         rows = [r for r in rows if r[0] >= now - seconds]
 
         d.text((px(L), px(28)), tr("История"), font=self.f_title, fill=TEXT, anchor="ls")
-        # period switch in the top-right corner; tab_boxes[i] = click area of PERIODS[i]
-        self.tab_boxes = [None] * len(self.PERIODS)
-        x = R
-        for i in reversed(range(len(self.PERIODS))):
-            label = tr(self.PERIODS[i][0])
-            w = self.f.getlength(label) / self.px(1) + 16
-            tx0, tx1 = x - w, x
-            x -= w + 4
-            active = i == self.period
-            if active:
-                d.rounded_rectangle((px(tx0), px(12), px(tx1), px(33)), radius=px(7),
-                                    fill=lerp(CARD, scale(0.0), 0.25))
-            d.text((px((tx0 + tx1) / 2), px(27)), label, font=self.f,
-                   fill=TEXT if active else DIM, anchor="ms")
-            self.tab_boxes[i] = (px(tx0), px(8), px(tx1), px(37))
+        self.tab_boxes = self._tabs(d, [tr(p[0]) for p in self.PERIODS], self.period, R, 12, 33, scale)
+        subjects = [tr(s) for s in self.SUBJECTS]
+        w_all = sum(self.f.getlength(t) / px(1) + 20 for t in subjects) - 4
+        self.subject_boxes = self._tabs(d, subjects, self.subject, L + w_all, 42, 63, scale)
 
         start = now - seconds
-        for label, index, unit, lo, hi, cy0, cy1, empty in (
-                ("Температура CPU", 2, "°", 30, 100, 60, 116,
-                 "нет данных: нужны права администратора"),
-                ("Загрузка CPU", 1, "%", 0, 100, 152, 208, "нет данных")):
+        charts = self._charts()
+        height = 128 if len(charts) == 1 else 56
+        for k, (label, index, fmt, lo, hi, empty) in enumerate(charts):
+            cy0 = 92 + k * 92
+            cy1 = cy0 + height
+            values = [r[index] for r in rows if len(r) > index and r[index] is not None]
+            top = hi if hi is not None else max(values + [NET_GRAPH_FLOOR])
             d.text((px(L), px(cy0 - 8)), tr(label), font=self.f, fill=TEXT, anchor="ls")
-            summary = self._summary(rows, index, unit, lo, hi, scale)
-            if summary:
+            if values:
                 xr = px(R)
-                for text, font, color in reversed(summary):
+                for text, font, color in reversed(self._summary(values, fmt, lo, top, scale)):
                     xr -= font.getlength(text)
                     d.text((xr, px(cy0 - 8)), text, font=font, fill=color, anchor="ls")
-            cols = history_buckets(rows, start, now, self.COLUMNS, index)
-            self._chart(d, L, cy0, R, cy1, cols, lo, hi, scale)
-            if not summary:
+            cols = history_buckets([r for r in rows if len(r) > index], start, now, self.COLUMNS, index)
+            self._chart(d, L, cy0, R, cy1, cols, lo, top, scale)
+            if not values:
                 d.text((px((L + R) / 2), px((cy0 + cy1) / 2 + 4)), tr(empty), font=self.f_small,
                        fill=FAINT, anchor="ms")
 
-        fmt = (lambda t: time.strftime("%H:%M", time.localtime(t)))
-        d.text((px(L), px(226)), fmt(start), font=self.f_small, fill=FAINT, anchor="ls")
-        d.text((px((L + R) / 2), px(226)), fmt(start + seconds / 2), font=self.f_small,
+        fmt_t = (lambda t: time.strftime("%H:%M", time.localtime(t)))
+        d.text((px(L), px(256)), fmt_t(start), font=self.f_small, fill=FAINT, anchor="ls")
+        d.text((px((L + R) / 2), px(256)), fmt_t(start + seconds / 2), font=self.f_small,
                fill=FAINT, anchor="ms")
-        d.text((px(R), px(226)), tr("сейчас"), font=self.f_small, fill=FAINT, anchor="rs")
-        d.text((px(L), px(250)), tr("Нажми, чтобы закрыть"), font=self.f_small, fill=FAINT, anchor="ls")
+        d.text((px(R), px(256)), tr("сейчас"), font=self.f_small, fill=FAINT, anchor="rs")
+        d.text((px(L), px(280)), tr("Нажми, чтобы закрыть"), font=self.f_small, fill=FAINT, anchor="ls")
+        csv_label = tr("Сохранить CSV")
+        cw = self.f_small.getlength(csv_label) / px(1)
+        d.text((px(R), px(280)), csv_label, font=self.f_small, fill=scale(0.0), anchor="rs")
+        self.csv_box = (px(R - cw - 6), px(266), px(R + 6), px(288))
         return img
+
+    def save_csv(self):
+        """The whole stored history (a day) to a CSV file the user picks."""
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            parent=self.top, title=tr("Сохранить CSV"), defaultextension=".csv",
+            initialfile=time.strftime("pc-monitor-history-%Y-%m-%d.csv"),
+            filetypes=[("CSV", "*.csv")])
+        if path:
+            try:
+                write_history_csv(path, self.widget.history.rows)
+                log.info("history saved to %s", path)
+            except OSError:
+                log.exception("saving the history failed")
 
     def show_near(self, rect):
         """Beside the widget: on the left if it fits, else on the right."""
@@ -3458,6 +3509,24 @@ class HistoryCard(PopupCard):
         if self.visible:
             img = self.render(self.widget.history.rows, self.widget.cfg["theme"], time.time())
             self._show_image(img, *self.pos)
+
+
+def write_history_csv(path, rows):
+    """Excel-friendly: ';' and decimal commas unless the interface is English."""
+    import csv
+    english = _lang == "en"
+    sep = "," if english else ";"
+    num = (lambda v: "" if v is None else (f"{v:.1f}" if english else f"{v:.1f}".replace(".", ",")))
+    header = ["time", "cpu_load_%", "cpu_temp_C", "gpu_temp_C", "gpu_load_%", "ram_%",
+              "download_bytes_s", "upload_bytes_s"]
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        out = csv.writer(f, delimiter=sep)
+        out.writerow(header)
+        for r in rows:
+            r = tuple(r) + (None,) * (8 - len(r))
+            out.writerow([time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r[0]))]
+                         + [num(v) for v in r[1:6]]
+                         + ["" if v is None else str(int(v)) for v in r[6:8]])
 
 
 class FpsOverlay:
@@ -4812,8 +4881,11 @@ class Widget:
 
         if getattr(self, "history", None) is not None:
             recent = self.cpu_hist[-HISTORY_STEP_S:]
-            self.history.add(sum(recent) / len(recent), self.lhm.sensors["cpu"],
-                             self.lhm.sensors["gpu"])
+            net = self.net_hist[-HISTORY_STEP_S:] or [(0.0, 0.0)]
+            s = self.lhm.sensors
+            gpu_t = s["gpu"] if s["gpu"] is not None else (s["cpu"] if s["gpu_shared"] else None)
+            self.history.add(sum(recent) / len(recent), s["cpu"], gpu_t, s["gpu_load"], mem.percent,
+                             sum(d for d, _ in net) / len(net), sum(u for _, u in net) / len(net))
 
         batt = psutil.sensors_battery()
         left = None

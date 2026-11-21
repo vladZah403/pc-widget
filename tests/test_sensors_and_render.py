@@ -91,3 +91,63 @@ def test_event_id_filter_layout(w):
     assert params.Version == 2 and params.FilterDescCount == 1
     assert desc.Type == 0x80000200 and desc.Size == ctypes.sizeof(body) and body.Count == 1
     assert list(body.Events) == [184] and body.FilterIn == 1
+
+
+def test_history_all_columns_and_old_files(w, tmp_path):
+    import time as _t
+    now = _t.time()
+    path = str(tmp_path / "history.csv")
+    with open(path, "w", encoding="utf-8") as f:  # a line written by 1.5: four columns
+        f.write(f"{now - 50:.0f},12.0,55.0,\n")
+    h = w.History(path)
+    assert h.rows[0][1:] == (12.0, 55.0, None, None, None, None, None)  # padded to eight
+    h.last_trim = now
+    h.add(20.0, 60.0, 58.0, 30.0, 45.0, 2_500_000.0, 120_000.0, now=now)
+    h.flush(now)
+    again = w.History(path).rows
+    assert len(again) == 2 and again[-1][1:] == (20.0, 60.0, 58.0, 30.0, 45.0, 2_500_000.0, 120_000.0)
+
+
+def test_history_csv(w, tmp_path):
+    rows = [(1_000_000.0, 20.0, 60.5, None, 30.0, 45.0, 2_500_000.0, 120_000.0), (1_000_010.0, 21.0, None, None)]
+    path = tmp_path / "out.csv"
+    w.set_language("ru")
+    w.write_history_csv(str(path), rows)
+    text = path.read_text(encoding="utf-8-sig").splitlines()
+    assert text[0].startswith("time;cpu_load_%") and "60,5" in text[1] and text[2].count(";") == 7
+    w.set_language("en")
+    w.write_history_csv(str(path), rows)
+    assert "60.5" in path.read_text(encoding="utf-8-sig").splitlines()[1]
+
+
+def test_history_card_subjects(w):
+    import time as _t
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    now = _t.time()
+    rows = [(now - 3000 + i * 10, 20.0, 60.0, 58.0, 30.0, 45.0, 1e6, 1e5) for i in range(300)]
+
+    class FW:
+        renderer = w.Renderer(1.0)
+        cfg = {"theme": "heat"}
+
+        class history:
+            pass
+
+    FW.root = root
+    FW.history.rows = rows
+    card = w.HistoryCard(FW())
+    for i in range(len(card.SUBJECTS)):
+        card.subject = i
+        img = card.render(rows, "heat", now)
+        assert img.size == (card.px(card.WIDTH), card.px(card.HEIGHT))
+    x0, y0, x1, y1 = card.subject_boxes[2]
+
+    class E:
+        x, y = (x0 + x1) // 2, (y0 + y1) // 2
+
+    card.visible, card.pos = True, (0, 0)
+    card._click(E())
+    assert card.subject == 2 and card.visible
+    root.destroy()

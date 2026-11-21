@@ -36,9 +36,10 @@ CPU history for the last hour or day, and the FPS counter in a game with the
   **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — Settings →
   Network and games), disk activity, uptime.
 - **History** — click the temperature block (or the menu "History (hour and
-  day)"): CPU temperature and load charts for the last hour or day with the
-  maximum and average. Kept in `%APPDATA%\PC-Monitor\history.csv` (a point
-  every 10 s, one day at most), so it survives restarts.
+  day)"): charts of CPU, GPU, memory or network for the last hour or day with
+  the maximum and average, and "Save CSV" for the whole day. Kept in
+  `%APPDATA%\PC-Monitor\history.csv` (a point every 10 s, one day at most),
+  so it survives restarts.
 - **Battery** — charge and how long it will last (Windows' estimate), wear
   (how much capacity is lost since new) and the power draw in watts when
   unplugged.

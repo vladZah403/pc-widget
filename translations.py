@@ -106,6 +106,12 @@ TEXTS = {
                                                "немає даних: потрібні права адміністратора",
                                                "keine Daten: Administratorrechte nötig"),
     "сейчас": ("now", "зараз", "jetzt"),
+    "Температура GPU": ("GPU temperature", "Температура GPU", "GPU-Temperatur"),
+    "Загрузка GPU": ("GPU load", "Завантаження GPU", "GPU-Auslastung"),
+    "Занято памяти": ("Memory used", "Зайнято пам'яті", "RAM belegt"),
+    "Приём": ("Download", "Прийом", "Download"),
+    "Отдача": ("Upload", "Віддача", "Upload"),
+    "Сохранить CSV": ("Save CSV", "Зберегти CSV", "CSV speichern"),
     "Нажми, чтобы закрыть": ("Click to close", "Натисни, щоб закрити", "Klicken zum Schließen"),
 
     # FPS
