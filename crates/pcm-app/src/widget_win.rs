@@ -22,8 +22,8 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_CONTROL,
-    VK_SHIFT,
+    GetKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE,
+    TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey, VK_CONTROL, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -32,6 +32,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 
 use crate::collect::{self, Shared, WM_APP_DATA};
 use crate::layered::{self, Surface};
+use crate::tray::{self, Tray, WM_APP_TRAY};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
 const EDGE: f32 = 6.0;
@@ -137,6 +138,7 @@ struct App {
     /// Hidden because of it (the "hide" mode).
     game_hidden: bool,
     tab: TabState,
+    tray: Option<Tray>,
 }
 
 thread_local! {
@@ -255,7 +257,7 @@ impl App {
 
     /// Draw the latest data and hand it to the window (premultiplied BGRA).
     fn present(&mut self) {
-        if self.game_hidden || (self.cfg.tucked && self.tab.slide.is_none()) {
+        if !self.cfg.widget || self.game_hidden || (self.cfg.tucked && self.tab.slide.is_none()) {
             return; // drawn again when it comes back
         }
         let Some(mut data) = self.data.clone() else { return };
@@ -616,6 +618,32 @@ impl App {
         }
     }
 
+    /// Show or hide the widget (and its tab); the tray icons stay.
+    fn set_widget(&mut self, on: bool) {
+        self.cfg.widget = on;
+        self.save();
+        if on {
+            if self.cfg.tucked {
+                self.tab_render();
+            } else {
+                unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
+                self.apply_pin();
+                self.present();
+            }
+        } else {
+            unsafe { ShowWindow(self.hwnd, SW_HIDE) };
+            self.tab_hide();
+        }
+    }
+
+    fn update_tray(&mut self) {
+        let scale = self.theme().scale();
+        if let (Some(t), Some(d)) = (&mut self.tray, &self.data) {
+            t.set_kinds(&self.cfg.tray);
+            t.update(d, &mut self.fonts, &scale);
+        }
+    }
+
     fn save(&self) {
         let _ = self.cfg.save(&self.cfg_path);
     }
@@ -649,7 +677,9 @@ impl App {
         let b = self.boxes.clone();
         if inside(&b.close, x, y) {
             if self.close_armed {
-                unsafe { DestroyWindow(self.hwnd) };
+                self.close_armed = false;
+                self.set_widget(false);
+                return;
             } else {
                 // the first click asks for a second one
                 self.close_armed = true;
@@ -684,6 +714,8 @@ impl App {
         const COMPACT: usize = 1;
         const TOPMOST: usize = 2;
         const CLOSE: usize = 3;
+        const WIDGET: usize = 4;
+        const TRAY: usize = 60;
         const THEME: usize = 10;
         const SIZE: usize = 20;
         const ALPHA: usize = 30;
@@ -696,6 +728,13 @@ impl App {
         unsafe {
             let m = CreatePopupMenu();
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
+            let widget_text = if self.cfg.widget {
+                "Спрятать виджет (Ctrl+Alt+W)"
+            } else {
+                "Показать виджет (Ctrl+Alt+W)"
+            };
+            AppendMenuW(m, MF_STRING, WIDGET, wide(widget_text).as_ptr());
+            AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING | check(self.cfg.compact), COMPACT, wide("Компактный режим").as_ptr());
             let top_flags = MF_STRING | check(self.cfg.topmost) | if self.cfg.pinned { MF_GRAYED } else { 0 };
             AppendMenuW(m, top_flags, TOPMOST, wide("Поверх окон").as_ptr());
@@ -732,8 +771,18 @@ impl App {
                 AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
+            let trm = CreatePopupMenu();
+            for (i, (key, name)) in tray::KINDS.iter().enumerate() {
+                let on = self.cfg.tray.iter().any(|k| k == key);
+                // up to 3 icons, at least one
+                let full = !on && self.cfg.tray.len() >= tray::MAX_ICONS;
+                let last = on && self.cfg.tray.len() == 1;
+                let flags = MF_STRING | check(on) | if full || last { MF_GRAYED } else { 0 };
+                AppendMenuW(trm, flags, TRAY + i, wide(name).as_ptr());
+            }
+            AppendMenuW(m, MF_POPUP, trm as usize, wide("Значки в трее").as_ptr());
             AppendMenuW(m, MF_SEPARATOR, 0, null());
-            AppendMenuW(m, MF_STRING, CLOSE, wide("Закрыть").as_ptr());
+            AppendMenuW(m, MF_STRING, CLOSE, wide("Выход").as_ptr());
             let mut pt = POINT::default();
             GetCursorPos(&mut pt);
             SetForegroundWindow(self.hwnd);
@@ -742,6 +791,23 @@ impl App {
             DestroyMenu(m);
             match cmd {
                 COMPACT => self.cfg.compact = !self.cfg.compact,
+                WIDGET => {
+                    let on = !self.cfg.widget;
+                    self.set_widget(on);
+                    return;
+                }
+                c if (TRAY..TRAY + tray::KINDS.len()).contains(&c) => {
+                    let key = tray::KINDS[c - TRAY].0.to_string();
+                    if let Some(i) = self.cfg.tray.iter().position(|k| *k == key) {
+                        self.cfg.tray.remove(i);
+                    } else {
+                        self.cfg.tray.push(key);
+                    }
+                    self.cfg.sanitize();
+                    self.save();
+                    self.update_tray();
+                    return;
+                }
                 TOPMOST => {
                     self.cfg.topmost = !self.cfg.topmost;
                     self.apply_pin();
@@ -837,6 +903,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 a.present();
                 a.tab_cpu();
+                a.update_tray();
             });
             0
         }
@@ -979,6 +1046,29 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.remember_position());
             0
         }
+        WM_APP_TRAY => {
+            match lp as u32 {
+                WM_LBUTTONUP => {
+                    with_app(|a| {
+                        let on = !a.cfg.widget;
+                        a.set_widget(on);
+                    });
+                }
+                WM_RBUTTONUP => {
+                    with_app(|a| a.menu());
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_HOTKEY => {
+            // Ctrl+Alt+W: show or hide the widget
+            with_app(|a| {
+                let on = !a.cfg.widget;
+                a.set_widget(on);
+            });
+            0
+        }
         WM_TIMER if wp == TIMER_TAB => {
             with_app(|a| a.tab_watch());
             0
@@ -1027,7 +1117,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             unsafe { PostQuitMessage(0) };
             0
         }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+        _ => {
+            let taskbar =
+                with_app(|a| a.tray.as_ref().is_some_and(|t| t.taskbar_created == msg)).unwrap_or(false);
+            if taskbar {
+                // explorer.exe restarted: the icons go in again, the pin finds the new desktop
+                with_app(|a| {
+                    if let Some(t) = &mut a.tray {
+                        t.readd();
+                    }
+                    a.apply_pin();
+                    a.update_tray();
+                });
+                return 0;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+        }
     }
 }
 
@@ -1154,15 +1259,17 @@ pub fn run() -> i32 {
                     slide: None,
                     cpu_shown: None,
                 },
+                tray: Some(Tray::new(hwnd)),
             })
         });
         collect::start(shared.clone());
         with_app(|a| a.apply_pin());
         SetTimer(hwnd, TIMER_GAMES, 1000, None);
-        let tucked = with_app(|a| a.cfg.tucked).unwrap_or(false);
-        if tucked {
+        RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'W' as u32);
+        let (tucked, visible) = with_app(|a| (a.cfg.tucked, a.cfg.widget)).unwrap_or((false, true));
+        if visible && tucked {
             with_app(|a| a.dock_at_start());
-        } else {
+        } else if visible {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
@@ -1171,6 +1278,7 @@ pub fn run() -> i32 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        UnregisterHotKey(hwnd, 1);
         APP.with(|a| a.borrow_mut().take());
         CloseHandle(mutex);
         0

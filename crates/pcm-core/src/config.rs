@@ -12,6 +12,15 @@ pub const WIDTH_MAX: u32 = 900;
 pub const STRETCH_MAX: u32 = 600;
 pub const THEMES: &[&str] = &["heat", "neon", "ice", "custom"];
 pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
+/// Readings a tray icon can show, with their menu names.
+pub const TRAY_KINDS: &[(&str, &str)] = &[
+    ("cpu", "Загрузка CPU"),
+    ("cpu_temp", "Температура CPU"),
+    ("gpu", "Загрузка видеокарты"),
+    ("gpu_temp", "Температура видеокарты"),
+    ("ram", "Память"),
+];
+pub const TRAY_MAX: usize = 3;
 /// Rows that can be switched off, with their names in the menu (1.8's SECTIONS).
 pub const SECTIONS: &[(&str, &str)] = &[
     ("cores", "Ядра"),
@@ -59,6 +68,10 @@ pub struct Config {
     pub tucked: bool,
     /// The docked side tab's top (physical px).
     pub tab_y: Option<i32>,
+    /// The widget is shown (hidden, the program stays in the tray).
+    pub widget: bool,
+    /// What the tray icons show, 1 to 3 of TRAY_KINDS.
+    pub tray: Vec<String>,
 }
 
 impl Default for Config {
@@ -80,6 +93,8 @@ impl Default for Config {
             in_games: "hide".into(),
             tucked: false,
             tab_y: None,
+            widget: true,
+            tray: vec!["cpu".into()],
         }
     }
 }
@@ -135,6 +150,13 @@ impl Config {
             self.in_games = d.in_games.clone();
         }
         self.tab_y = in_screen(self.tab_y);
+        let mut tray: Vec<String> = Vec::new();
+        for k in &self.tray {
+            if TRAY_KINDS.iter().any(|(t, _)| t == k) && !tray.contains(k) && tray.len() < TRAY_MAX {
+                tray.push(k.clone());
+            }
+        }
+        self.tray = if tray.is_empty() { d.tray.clone() } else { tray };
         self.hidden.dedup();
         self.ping_host = clean_host(&self.ping_host).unwrap_or(d.ping_host);
     }

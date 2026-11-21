@@ -7,6 +7,7 @@
 mod collect;
 mod diag;
 mod layered;
+mod tray;
 mod widget_win;
 
 fn main() {

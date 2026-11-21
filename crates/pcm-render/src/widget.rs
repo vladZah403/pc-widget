@@ -1393,6 +1393,24 @@ pub fn side_tab(
     Some(c.pm)
 }
 
+/// A tray icon `size` px square: a reading ("37", "64°") in its scale
+/// colour on a dark rounded plate, readable on light and dark taskbars.
+pub fn tray_icon(fonts: &mut Fonts, size: u32, text: &str, color: Rgb) -> Option<Pixmap> {
+    let s = size as f32;
+    let mut c = Canvas::new(size, size, 1.0)?;
+    c.rrect(0.0, 0.0, s, s, s * 0.22, CARD);
+    // the largest size the text fits at (two digits fill the icon)
+    let mut px = (s * 0.86).round();
+    while px > 6.0 && c.width(fonts, text, Style::SemiBoldCondensed, px) > s * 0.94 {
+        px -= 1.0;
+    }
+    let w = c.width(fonts, text, Style::SemiBoldCondensed, px);
+    // digits are ~0.7 em tall: centre them
+    let baseline = (s + px * 0.70) / 2.0;
+    c.text(fonts, (s - w) / 2.0, baseline, text, Style::SemiBoldCondensed, px, color);
+    Some(c.pm)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1406,6 +1424,15 @@ pub(crate) mod tests {
         let compact = View { compact: true, ..View::default() };
         assert_eq!(Renderer::layout_height(&d, &compact), HERO_H + 50.0);
         assert_eq!(Renderer::columns(792.0), 3);
+    }
+
+    #[test]
+    fn tray_icons_fit() {
+        let mut fonts = Fonts::system();
+        for size in [16, 20, 24, 32] {
+            let pm = tray_icon(&mut fonts, size, "100", (255, 0, 0)).unwrap();
+            assert_eq!((pm.width(), pm.height()), (size, size));
+        }
     }
 
     #[test]
