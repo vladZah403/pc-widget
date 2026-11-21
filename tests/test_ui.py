@@ -15,6 +15,8 @@ def widget(w, monkeypatch):
     monkeypatch.setattr(w, "save_config", lambda cfg: None)
     monkeypatch.setattr(w, "autostart_enabled", lambda name=None: False)
     monkeypatch.setattr(w, "admin_task_enabled", lambda: False)
+    # whatever is on the real screen (a game running while the tests run) must not count
+    monkeypatch.setattr(w, "fullscreen_app_active", lambda: False)
     wid = w.Widget.__new__(w.Widget)
     wid.cfg = w.sanitize_config({})
     wid.root, wid.data, wid.alert_state, wid.show_procs = root, None, {}, False
