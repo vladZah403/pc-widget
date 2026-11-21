@@ -215,10 +215,8 @@ To run from source, put the DLLs from a LibreHardwareMonitor release
 Tested on Windows 10 (1600×900, 100%).
 
 ## Code signing policy
-Windows builds are to be signed through SignPath's free program for open
-source: free code signing provided by [SignPath.io](https://about.signpath.io),
-certificate by [SignPath Foundation](https://signpath.org) (application in
-progress). Until then the releases are unsigned.
+The releases are not code-signed yet, so Windows SmartScreen may warn about
+them and Smart App Control on a fresh Windows 11 may block them.
 
 - Committers, reviewers and approvers: [vladZah403](https://github.com/vladZah403)
 - Every release is built by GitHub Actions from this repository
