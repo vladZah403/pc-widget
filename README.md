@@ -58,11 +58,7 @@ CPU history for the last hour or day, and the FPS counter in a game with the
 - **Profiles "Work" and "Game"** — each remembers its own look (compact or
   full, size, colours, rows, opacity, mini panel). Switch from the right-click
   menu; "Game" turns on by itself while a game is running and switches back
-  afterwards. Alert cards never pop up over a game (they still go to Telegram).
-- **Alerts in Telegram** — the same alerts also go to your own Telegram bot
-  (Settings → Telegram: paste the token from @BotFather, click Connect, write
-  to the bot, click Connect again). The token is kept encrypted with Windows'
-  DPAPI, readable only by your Windows user.
+  afterwards. Alert cards never pop up over a game: they show once you close it.
 - **Pin to the desktop** (📌 button): the widget lives under the windows,
   survives Win+D and can't be moved. Grey 📌 — it can be dragged.
 - **FPS in games** — a small panel in the corner of the game window (clicks go

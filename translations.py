@@ -192,43 +192,9 @@ TEXTS = {
     "Включать «Игру», когда запущена игра": ("Switch to “Game” while a game is running",
                                              "Вмикати «Гру», коли запущена гра",
                                              "„Spiel“ einschalten, solange ein Spiel läuft"),
-    "Не показывать поверх игры (только в Telegram)": ("Not over a game (Telegram only)",
-                                                      "Не показувати поверх гри (лише в Telegram)",
-                                                      "Nicht über einem Spiel (nur Telegram)"),
-
-    # Telegram
-    "это не похоже на токен бота": ("that doesn't look like a bot token", "це не схоже на токен бота",
-                                    "das sieht nicht wie ein Bot-Token aus"),
-    "Не получилось: {error}": ("Didn't work: {error}", "Не вийшло: {error}", "Hat nicht geklappt: {error}"),
-    "Бот @{bot} найден. Напиши ему любое сообщение в Telegram и нажми «Подключить» ещё раз.": (
-        "Found the bot @{bot}. Send it any message in Telegram and click “Connect” again.",
-        "Бот @{bot} знайдено. Напиши йому будь-яке повідомлення в Telegram і натисни «Підключити» ще раз.",
-        "Bot @{bot} gefunden. Schick ihm in Telegram eine Nachricht und klick nochmal auf „Verbinden“."),
-    "✅ PC Monitor подключён. Сюда будут приходить предупреждения с {pc}.": (
-        "✅ PC Monitor is connected. Alerts from {pc} will come here.",
-        "✅ PC Monitor підключено. Сюди надходитимуть попередження з {pc}.",
-        "✅ PC Monitor ist verbunden. Warnungen von {pc} kommen hierher."),
-    "Подключено: @{bot} → {who}. Проверь Telegram.": ("Connected: @{bot} → {who}. Check Telegram.",
-                                                       "Підключено: @{bot} → {who}. Перевір Telegram.",
-                                                       "Verbunden: @{bot} → {who}. Schau in Telegram."),
-    "Подключено: @{bot}": ("Connected: @{bot}", "Підключено: @{bot}", "Verbunden: @{bot}"),
-    "Не подключено": ("Not connected", "Не підключено", "Nicht verbunden"),
-    "Предупреждения (перегрев, память, батарея) будут приходить и в твой Telegram-бот, даже когда ты не у компьютера.": (
-        "Alerts (overheating, memory, battery) also go to your Telegram bot, even when you're away from the PC.",
-        "Попередження (перегрів, пам'ять, батарея) надходитимуть і в твій Telegram-бот, навіть коли ти не біля комп'ютера.",
-        "Warnungen (Überhitzung, Speicher, Akku) kommen auch in deinen Telegram-Bot, selbst wenn du nicht am PC bist."),
-    "1. В Telegram открой @BotFather, отправь /newbot и получи токен.\n2. Вставь токен сюда и нажми «Подключить».\n3. Напиши своему боту любое сообщение и нажми «Подключить» ещё раз.": (
-        "1. In Telegram open @BotFather, send /newbot and get the token.\n2. Paste the token here and click “Connect”.\n3. Send your bot any message and click “Connect” again.",
-        "1. У Telegram відкрий @BotFather, надішли /newbot і отримай токен.\n2. Встав токен сюди і натисни «Підключити».\n3. Напиши своєму боту будь-яке повідомлення і натисни «Підключити» ще раз.",
-        "1. Öffne in Telegram @BotFather, schick /newbot und hol dir den Token.\n2. Füg den Token hier ein und klick auf „Verbinden“.\n3. Schick deinem Bot eine Nachricht und klick nochmal auf „Verbinden“."),
-    "Токен бота:": ("Bot token:", "Токен бота:", "Bot-Token:"),
-    "Подключить": ("Connect", "Підключити", "Verbinden"),
-    "Присылать предупреждения в Telegram": ("Send alerts to Telegram", "Надсилати попередження в Telegram",
-                                            "Warnungen an Telegram schicken"),
-    "Отправить проверку": ("Send a test", "Надіслати перевірку", "Test senden"),
-    "Проверка: всё работает 👍": ("Test: everything works 👍", "Перевірка: усе працює 👍",
-                                  "Test: alles funktioniert 👍"),
-    "Проверяю…": ("Checking…", "Перевіряю…", "Prüfe…"),
+    "Во время игры — показать после неё": ("During a game — show after it",
+                                           "Під час гри — показати після неї",
+                                           "Während eines Spiels — danach zeigen"),
 
     # updates
     "У тебя {v}. Нажми, чтобы открыть страницу загрузки.": (

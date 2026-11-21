@@ -146,63 +146,6 @@ def test_fps_pill_second_row(w, widget):
     assert "≈" in texts and "24" in texts and "45%" in texts
 
 
-def test_secret_is_encrypted_and_comes_back(w):
-    token = "123456789:AAH-example_token_example_token_1234"
-    stored = w.protect_secret(token)
-    assert stored and token not in stored and "example_token" not in stored
-    assert w.unprotect_secret(stored) == token
-    assert w.unprotect_secret("") == "" and w.unprotect_secret("bm90LWRwYXBp") == ""  # garbage -> ''
-    assert w.sanitize_config({"tg_token": stored})["tg_token"] == stored
-
-
-def test_connect_telegram_flow(w, widget, monkeypatch):
-    calls = []
-
-    def fake_call(token, method, params=None, timeout=10):
-        calls.append((method, params))
-        if method == "getMe":
-            return {"username": "my_pc_bot"}
-        if method == "getUpdates":
-            return [{"message": {"chat": {"id": 42, "type": "private", "first_name": "Vlad"}}}] if state["msg"] else []
-        return {}
-
-    state = {"msg": False}
-    monkeypatch.setattr(w, "tg_call", fake_call)
-    token = "123456789:AAH-example_token_example_token_1234"
-    first = widget.connect_telegram(token)
-    assert "my_pc_bot" in first and widget.cfg["tg_chat"] == 0 and not widget.cfg["tg_enabled"]
-    state["msg"] = True
-    second = widget.connect_telegram(token)
-    assert widget.cfg["tg_chat"] == 42 and widget.cfg["tg_enabled"] and "Vlad" in second
-    assert w.unprotect_secret(widget.cfg["tg_token"]) == token
-    assert calls[-1][0] == "sendMessage" and calls[-1][1]["chat_id"] == 42
-
-
-def test_alert_goes_to_telegram(w, widget, monkeypatch):
-    from conftest import fake_data
-    sent = []
-
-    class Toast:
-        def show(self, *a, **k):
-            pass
-
-    class Sender:
-        def send(self, token, chat, text):
-            sent.append((token, chat, text))
-
-    widget.toast, widget.tg_sender = Toast(), Sender()
-    widget.cfg.update(alerts=True, tg_enabled=True, tg_chat=42,
-                      tg_token=w.protect_secret("123456789:AAH-example_token_example_token_1234"))
-    widget._check_alerts(fake_data(battery=(10.0, False), battery_left=None))
-    assert sent and sent[0][1] == 42 and "Батарея садится" in sent[0][2]
-
-
-def test_bad_token_is_refused_before_any_request(w):
-    import pytest as _pytest
-    with _pytest.raises(OSError):
-        w.tg_call("not a token", "getMe")
-
-
 @pytest.fixture
 def live(w, widget, monkeypatch):
     """The stub widget plus what _apply_view needs."""
@@ -253,15 +196,22 @@ def test_game_switches_profile_on_and_back(w, live, monkeypatch):
 
 def test_quiet_in_games(w, widget, monkeypatch):
     from conftest import fake_data
-    shown, sent = [], []
+    shown = []
 
     class Toast:
         def show(self, *a, **k):
             shown.append(a)
 
     widget.toast = Toast()
-    monkeypatch.setattr(widget, "_telegram", sent.append)
-    monkeypatch.setattr(widget, "_game_in_front", lambda: True)
+    state = {"game": True}
+    monkeypatch.setattr(widget, "_game_in_front", lambda: state["game"])
     widget.cfg.update(alerts=True, quiet_games=True)
-    widget._check_alerts(fake_data(battery=(10.0, False), battery_left=None))
-    assert not shown and sent  # no card over the game, Telegram still gets it
+    low = fake_data(battery=(10.0, False), battery_left=None)
+    widget._check_alerts(low)
+    widget._check_alerts(low)
+    assert not shown  # no card over the game
+    state["game"] = False
+    widget._check_alerts(low)
+    assert len(shown) == 1 and "Батарея" in shown[0][0]  # shown once the game is closed
+    widget._check_alerts(low)
+    assert len(shown) == 1
