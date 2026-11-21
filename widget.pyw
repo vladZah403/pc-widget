@@ -5005,7 +5005,8 @@ class Widget:
             self.auto_switched = False
         save_config(self.cfg)
         self._apply_view()
-        log.info("profile: %s%s", name, " (game started)" if auto else "")
+        reason = (" (game started)" if name == "game" else " (game over)") if auto else ""
+        log.info("profile: %s%s", name, reason)
 
     def _apply_view(self):
         """Bring every view setting from cfg into effect (after a profile switch)."""
