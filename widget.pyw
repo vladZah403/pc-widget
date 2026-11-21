@@ -172,6 +172,7 @@ IS_WIN11 = _windows_build() >= 22000
 # run_as_admin is off by default: the widget asks for admin rights only when the
 # user switches on temperatures in the menu (least privilege)
 DEFAULT_CONFIG = {"x": None, "y": None, "topmost": True, "alpha": 1.0, "theme": "heat",
+                  "custom_colors": ["#2ec4b6", "#e8445a"],
                   "pinned": True, "taskbar": not IS_WIN11, "alerts": True, "compact": False,
                   "run_as_admin": False, "hidden": [],
                   "alert_temp": 90, "alert_ram": 90, "alert_battery": 15,
@@ -209,6 +210,14 @@ class Scale:
         n = len(self.stops) - 1
         i = min(int(t * n), n - 1)
         return lerp(self.stops[i], self.stops[i + 1], t * n - i)
+
+
+custom_stops = list(DEFAULT_CONFIG["custom_colors"])  # the "custom" theme: low -> high
+
+
+def theme_scale(theme):
+    """Colour scale of a theme; "custom" is a gradient between the user's two colours."""
+    return Scale(custom_stops if theme == "custom" else THEMES[theme][1])
 
 
 def fmt_gb(n_bytes):
@@ -292,8 +301,12 @@ def sanitize_config(raw):
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 cfg[key] = min(1.0, max(0.3, float(v)))
         elif key == "theme":
-            if v in THEMES:
+            if v in THEMES or v == "custom":
                 cfg[key] = v
+        elif key == "custom_colors":
+            if (isinstance(v, list) and len(v) == 2
+                    and all(isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) for c in v)):
+                cfg[key] = [c.lower() for c in v]
         elif isinstance(default, bool):
             if isinstance(v, bool):
                 cfg[key] = v
@@ -2270,7 +2283,7 @@ class Renderer:
 
     def render(self, data, theme, close_hover=False, pinned=False, pin_hover=False,
                compact=False, close_armed=False, hidden=()):
-        scale = Scale(THEMES[theme][1])
+        scale = theme_scale(theme)
         P, Wl = self.PAD, self.WIDTH
         self.update_box = self.temps_box = (0, 0, 0, 0)
         if compact:
@@ -2636,7 +2649,7 @@ class TaskbarPanel:
             self._show_info()  # keep the details live while hovering
 
     def render(self, data, theme, h):
-        scale = Scale(THEMES[theme][1])
+        scale = theme_scale(theme)
         temps = data["temp_cpu"] is not None or data["temp_gpu"] is not None
         x_b = self.col_a + self.col_gap
         x_d = x_b + self.col_b + self.col_gap
@@ -2905,7 +2918,7 @@ class InfoCard(PopupCard):
 
     def render(self, data, theme):
         px, f, fv, fs = self.px, self.f, self.fv, self.fs
-        scale = Scale(THEMES[theme][1])
+        scale = theme_scale(theme)
 
         def temp(t, approx=False):
             if t is None:
@@ -3025,7 +3038,7 @@ class HistoryCard(PopupCard):
 
     def render(self, rows, theme, now):
         px = self.px
-        scale = Scale(THEMES[theme][1])
+        scale = theme_scale(theme)
         name, seconds = self.PERIODS[self.period]
         W, H = px(self.WIDTH), px(self.HEIGHT)
         img = card_image(px, W, H)
@@ -3214,6 +3227,7 @@ class Widget:
 
         self.cfg = load_config()
         set_language(self.cfg["lang"])
+        custom_stops[:] = self.cfg["custom_colors"]
         self.root = root = tk.Tk()
         root.report_callback_exception = lambda *exc: log.error("Tk callback failed", exc_info=exc)
         root.title("PC Monitor")
@@ -3368,7 +3382,7 @@ class Widget:
     def _fps_problem(self):
         """Tell why the counter can't work (after switching it on)."""
         if self.fps is not None and self.fps.error and self.toast is not None:
-            scale = Scale(THEMES[self.cfg["theme"]][1])
+            scale = theme_scale(self.cfg["theme"])
             hint = (" " + tr("Включи в меню «Права администратора (температуры)».")
                     if self.fps.needs_admin else "")
             self.toast.show(tr("FPS недоступен"), tr("Windows отказала: {error}.", error=self.fps.error) + hint,
@@ -3410,7 +3424,7 @@ class Widget:
                 if fullscreen_app_active() or streak >= 3:
                     shown = (stats, window_rect(fg))
         if shown:
-            self.fps_overlay.show(shown[0], shown[1], Scale(THEMES[self.cfg["theme"]][1]))
+            self.fps_overlay.show(shown[0], shown[1], theme_scale(self.cfg["theme"]))
         else:
             self.fps_overlay.hide()
 
@@ -3589,6 +3603,10 @@ class Widget:
         for key, (title, _) in THEMES.items():
             theme_menu.add_radiobutton(label=tr(title), value=key, variable=self.theme_var,
                                        command=self._set_theme)
+        theme_menu.add_radiobutton(label=tr("Свои"), value="custom", variable=self.theme_var,
+                                   command=self._set_theme)
+        theme_menu.add_separator()
+        theme_menu.add_command(label=tr("Выбрать свои цвета…"), command=self._pick_colors)
         menu.add_cascade(label=tr("Цвета"), menu=theme_menu)
         alpha_menu = tk.Menu(menu, tearoff=0)
         for pct in (100, 97, 90, 80, 70):
@@ -3643,6 +3661,21 @@ class Widget:
         self._draw()
         if self.taskbar is not None and self.data:
             self.taskbar.draw(self.data, self.cfg["theme"])
+
+    def _pick_colors(self):
+        """Two colour dialogs: for low and for high load; then switch to "custom"."""
+        from tkinter import colorchooser
+        picked = []
+        for title, initial in ((tr("Цвет: низкая нагрузка"), self.cfg["custom_colors"][0]),
+                               (tr("Цвет: высокая нагрузка"), self.cfg["custom_colors"][1])):
+            _, hex_color = colorchooser.askcolor(color=initial, title=title, parent=self.root)
+            if not hex_color:
+                return  # cancelled: keep everything as it was
+            picked.append(hex_color.lower())
+        self.cfg["custom_colors"] = picked
+        custom_stops[:] = picked
+        self.theme_var.set("custom")
+        self._set_theme()
 
     def _toggle_topmost(self):
         self.cfg["topmost"] = self.topmost_var.get()
@@ -3887,7 +3920,7 @@ class Widget:
         elif up.state == "error":
             self.updater = None
             url = self.updates.found[1] if self.updates.found else RELEASES_URL
-            scale = Scale(THEMES[self.cfg["theme"]][1])
+            scale = theme_scale(self.cfg["theme"])
             self.toast.show(tr("Не удалось обновить"),
                             tr("{error}. Нажми, чтобы открыть страницу загрузки.", error=up.error),
                             scale(0.75), on_click=lambda: open_in_browser(url))
@@ -3898,7 +3931,7 @@ class Widget:
         manual = self.manual_check is not None and self.updates.checks > self.manual_check
         if manual:
             self.manual_check = None
-        scale = Scale(THEMES[self.cfg["theme"]][1])
+        scale = theme_scale(self.cfg["theme"])
         if found and (manual or found[0] != self.cfg["update_seen"]):
             version = found[0]
             self.cfg["update_seen"] = version
@@ -3953,7 +3986,7 @@ class Widget:
     def _check_alerts(self, data):
         if not self.cfg["alerts"] or self.toast is None:
             return
-        scale = Scale(THEMES[self.cfg["theme"]][1])
+        scale = theme_scale(self.cfg["theme"])
         hot = scale(1.0)
         limit = self.cfg["alert_temp"]
         t = data["temp_cpu"]

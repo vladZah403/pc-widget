@@ -13,6 +13,10 @@ TEXTS = {
     "Тепло": ("Warm", "Тепло", "Warm"),
     "Неон": ("Neon", "Неон", "Neon"),
     "Лёд": ("Ice", "Лід", "Eis"),
+    "Свои": ("Custom", "Свої", "Eigene"),
+    "Выбрать свои цвета…": ("Choose custom colours…", "Вибрати свої кольори…", "Eigene Farben wählen…"),
+    "Цвет: низкая нагрузка": ("Colour: low load", "Колір: низьке навантаження", "Farbe: geringe Last"),
+    "Цвет: высокая нагрузка": ("Colour: high load", "Колір: високе навантаження", "Farbe: hohe Last"),
 
     # units
     "{v} Б/с": ("{v} B/s", "{v} Б/с", "{v} B/s"),

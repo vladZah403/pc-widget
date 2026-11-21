@@ -7,7 +7,8 @@ on the desktop and in a mini panel right on the taskbar.
 ![The widget and the process list](docs/widget.png)
 
 Every value is coloured on one "cool → hot" scale: the redder, the higher the
-load or temperature. Three palettes to choose from:
+load or temperature. Three palettes to choose from, or your own two colours
+(menu "Colours → Choose custom colours…"):
 
 ![Palettes: Warm, Neon, Ice](docs/themes.png)
 
