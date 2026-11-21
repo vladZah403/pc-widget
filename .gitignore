@@ -9,5 +9,5 @@ pc-monitor-diag.txt
 .pytest_cache/
 target/
 .cargo/
-prototypes/sensors-helper/bin/
-prototypes/sensors-helper/snapshot-*.json
+sensors-helper/bin/
+sensors-helper/snapshot-*.json

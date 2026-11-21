@@ -1,0 +1,65 @@
+# PC Monitor 2.0 (Rust): checks every push to the v2 branch and pull requests.
+# fmt, clippy and the tests, then a release build of PC-Monitor.exe and the
+# sensor helper, and `PC-Monitor.exe --diag` on GitHub's Windows machine.
+name: Rust
+
+on:
+  push:
+    branches: [v2]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  LHM_VERSION: "0.9.6"
+  # checksum of LibreHardwareMonitor.zip from that release: a changed file stops the build
+  LHM_SHA256: "086D9F1B5A99E643EDC2CFAAAC16051685B551E4C5AC0B32A57C58C0E529C001"
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Build PC-Monitor.exe
+        run: cargo build --release -p pcm-app
+
+      - name: Get LibreHardwareMonitorLib
+        shell: pwsh
+        run: |
+          $url = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v$env:LHM_VERSION/LibreHardwareMonitor.zip"
+          Invoke-WebRequest $url -OutFile lhm-release.zip
+          $hash = (Get-FileHash lhm-release.zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:LHM_SHA256) { throw "LibreHardwareMonitor.zip checksum mismatch: $hash" }
+          Expand-Archive lhm-release.zip -DestinationPath lhm-release
+          New-Item -ItemType Directory lhm | Out-Null
+          foreach ($dll in Get-Content lhm-files.txt) {
+            Copy-Item (Join-Path lhm-release $dll) lhm -ErrorAction Stop
+          }
+
+      - name: Build the sensor helper
+        shell: cmd
+        run: sensors-helper\build.bat
+
+      - name: --diag
+        shell: pwsh
+        run: |
+          $out = & target\release\PC-Monitor.exe --diag --helper sensors-helper\bin\pcm-sensors.exe | Out-String
+          Write-Output $out
+          foreach ($line in "cpu load: \d", "memory: ", "volume: C:", "process: ", "sensor helper: LHM") {
+            if ($out -notmatch $line) { throw "--diag has no '$line'" }
+          }

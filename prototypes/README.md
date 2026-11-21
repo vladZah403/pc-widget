@@ -8,7 +8,7 @@ Windows 10, no admin rights) on 2026-11-21.
 | Prototype | What it is | Result | Plan target |
 |---|---|---|---|
 | `fps/` | ETW frame counter, a port of 1.8's `FpsReader` | Same numbers as 1.8 on the same frames (dwm: 26.54 vs 26.54) | ±1 FPS in 3 games — **waiting for the game test** (`compare.bat`) |
-| `sensors-helper/` | `pcm-sensors.exe`, C# 5 / .NET Framework 4.8, LibreHardwareMonitorLib 0.9.6, JSON lines on stdout | 26 MB private, 7 ms a reading, ~0.75% of one core | helper + app ≤ 70 MB — **admin run pending** (`snapshot.bat`) |
+| `../sensors-helper/` | `pcm-sensors.exe`, C# 5 / .NET Framework 4.8, LibreHardwareMonitorLib 0.9.6, JSON lines on stdout | 26 MB private, 7 ms a reading, ~0.75% of one core | helper + app ≤ 70 MB — **admin run pending** (`snapshot.bat`) |
 | `ring-window/` | layered window, tiny-skia + fontdue card, `UpdateLayeredWindow` | 0.05% of one core, 4.6 MB private, 0.39 ms a frame | ≤ 1% CPU idle |
 | `dashboard/` | eframe 0.37 (glow) window, tiny-skia card as a texture + egui cards | open: 0.4% of one core, 102 MB private, first frame 135 ms; after closing: 46–49 MB stay in the process | open ≤ 120 MB, closed ≤ 30 MB |
 
@@ -48,5 +48,5 @@ characters, put `target-dir` outside the project in a local
 cargo build --release -p pcm-proto-fps        # FPS
 cargo build --release -p pcm-proto-ring       # ring window
 cargo build --release -p pcm-proto-dashboard  # egui window
-prototypes\sensors-helper\build.bat           # C# helper
+sensors-helper\build.bat                      # C# helper
 ```

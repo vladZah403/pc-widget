@@ -1,0 +1,14 @@
+[package]
+name = "pcm-app"
+description = "PC Monitor 2.0: PC-Monitor.exe"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "PC-Monitor"
+path = "src/main.rs"
+
+[dependencies]
+pcm-core = { path = "../pcm-core" }
+pcm-win = { path = "../pcm-win" }
