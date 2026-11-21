@@ -11,6 +11,23 @@ pub const WIDTH_STD: u32 = 264;
 pub const WIDTH_MAX: u32 = 900;
 pub const STRETCH_MAX: u32 = 600;
 pub const THEMES: &[&str] = &["heat", "neon", "ice", "custom"];
+pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
+/// Rows that can be switched off, with their names in the menu (1.8's SECTIONS).
+pub const SECTIONS: &[(&str, &str)] = &[
+    ("cores", "Ядра"),
+    ("ram", "Память"),
+    ("gpu", "Видеокарта"),
+    ("disks", "Диски"),
+    ("temps", "Температура"),
+    ("net", "Сеть"),
+    ("net_graph", "График сети"),
+    ("ping", "Пинг"),
+    ("disk_io", "Чтение и запись диска"),
+    ("battery", "Износ батареи"),
+    ("ssd", "Здоровье SSD"),
+    ("fans", "Вентиляторы"),
+    ("uptime", "Время без перезагрузки"),
+];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -36,6 +53,12 @@ pub struct Config {
     pub alpha: f32,
     pub hidden: Vec<String>,
     pub ping_host: String,
+    /// While a game or a fullscreen video is in front: "hide", "dim" or "off".
+    pub in_games: String,
+    /// Tucked behind the screen edge (only the side tab shows).
+    pub tucked: bool,
+    /// The docked side tab's top (physical px).
+    pub tab_y: Option<i32>,
 }
 
 impl Default for Config {
@@ -54,6 +77,9 @@ impl Default for Config {
             alpha: 1.0,
             hidden: Vec::new(),
             ping_host: "1.1.1.1".into(),
+            in_games: "hide".into(),
+            tucked: false,
+            tab_y: None,
         }
     }
 }
@@ -104,7 +130,11 @@ impl Config {
         self.width = self.width.clamp(WIDTH_STD, WIDTH_MAX);
         self.stretch = self.stretch.min(STRETCH_MAX);
         self.alpha = if self.alpha.is_finite() { self.alpha.clamp(0.3, 1.0) } else { 1.0 };
-        self.hidden.retain(|h| h.len() < 32);
+        self.hidden.retain(|h| SECTIONS.iter().any(|(k, _)| k == h));
+        if !IN_GAMES.contains(&self.in_games.as_str()) {
+            self.in_games = d.in_games.clone();
+        }
+        self.tab_y = in_screen(self.tab_y);
         self.hidden.dedup();
         self.ping_host = clean_host(&self.ping_host).unwrap_or(d.ping_host);
     }

@@ -40,6 +40,36 @@ const SNAP_REACH: i32 = 16;
 /// Mouse travel that turns a press into a drag (physical px).
 const DRAG_START: i32 = 4;
 const TIMER_DISARM: usize = 1;
+const TIMER_GAMES: usize = 2;
+/// Opacity while a game or a fullscreen video is in front ("dim").
+const DIM_ALPHA: f32 = 0.3;
+
+/// A window other than the desktop covers its whole monitor (a game, a video).
+fn fullscreen_app_active(own: HWND) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() || fg == own {
+            return false;
+        }
+        let mut class = [0u16; 64];
+        let n = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32) as usize;
+        let class = String::from_utf16_lossy(&class[..n]);
+        if ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class.as_str()) {
+            return false;
+        }
+        let mut r = RECT::default();
+        if GetWindowRect(fg, &mut r) == 0 {
+            return false;
+        }
+        let mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+        GetMonitorInfoW(mon, &mut mi) != 0
+            && r.left <= mi.rcMonitor.left
+            && r.top <= mi.rcMonitor.top
+            && r.right >= mi.rcMonitor.right
+            && r.bottom >= mi.rcMonitor.bottom
+    }
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -113,6 +143,10 @@ struct App {
     close_armed: bool,
     procs_armed: Option<String>,
     press: Option<Press>,
+    /// A game or a fullscreen video is in front.
+    busy: bool,
+    /// Hidden because of it (the "hide" mode).
+    game_hidden: bool,
 }
 
 thread_local! {
@@ -231,6 +265,9 @@ impl App {
 
     /// Draw the latest data and hand it to the window (premultiplied BGRA).
     fn present(&mut self) {
+        if self.game_hidden {
+            return; // drawn again when it comes back
+        }
         let Some(mut data) = self.data.clone() else { return };
         data.procs_armed = self.procs_armed.clone();
         let view = self.view();
@@ -251,7 +288,7 @@ impl App {
             let blend = BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
-                SourceConstantAlpha: (self.cfg.alpha * 255.0).round() as u8,
+                SourceConstantAlpha: (self.alpha() * 255.0).round() as u8,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
             let screen = GetDC(null_mut());
@@ -259,6 +296,29 @@ impl App {
             ReleaseDC(null_mut(), screen);
         }
         self.size_px = (w, h);
+    }
+
+    fn alpha(&self) -> f32 {
+        if self.busy && self.cfg.in_games == "dim" { self.cfg.alpha.min(DIM_ALPHA) } else { self.cfg.alpha }
+    }
+
+    /// Hide or fade the widget while a game or a fullscreen video is in
+    /// front; everything comes back when that window goes.
+    fn check_games(&mut self) {
+        let busy = fullscreen_app_active(self.hwnd);
+        let hide = busy && self.cfg.in_games == "hide";
+        let changed = busy != self.busy;
+        self.busy = busy;
+        if hide != self.game_hidden {
+            self.game_hidden = hide;
+            unsafe { ShowWindow(self.hwnd, if hide { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
+            if !hide {
+                self.apply_pin();
+                self.present();
+            }
+        } else if changed {
+            self.present(); // the opacity changes with "dim"
+        }
     }
 
     fn save(&self) {
@@ -331,8 +391,13 @@ impl App {
         const CLOSE: usize = 3;
         const THEME: usize = 10;
         const SIZE: usize = 20;
+        const ALPHA: usize = 30;
+        const GAMES: usize = 40;
+        const ROWS: usize = 50;
         let themes = [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд")];
         let sizes = [80u32, 100, 125, 150, 200];
+        let alphas = [100u32, 90, 80, 70, 60];
+        let games = [("hide", "Прятать"), ("dim", "Делать прозрачным"), ("off", "Не трогать")];
         unsafe {
             let m = CreatePopupMenu();
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
@@ -354,6 +419,24 @@ impl App {
                 );
             }
             AppendMenuW(m, MF_POPUP, sm as usize, wide("Размер").as_ptr());
+            let am = CreatePopupMenu();
+            let alpha_now = (self.cfg.alpha * 100.0).round() as u32;
+            for (i, a) in alphas.iter().enumerate() {
+                let on = check(alpha_now == *a);
+                AppendMenuW(am, MF_STRING | on, ALPHA + i, wide(&format!("{a}%")).as_ptr());
+            }
+            AppendMenuW(m, MF_POPUP, am as usize, wide("Непрозрачность").as_ptr());
+            let rm = CreatePopupMenu();
+            for (i, (key, name)) in config::SECTIONS.iter().enumerate() {
+                let on = check(!self.cfg.hidden.iter().any(|h| h == key));
+                AppendMenuW(rm, MF_STRING | on, ROWS + i, wide(name).as_ptr());
+            }
+            AppendMenuW(m, MF_POPUP, rm as usize, wide("Показывать").as_ptr());
+            let gm = CreatePopupMenu();
+            for (i, (key, name)) in games.iter().enumerate() {
+                AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
+            }
+            AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING, CLOSE, wide("Закрыть").as_ptr());
             let mut pt = POINT::default();
@@ -376,6 +459,21 @@ impl App {
                     self.cfg.theme = themes[c - THEME].0.into()
                 }
                 c if (SIZE..SIZE + sizes.len()).contains(&c) => self.cfg.size = sizes[c - SIZE],
+                c if (ALPHA..ALPHA + alphas.len()).contains(&c) => {
+                    self.cfg.alpha = alphas[c - ALPHA] as f32 / 100.0
+                }
+                c if (GAMES..GAMES + games.len()).contains(&c) => {
+                    self.cfg.in_games = games[c - GAMES].0.into();
+                    self.check_games();
+                }
+                c if (ROWS..ROWS + config::SECTIONS.len()).contains(&c) => {
+                    let key = config::SECTIONS[c - ROWS].0.to_string();
+                    if let Some(i) = self.cfg.hidden.iter().position(|h| *h == key) {
+                        self.cfg.hidden.remove(i);
+                    } else {
+                        self.cfg.hidden.push(key);
+                    }
+                }
                 _ => return,
             }
         }
@@ -584,6 +682,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.remember_position());
             0
         }
+        WM_TIMER if wp == TIMER_GAMES => {
+            with_app(|a| a.check_games());
+            0
+        }
         WM_TIMER if wp == TIMER_DISARM => {
             with_app(|a| {
                 unsafe { KillTimer(hwnd, TIMER_DISARM) };
@@ -690,10 +792,13 @@ pub fn run() -> i32 {
                 close_armed: false,
                 procs_armed: None,
                 press: None,
+                busy: false,
+                game_hidden: false,
             })
         });
         collect::start(shared.clone());
         with_app(|a| a.apply_pin());
+        SetTimer(hwnd, TIMER_GAMES, 1000, None);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
         let mut msg: MSG = std::mem::zeroed();
