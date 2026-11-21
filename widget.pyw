@@ -3019,13 +3019,14 @@ class HistoryCard(PopupCard):
         px = self.px
         pitch = (x1 - x0) / len(cols)
         for i, col in enumerate(cols):
-            bx = x0 + i * pitch
-            d.rectangle((px(bx), px(y0), px(bx + pitch * 0.7), px(y1)), fill=HIST_TRACK)
+            # whole device pixels, every bar the same width with a 1 px gap
+            bx0, bx1 = px(x0 + i * pitch), px(x0 + (i + 1) * pitch) - 2
+            d.rectangle((bx0, px(y0), bx1, px(y1)), fill=HIST_TRACK)
             if col is None:
                 continue
             t = max(0.0, min(1.0, (col[0] - lo) / (hi - lo)))
             top = y1 - max(1.0, (y1 - y0) * t)
-            d.rectangle((px(bx), px(top), px(bx + pitch * 0.7), px(y1)), fill=scale(t))
+            d.rectangle((bx0, px(top), bx1, px(y1)), fill=scale(t))
 
     def _summary(self, rows, index, unit, lo, hi, scale):
         values = [r[index] for r in rows if r[index] is not None]
