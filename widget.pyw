@@ -2391,35 +2391,42 @@ class Renderer:
             return self.px(178)
         return self.px(HERO_H + sum(h for h, _ in self._sections(data, hidden)))
 
-    def _compact_rows(self, texts, data, scale, y):
-        """Two lines of short readings under the CPU block (compact mode)."""
+    def _compact_rows(self, d, texts, data, scale, y):
+        """Compact mode: two rows of three readings under the CPU block, each an icon
+        and a value in even columns (the same icons as the full widget)."""
         P, Wl = self.PAD, self.WIDTH
-
-        def chip(name, value, color, approx=False):
-            head = [(f"{name} ", self.f_small, DIM)]
-            if value is None:
-                return head + [("—", self.f_value, FAINT)]
-            return head + ([("≈", self.f_sym, color)] if approx else []) + [(value, self.f_value, color)]
-
+        col = (Wl - 2 * P) / 3
         load = data.get("gpu_load")
         disk_pct = data["disks"][0][3] if data["disks"] else None
-        row1 = [chip(tr("Память"), f"{data['ram_pct']:.0f}%", scale(data["ram_pct"] / 100)),
-                chip(tr("Видео"), None if load is None else f"{load:.0f}%",
-                     scale((load or 0) / 100)),
-                chip(tr("Диск"), None if disk_pct is None else f"{disk_pct:.0f}%",
-                     scale((disk_pct or 0) / 100))]
         cpu_t, gpu_t = data["temp_cpu"], data["temp_gpu"]
         shared = bool(data.get("gpu_shared")) and gpu_t is None and cpu_t is not None
         g = cpu_t if shared else gpu_t
         ping, ready = data.get("ping"), data.get("ping_ready")
-        row2 = [chip("CPU", None if cpu_t is None else f"{cpu_t:.0f}°", scale(((cpu_t or 30) - 30) / 70)),
-                chip("GPU", None if g is None else f"{g:.0f}°", scale(((g or 30) - 30) / 70), shared),
-                chip(tr("Пинг"), None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
-                     ping_color(scale, ping))]
-        for row, by in ((row1, y + 14), (row2, y + 34)):
-            texts.append(("rich_left", P, by, row[0]))
-            texts.append(("rich_center", Wl / 2, by, row[1]))
-            texts.append(("rich", Wl - P, by, row[2]))
+        heat = lambda t: scale(((t or 30) - 30) / 70)
+        pct = lambda v: None if v is None else f"{v:.0f}%"
+        deg = lambda v: None if v is None else f"{v:.0f}°"
+        rows = [
+            [("ram", None, pct(data["ram_pct"]), scale(data["ram_pct"] / 100), False),
+             ("gpu", None, pct(load), scale((load or 0) / 100), False),
+             ("disk", None, pct(disk_pct), scale((disk_pct or 0) / 100), False)],
+            [("temp", "CPU", deg(cpu_t), heat(cpu_t), False),
+             ("temp", "GPU", deg(g), heat(g), shared),
+             ("ping", None, None if not ready else (tr("нет") if ping is None else tr("{v} мс", v=ping)),
+              ping_color(scale, ping), False)],
+        ]
+        for r, row in enumerate(rows):
+            by = y + 16 + r * 22
+            for c, (icon, name, value, color, approx) in enumerate(row):
+                x = P + c * col
+                self._icon(d, icon, x, by - 4.4, DIM)
+                parts = [(name + " ", self.f_small, DIM)] if name else []
+                if value is None:
+                    parts.append(("—", self.f_value, FAINT))
+                else:
+                    if approx:
+                        parts.append(("≈", self.f_sym, color))
+                    parts.append((value, self.f_value, color))
+                texts.append(("rich_left", x + self.ICON_W, by, parts))
 
     @staticmethod
     def _temps_online(data):
@@ -2483,7 +2490,7 @@ class Renderer:
             texts.append(("rich", Wl - P, hero_base + 18, [(extra, self.f_small, DIM)]))
         if compact:
             self.hero_box = (0, 0, 0, 0)  # no process list in compact mode
-            self._compact_rows(texts, data, scale, HERO_H)
+            self._compact_rows(d, texts, data, scale, HERO_H)
             return self._compose(card, layer, texts)
         chev_x = P + self.f_small.getlength(cpu_label + " ") / self.s
         texts.append((chev_x, hero_base + 18, "▴" if procs is not None else "▾", self.f_sym, DIM, "ls"))
