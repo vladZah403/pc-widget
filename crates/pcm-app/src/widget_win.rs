@@ -65,6 +65,9 @@ const TOAST_MS: u32 = 9000;
 const TUCK_MS: f32 = 180.0;
 /// Opacity while a game or a fullscreen video is in front ("dim").
 const DIM_ALPHA: f32 = 0.3;
+/// A game in front this long switches to the "game" profile; gone this long, back.
+const GAME_ON: std::time::Duration = std::time::Duration::from_secs(3);
+const GAME_OFF: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A window other than the desktop covers its whole monitor (a game, a video).
 fn fullscreen_app_active(own: HWND) -> bool {
@@ -182,6 +185,12 @@ struct App {
     report: ReportWin,
     /// The alert card on screen tells about this session: a click opens its report.
     toast_session: Option<PathBuf>,
+    /// Since when a game is in front / since when none is (the automatic profile).
+    game_seen: Option<std::time::Instant>,
+    game_gone: Option<std::time::Instant>,
+    /// "game" was switched on by a game, not by hand: it goes when the game does.
+    auto_switched: bool,
+    back_to: String,
 }
 
 thread_local! {
@@ -324,6 +333,46 @@ impl App {
 
     /// Hide or fade the widget while a game or a fullscreen video is in
     /// front; everything comes back when that window goes.
+    /// "game" while a game is in front (after GAME_ON), back after GAME_OFF
+    /// without one, if it was a game that switched it on.
+    fn auto_profile(&mut self) {
+        if !self.cfg.auto_game {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.busy {
+            let seen = *self.game_seen.get_or_insert(now);
+            self.game_gone = None;
+            if self.cfg.profile != "game" && now - seen >= GAME_ON {
+                self.back_to = self.cfg.profile.clone();
+                self.switch_profile("game", true);
+                self.auto_switched = true;
+            }
+        } else {
+            self.game_seen = None;
+            let gone = *self.game_gone.get_or_insert(now);
+            if self.auto_switched && self.cfg.profile == "game" && now - gone >= GAME_OFF {
+                self.auto_switched = false;
+                let back = self.back_to.clone();
+                self.switch_profile(&back, true);
+            }
+        }
+    }
+
+    fn switch_profile(&mut self, name: &str, auto: bool) {
+        if !self.cfg.switch_profile(name) {
+            return;
+        }
+        if !auto {
+            self.auto_switched = false;
+        }
+        self.save();
+        // the other look: pin, panel, then the widget itself
+        self.apply_pin();
+        self.update_panel();
+        self.present();
+    }
+
     fn check_games(&mut self) {
         let busy = self.game_fps || fullscreen_app_active(self.hwnd);
         let hide = busy && self.cfg.in_games == "hide";
@@ -349,6 +398,7 @@ impl App {
                 }
             }
         }
+        self.auto_profile();
     }
 
     // --- the side tab ---
@@ -977,6 +1027,8 @@ impl App {
         const FPS: usize = 7;
         const FPS_PANEL: usize = 8;
         const LAST_SESSION: usize = 9;
+        const AUTO_GAME: usize = 11;
+        const PROFILE: usize = 90;
         const CORNER: usize = 70;
         const FPS_SIZE: usize = 80;
         let themes = [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд")];
@@ -1031,6 +1083,19 @@ impl App {
                 AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
+            let pm = CreatePopupMenu();
+            for (i, (key, name)) in [("work", "Работа"), ("game", "Игра")].iter().enumerate() {
+                AppendMenuW(
+                    pm,
+                    MF_STRING | check(self.cfg.profile == *key),
+                    PROFILE + i,
+                    wide(name).as_ptr(),
+                );
+            }
+            AppendMenuW(pm, MF_SEPARATOR, 0, null());
+            let auto_text = wide("Включать «Игру», когда запущена игра");
+            AppendMenuW(pm, MF_STRING | check(self.cfg.auto_game), AUTO_GAME, auto_text.as_ptr());
+            AppendMenuW(m, MF_POPUP, pm as usize, wide("Профиль").as_ptr());
             let fm = CreatePopupMenu();
             if let Some(game) = self.recorder.game() {
                 // which game is being recorded (a line to read, not a command)
@@ -1096,6 +1161,15 @@ impl App {
                     if let Some(p) = last {
                         self.open_report(&p);
                     }
+                    return;
+                }
+                c if (PROFILE..PROFILE + config::PROFILES.len()).contains(&c) => {
+                    self.switch_profile(config::PROFILES[c - PROFILE], false);
+                    return;
+                }
+                AUTO_GAME => {
+                    self.cfg.auto_game = !self.cfg.auto_game;
+                    self.save();
                     return;
                 }
                 c if (CORNER..CORNER + corners.len()).contains(&c) => {
@@ -1828,6 +1902,10 @@ pub fn run(report: Option<String>) -> i32 {
                 sessions_done: Arc::new(Mutex::new(Vec::new())),
                 report: ReportWin::new(report_hwnd),
                 toast_session: None,
+                game_seen: None,
+                game_gone: None,
+                auto_switched: false,
+                back_to: "work".into(),
             })
         });
         collect::start(shared.clone());

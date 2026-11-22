@@ -2,6 +2,8 @@
 //! unknown keys are ignored, bad values fall back to their defaults
 //! (1.8's sanitize_config).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 pub const SIZE_MIN: u32 = 80;
@@ -16,6 +18,30 @@ pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
 pub const FPS_CORNERS: &[&str] = &["tl", "tr", "bl", "br"];
 /// FPS panel sizes in %.
 pub const FPS_SIZES: &[u32] = &[100, 125, 150];
+/// "work" and "game": each remembers how the widget looks.
+pub const PROFILES: &[&str] = &["work", "game"];
+
+/// What a profile remembers (1.8's PROFILE_KEYS).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfileView {
+    pub compact: bool,
+    pub hidden: Vec<String>,
+    pub size: u32,
+    pub width: u32,
+    pub stretch: u32,
+    pub theme: String,
+    pub alpha: f32,
+    pub taskbar: Option<bool>,
+    pub pinned: bool,
+    pub topmost: bool,
+}
+
+impl Default for ProfileView {
+    fn default() -> Self {
+        Config::default().view()
+    }
+}
 /// Readings a tray icon can show, with their menu names.
 pub const TRAY_KINDS: &[(&str, &str)] = &[
     ("cpu", "Загрузка CPU"),
@@ -98,6 +124,12 @@ pub struct Config {
     pub fps_corner: String,
     /// One of FPS_SIZES.
     pub fps_size: u32,
+    /// One of PROFILES.
+    pub profile: String,
+    /// Switch to "game" while a game is in front, back after it.
+    pub auto_game: bool,
+    /// The saved look of each profile (last: TOML puts tables after values).
+    pub profiles: BTreeMap<String, ProfileView>,
 }
 
 impl Default for Config {
@@ -132,6 +164,9 @@ impl Default for Config {
             fps_panel: true,
             fps_corner: "tl".into(),
             fps_size: 100,
+            profile: "work".into(),
+            auto_game: true,
+            profiles: BTreeMap::new(),
         }
     }
 }
@@ -206,6 +241,74 @@ impl Config {
         if !FPS_SIZES.contains(&self.fps_size) {
             self.fps_size = d.fps_size;
         }
+        if !PROFILES.contains(&self.profile.as_str()) {
+            self.profile = d.profile.clone();
+        }
+        // each saved look is checked like the settings themselves
+        let profiles = std::mem::take(&mut self.profiles);
+        for (name, view) in profiles {
+            if PROFILES.contains(&name.as_str()) {
+                let mut c = Config::default();
+                c.apply_view(&view);
+                c.sanitize();
+                self.profiles.insert(name, c.view());
+            }
+        }
+    }
+
+    /// How the widget looks now.
+    pub fn view(&self) -> ProfileView {
+        ProfileView {
+            compact: self.compact,
+            hidden: self.hidden.clone(),
+            size: self.size,
+            width: self.width,
+            stretch: self.stretch,
+            theme: self.theme.clone(),
+            alpha: self.alpha,
+            taskbar: self.taskbar,
+            pinned: self.pinned,
+            topmost: self.topmost,
+        }
+    }
+
+    pub fn apply_view(&mut self, v: &ProfileView) {
+        self.compact = v.compact;
+        self.hidden = v.hidden.clone();
+        self.size = v.size;
+        self.width = v.width;
+        self.stretch = v.stretch;
+        self.theme = v.theme.clone();
+        self.alpha = v.alpha;
+        self.taskbar = v.taskbar;
+        self.pinned = v.pinned;
+        self.topmost = v.topmost;
+    }
+
+    /// The saved look of a profile; "game" starts as the compact widget.
+    pub fn profile_view(&self, name: &str) -> ProfileView {
+        if let Some(v) = self.profiles.get(name) {
+            return v.clone();
+        }
+        let mut v = self.view();
+        if name == "game" {
+            v.compact = true;
+        }
+        v
+    }
+
+    /// Remember the current look as the current profile's and take on
+    /// `name`'s. False when `name` already is the profile.
+    pub fn switch_profile(&mut self, name: &str) -> bool {
+        if name == self.profile || !PROFILES.contains(&name) {
+            return false;
+        }
+        self.profiles.insert(self.profile.clone(), self.view());
+        let v = self.profile_view(name);
+        self.profile = name.to_string();
+        self.apply_view(&v);
+        self.sanitize();
+        true
     }
 
     /// Settings from TOML text; a broken file gives the defaults.
@@ -260,11 +363,30 @@ mod tests {
         assert_eq!(c.ping_host, "eu.battle.net");
         assert_eq!(Config::parse("size = 999").size, 200);
         assert_eq!(Config::parse("ping_host = \"bad host!\"").ping_host, "1.1.1.1");
-        let f = Config::parse(
-            "fps_corner = \"middle\"
-fps_size = 110",
-        );
+        let f = Config::parse("fps_corner = \"middle\"\nfps_size = 110");
         assert_eq!((f.fps_corner.as_str(), f.fps_size), ("tl", 100));
         assert_eq!(Config::parse("fps_corner = \"br\"").fps_corner, "br");
+        assert_eq!(Config::parse("profile = \"party\"").profile, "work");
+    }
+
+    #[test]
+    fn profiles_remember_the_look() {
+        let mut c = Config { size: 150, theme: "ice".into(), ..Config::default() };
+        assert!(c.switch_profile("game"));
+        assert!(c.compact, "game starts compact");
+        assert_eq!((c.size, c.theme.as_str()), (150, "ice"), "the rest as it was");
+        c.size = 100;
+        assert!(!c.switch_profile("game"), "already there");
+        assert!(c.switch_profile("work"));
+        assert_eq!((c.compact, c.size), (false, 150), "work's look is back");
+        assert!(c.switch_profile("game"));
+        assert_eq!((c.compact, c.size), (true, 100), "game's saved look");
+        // the profiles survive the file, and a broken saved look is fixed
+        let back = Config::parse(&c.to_toml());
+        assert_eq!(back, c);
+        let odd =
+            Config::parse("[profiles.game]\nsize = 999\ntheme = \"pink\"\n[profiles.party]\nsize = 100\n");
+        assert_eq!(odd.profiles.len(), 1);
+        assert_eq!((odd.profiles["game"].size, odd.profiles["game"].theme.as_str()), (200, "heat"));
     }
 }
