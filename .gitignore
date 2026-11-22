@@ -4,6 +4,7 @@ tools/
 lhm/
 build/
 dist/
+dist2/
 *.spec
 pc-monitor-diag.txt
 .pytest_cache/

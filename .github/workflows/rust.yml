@@ -36,6 +36,9 @@ jobs:
         run: cargo test --workspace
 
       - name: Build PC-Monitor.exe
+        # the C runtime inside the exe: no Visual C++ redistributable needed on users' PCs
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p pcm-app
 
       - name: Get LibreHardwareMonitorLib
@@ -58,8 +61,30 @@ jobs:
       - name: --diag
         shell: pwsh
         run: |
-          $out = & target\release\PC-Monitor.exe --diag --helper sensors-helper\bin\pcm-sensors.exe | Out-String
+          # a Windows program (no console of its own): wait for it, read what it wrote
+          Start-Process target\release\PC-Monitor.exe -Wait -NoNewWindow `
+            -ArgumentList "--diag", "--helper", "sensors-helper\bin\pcm-sensors.exe", "--out", "diag.txt"
+          $out = Get-Content diag.txt -Raw
           Write-Output $out
           foreach ($line in "cpu load: \d", "memory: ", "volume: C:", "process: ", "sensor helper: LHM") {
             if ($out -notmatch $line) { throw "--diag has no '$line'" }
           }
+
+      - name: Package PC-Monitor.zip
+        shell: pwsh
+        run: |
+          ./package.ps1
+          # the shape 1.8's updater accepts: PC-Monitor/PC-Monitor.exe and PC-Monitor/_internal/
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead("$PWD/dist2/PC-Monitor.zip")
+          $names = $zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+          $zip.Dispose()
+          foreach ($need in "PC-Monitor/PC-Monitor.exe", "PC-Monitor/_internal/pcm-sensors.exe", "PC-Monitor/_internal/LibreHardwareMonitorLib.dll") {
+            if ($names -notcontains $need) { throw "PC-Monitor.zip has no $need" }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PC-Monitor-2
+          path: dist2/PC-Monitor.zip
+          retention-days: 14

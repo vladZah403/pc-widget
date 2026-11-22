@@ -6,6 +6,12 @@
 //! `--session FILE` prints a game session's summary; `--report FILE` starts
 //! the widget with that session's report open; `--dashboard` is the PC
 //! Monitor window (the widget starts it and feeds it on stdin).
+//!
+//! A Windows program (no console window of its own); the commands that print
+//! write to the console they were started from.
+
+// tests keep the console: their output goes there
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod alerts;
 mod collect;
@@ -29,8 +35,32 @@ pub fn apply_language(setting: &str) {
     pcm_render::format::set_language(code);
 }
 
+/// The version of this build, "2.0.0".
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Print to the console that started us (cmd, PowerShell), when there is one
+/// and our output isn't already going somewhere (a pipe, a file).
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if out.is_null() || out == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| ["--diag", "--session", "--png", "--version"].contains(&a.as_str())) {
+        attach_console();
+    }
+    if args.iter().any(|a| a == "--version") {
+        println!("PC Monitor {APP_VERSION}");
+        std::process::exit(0);
+    }
     if args.iter().any(|a| a == "--dashboard") {
         let tab = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)?.parse().ok());
         let offscreen = args.iter().any(|a| a == "--offscreen");
