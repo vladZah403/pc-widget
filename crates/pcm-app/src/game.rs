@@ -21,6 +21,8 @@ use crate::layered::{self, Surface};
 
 /// Processes whose frames are not a game's (browsers, chats, players, shell).
 pub const FPS_IGNORE: &[&str] = &[
+    // our own window (`--dashboard`, a child process) draws frames too
+    "pc-monitor",
     "chrome",
     "msedge",
     "firefox",

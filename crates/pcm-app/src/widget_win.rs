@@ -501,15 +501,19 @@ impl App {
         self.busy = busy;
         if hide != self.game_hidden {
             self.game_hidden = hide;
-            unsafe { ShowWindow(self.hwnd, if hide { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
-            if !hide {
+            // back after the game only if it was shown before: not when closed by × or tucked
+            let show = !hide && self.cfg.widget && !self.cfg.tucked;
+            if hide || show {
+                unsafe { ShowWindow(self.hwnd, if hide { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
+            }
+            if show {
                 self.apply_pin();
                 self.present();
             }
         } else if changed {
             self.present(); // the opacity changes with "dim"
         }
-        if self.cfg.tucked && self.tab.slide.is_none() {
+        if self.cfg.widget && self.cfg.tucked && self.tab.slide.is_none() {
             let hide_tab = busy && self.cfg.in_games != "off";
             if hide_tab == self.tab.visible {
                 if hide_tab {
