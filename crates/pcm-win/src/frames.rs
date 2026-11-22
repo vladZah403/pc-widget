@@ -170,8 +170,12 @@ impl FrameCounter {
                 let mut logger = wide(SESSION);
                 let mut logfile: EVENT_TRACE_LOGFILEW = unsafe { zeroed() };
                 logfile.LoggerName = logger.as_mut_ptr();
-                logfile.Anonymous1.ProcessTraceMode =
-                    PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+                // RAW_TIMESTAMP: event times stay on the QPC clock (ClientContext 1), the
+                // clock of now_s(); without it ETW turns them into system time (FILETIME),
+                // which only looks right because both tick 10 MHz on Windows 10/11
+                logfile.Anonymous1.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME
+                    | PROCESS_TRACE_MODE_EVENT_RECORD
+                    | PROCESS_TRACE_MODE_RAW_TIMESTAMP;
                 logfile.Anonymous2.EventRecordCallback = Some(on_event);
                 logfile.Context = context as *mut _;
                 let trace = unsafe { OpenTraceW(&mut logfile) };

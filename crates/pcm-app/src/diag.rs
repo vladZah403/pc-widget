@@ -300,12 +300,25 @@ pub fn run(args: &[String]) -> i32 {
             while f.frames().map.is_empty() && started.elapsed() < Duration::from_millis(4000) {
                 std::thread::sleep(Duration::from_millis(100));
             }
-            let n = f.frames().map.len();
+            let (n, newest) = {
+                let fr = f.frames();
+                let newest = fr.map.values().filter_map(|v| v.last().copied()).reduce(f64::max);
+                (fr.map.len(), newest)
+            };
+            // frame times must be on now_s()'s clock: session samples are matched with them
+            let clock = newest.map_or("no frames".to_string(), |t| {
+                let lag = now_s() - t;
+                format!(
+                    "{} (newest frame {lag:.2} s ago)",
+                    if (0.0..5.0).contains(&lag) { "ok" } else { "WRONG" }
+                )
+            });
             let _ = writeln!(
                 w,
-                "fps: ETW session ok, kernel provider {}, {} drawing program(s) seen",
+                "fps: ETW session ok, kernel provider {}, {} drawing program(s) seen, clock {}",
                 if f.kernel_ok { "ok" } else { "refused" },
-                n
+                n,
+                clock
             );
         }
         Err(e) => {
