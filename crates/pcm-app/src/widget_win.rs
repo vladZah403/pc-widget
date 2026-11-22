@@ -30,8 +30,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// The mouse left the window (TrackMouseEvent); from CommCtrl.h.
 const WM_MOUSELEAVE: u32 = 0x02A3;
-/// Put the side tab beside the widget again (a move it missed).
-const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
@@ -59,6 +57,8 @@ const TIMER_SLIDE: usize = 4;
 const TIMER_TOAST: usize = 5;
 /// The FPS panel follows the game 4 times a second.
 const TIMER_FPS: usize = 6;
+/// Put the side tab beside the widget again (a move it missed while busy).
+const TIMER_FOLLOW: usize = 7;
 const HOTKEY_WIDGET: i32 = 1;
 const HOTKEY_FPS: i32 = 2;
 /// An alert card stays this long (ms) unless clicked.
@@ -1835,13 +1835,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.remember_position());
             0
         }
-        WM_WINDOWPOSCHANGED | WM_APP_FOLLOW => {
+        WM_WINDOWPOSCHANGED => {
             if with_app(|a| a.tab_follow()).is_none() {
-                // sent while the app is busy (a Shell call waiting on explorer
-                // lets it in): try again right after
-                unsafe { PostMessageW(hwnd, WM_APP_FOLLOW, 0, 0) };
+                // sent while the app is busy (a Shell call waiting on explorer, the
+                // menu's loop): try again later. A timer, not a posted message: a
+                // message posted again and again outruns the mouse (the menu froze)
+                unsafe { SetTimer(hwnd, TIMER_FOLLOW, 50, None) };
             }
-            if msg == WM_APP_FOLLOW { 0 } else { unsafe { DefWindowProcW(hwnd, msg, wp, lp) } }
+            unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+        }
+        WM_TIMER if wp == TIMER_FOLLOW => {
+            if with_app(|a| a.tab_follow()).is_some() {
+                unsafe { KillTimer(hwnd, TIMER_FOLLOW) };
+            }
+            0
         }
         WM_APP_TRAY => {
             match lp as u32 {
