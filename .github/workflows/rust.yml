@@ -122,7 +122,9 @@ jobs:
           $mem = $proc.PrivateMemorySize64 / 1MB
           $h = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id) and Name='pcm-sensors.exe'"
           $hmem = if ($h) { (Get-Process -Id $h.ProcessId).PrivateMemorySize64 / 1MB } else { 0 }
-          "idle 2 min: CPU {0:N2}% of one core, {1:N1} MB private; sensor helper {2:N1} MB" -f $cpu, $mem, $hmem
+          $line = "idle 2 min: CPU {0:N2}% of one core, {1:N1} MB private; sensor helper {2:N1} MB; exe {3:N1} MB" -f $cpu, $mem, $hmem, $mb
+          # an annotation: readable on the run's page and through GitHub's public API
+          "::notice title=Targets::$line"
           Stop-Process -Id $p.Id -Force
           if ($h) { Stop-Process -Id $h.ProcessId -Force -ErrorAction SilentlyContinue }
           if ($cpu -gt 1) { throw "idle CPU over 1% of one core" }
