@@ -5,8 +5,91 @@ use tiny_skia::{
     Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform,
 };
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use crate::text::{Font, Fonts, Style};
 use crate::theme::Rgb;
+
+/// A filled (rounded) rectangle drawn once and blended in again on every
+/// frame that has the same one: the widget draws a few hundred of them a
+/// second (bar segments, graph columns, the card), and building and filling
+/// each path again was most of its idle CPU. Sizes and radii in 1/8 px,
+/// the position's fraction in 1/4 px (its edges are anti-aliased).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SpriteKey {
+    w: i32,
+    h: i32,
+    r: i32,
+    fx: u8,
+    fy: u8,
+    color: Rgb,
+}
+
+/// Premultiplied RGBA, `w` px wide.
+struct Sprite {
+    data: Vec<u8>,
+    w: usize,
+    h: usize,
+}
+
+/// Sprites kept: dropped all at once past this many bytes (a resize or a
+/// scale change leaves the old sizes unused).
+const SPRITE_BYTES: usize = 8 << 20;
+
+thread_local! {
+    static SPRITES: RefCell<(HashMap<SpriteKey, Rc<Sprite>>, usize)> = RefCell::new((HashMap::new(), 0));
+}
+
+fn sprite(key: SpriteKey) -> Option<Rc<Sprite>> {
+    if let Some(s) = SPRITES.with(|c| c.borrow().0.get(&key).cloned()) {
+        return Some(s);
+    }
+    let (fx, fy) = (key.fx as f32 / 4.0, key.fy as f32 / 4.0);
+    let (w, h, r) = (key.w as f32 / 8.0, key.h as f32 / 8.0, key.r as f32 / 8.0);
+    let (pw, ph) = ((fx + w).ceil() as u32, (fy + h).ceil() as u32);
+    let mut pm = Pixmap::new(pw.max(1), ph.max(1))?;
+    let path = rounded_rect(fx, fy, fx + w, fy + h, r)?;
+    pm.fill_path(&path, &paint(key.color), FillRule::Winding, Transform::identity(), None);
+    let s = Rc::new(Sprite { w: pm.width() as usize, h: pm.height() as usize, data: pm.take() });
+    SPRITES.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.1 + s.data.len() > SPRITE_BYTES {
+            *c = (HashMap::new(), 0);
+        }
+        c.1 += s.data.len();
+        c.0.insert(key, s.clone());
+    });
+    Some(s)
+}
+
+/// Source-over of premultiplied `s` onto the pixmap at (x, y), clipped.
+fn blit(pm: &mut Pixmap, s: &Sprite, x: i32, y: i32) {
+    let (pw, ph) = (pm.width() as i32, pm.height() as i32);
+    let (x0, x1) = (x.max(0), (x + s.w as i32).min(pw));
+    let (y0, y1) = (y.max(0), (y + s.h as i32).min(ph));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let data = pm.data_mut();
+    for py in y0..y1 {
+        let src = &s.data[((py - y) as usize * s.w + (x0 - x) as usize) * 4..][..(x1 - x0) as usize * 4];
+        let dst = &mut data[(py * pw + x0) as usize * 4..][..(x1 - x0) as usize * 4];
+        for (d, sp) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+            match sp[3] {
+                0 => {}
+                255 => *d = *sp,
+                a => {
+                    let keep = 255 - a as u32;
+                    for i in 0..4 {
+                        d[i] = (sp[i] as u32 + (d[i] as u32 * keep + 127) / 255).min(255) as u8;
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub struct Canvas {
     pub pm: Pixmap,
@@ -87,8 +170,25 @@ impl Canvas {
 
     pub fn rrect(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, c: Rgb) {
         let (a, b, cc, d) = (self.x(x0), self.y(y0), self.x(x1), self.y(y1));
-        if let Some(p) = rounded_rect(a, b, cc, d, r * self.s) {
-            self.pm.fill_path(&p, &paint(c), FillRule::Winding, Transform::identity(), None);
+        self.fill(a, b, cc, d, r * self.s, c);
+    }
+
+    /// A filled rectangle in physical px, from the sprite cache.
+    fn fill(&mut self, a: f32, b: f32, cc: f32, d: f32, r: f32, c: Rgb) {
+        if cc - a <= 0.0 || d - b <= 0.0 {
+            return;
+        }
+        let (ax, ay) = (a.floor(), b.floor());
+        let key = SpriteKey {
+            w: ((cc - a) * 8.0).round() as i32,
+            h: ((d - b) * 8.0).round() as i32,
+            r: (r.max(0.0) * 8.0).round() as i32,
+            fx: (((a - ax) * 4.0).round() as u8).min(3),
+            fy: (((b - ay) * 4.0).round() as u8).min(3),
+            color: c,
+        };
+        if let Some(s) = sprite(key) {
+            blit(&mut self.pm, &s, ax as i32, ay as i32);
         }
     }
 
@@ -102,12 +202,11 @@ impl Canvas {
     }
 
     pub fn rect(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, c: Rgb) {
-        // as a path: fill_rect takes tiny-skia's hairline path for thin
-        // rectangles, which trips a debug assertion at some fractions
-        if let Some(r) = Rect::from_ltrb(self.x(x0), self.y(y0), self.x(x1), self.y(y1)) {
-            let p = PathBuilder::from_rect(r);
-            self.pm.fill_path(&p, &paint(c), FillRule::Winding, Transform::identity(), None);
-        }
+        // a sprite like the rounded ones (filled as a path: fill_rect takes
+        // tiny-skia's hairline path for thin rectangles, which trips a debug
+        // assertion at some fractions)
+        let (a, b, cc, d) = (self.x(x0), self.y(y0), self.x(x1), self.y(y1));
+        self.fill(a, b, cc, d, 0.0, c);
     }
 
     /// A polyline of `width` logical px.

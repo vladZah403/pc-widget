@@ -1,13 +1,16 @@
 //! Text: Bahnschrift (a variable font: weight and width axes) from the
 //! Windows fonts folder, Segoe UI when it isn't there, Segoe UI Symbol for
-//! arrows and marks; glyphs rasterized by swash once and cached.
+//! arrows and marks; glyphs rasterized by swash once and cached by
+//! character, and blended into the picture directly (the widget draws ~400
+//! glyphs a second: looking each up in the font again and drawing it through
+//! tiny-skia's pixmap pipeline was most of the idle CPU).
 
 use std::collections::HashMap;
 
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
 use swash::{FontRef, Setting};
-use tiny_skia::{Pixmap, PixmapPaint, Transform};
+use tiny_skia::Pixmap;
 
 use crate::theme::Rgb;
 
@@ -50,17 +53,19 @@ impl Face {
     }
 }
 
+/// A character in a style at a size: what a glyph is cached by.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
-    face: usize,
-    glyph: u16,
+    ch: char,
     px: u32,
     style: Style,
-    color: Rgb,
 }
 
+/// A rasterized glyph: its coverage (0-255 per pixel, `w` wide), placement
+/// and advance, in physical pixels.
 struct Glyph {
-    pm: Option<Pixmap>,
+    mask: Vec<u8>,
+    w: usize,
     left: i32,
     top: i32,
     advance: f32,
@@ -134,10 +139,10 @@ impl Fonts {
         self.primary(style).map(|f| (f, 0))
     }
 
-    fn glyph(&mut self, font: Font, ch: char, color: Rgb) -> Option<&Glyph> {
-        let (face, gid) = self.resolve(font.style, ch)?;
-        let key = Key { face, glyph: gid, px: font.px.to_bits(), style: font.style, color };
+    fn glyph(&mut self, font: Font, ch: char) -> Option<&Glyph> {
+        let key = Key { ch, px: font.px.to_bits(), style: font.style };
         if !self.cache.contains_key(&key) {
+            let (face, gid) = self.resolve(font.style, ch)?;
             let f = &self.faces[face];
             let fr = f.font()?;
             let vars = if f.variable { variations(font.style).to_vec() } else { Vec::new() };
@@ -147,28 +152,24 @@ impl Fonts {
             let mut scaler =
                 self.ctx.builder(fr).size(font.px).hint(true).variations(settings.iter().copied()).build();
             let img = Render::new(&[Source::Outline]).format(Format::Alpha).render(&mut scaler, gid);
-            let (mut left, mut top, mut pm) = (0, 0, None);
+            let (mut left, mut top, mut w, mut mask) = (0, 0, 0, Vec::new());
             if let Some(img) = img
                 && img.placement.width > 0
                 && img.placement.height > 0
             {
                 left = img.placement.left;
                 top = img.placement.top;
-                let mut p = Pixmap::new(img.placement.width, img.placement.height)?;
-                for (out, &a) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(&img.data) {
-                    let pre = |v: u8| ((v as u16 * a as u16 + 127) / 255) as u8;
-                    *out = [pre(color.0), pre(color.1), pre(color.2), a];
-                }
-                pm = Some(p);
+                w = img.placement.width as usize;
+                mask = img.data;
             }
-            self.cache.insert(key, Glyph { pm, left, top, advance });
+            self.cache.insert(key, Glyph { mask, w, left, top, advance });
         }
         self.cache.get(&key)
     }
 
     /// Width of `text` in physical pixels.
     pub fn width(&mut self, font: Font, text: &str) -> f32 {
-        text.chars().map(|c| self.glyph(font, c, (0, 0, 0)).map_or(0.0, |g| g.advance)).sum()
+        text.chars().map(|c| self.glyph(font, c).map_or(0.0, |g| g.advance)).sum()
     }
 
     /// Draws `text` from x with its baseline at y (physical pixels); returns
@@ -176,11 +177,11 @@ impl Fonts {
     pub fn draw(&mut self, pm: &mut Pixmap, font: Font, text: &str, x: f32, y: f32, color: Rgb) -> f32 {
         let mut pen = x;
         for c in text.chars() {
-            let Some(g) = self.glyph(font, c, color) else { continue };
-            if let Some(gp) = &g.pm {
+            let Some(g) = self.glyph(font, c) else { continue };
+            if g.w > 0 {
                 let gx = (pen + g.left as f32).round() as i32;
                 let gy = (y - g.top as f32).round() as i32;
-                pm.draw_pixmap(gx, gy, gp.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                blend(pm, g, gx, gy, color);
             }
             pen += g.advance;
         }
@@ -209,9 +210,54 @@ impl Fonts {
     }
 }
 
+/// The glyph's coverage in `color`, source-over onto the premultiplied
+/// RGBA pixmap at (x, y), clipped to it.
+fn blend(pm: &mut Pixmap, g: &Glyph, x: i32, y: i32, color: Rgb) {
+    let (pw, ph) = (pm.width() as i32, pm.height() as i32);
+    let gh = (g.mask.len() / g.w) as i32;
+    let (x0, x1) = (x.max(0), (x + g.w as i32).min(pw));
+    let (y0, y1) = (y.max(0), (y + gh).min(ph));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let rgb = [color.0 as u32, color.1 as u32, color.2 as u32];
+    let data = pm.data_mut();
+    for py in y0..y1 {
+        let src = &g.mask[(py - y) as usize * g.w..][..g.w];
+        let row = &mut data[(py * pw) as usize * 4..][..pw as usize * 4];
+        for px in x0..x1 {
+            let a = src[(px - x) as usize] as u32;
+            if a == 0 {
+                continue;
+            }
+            let d = &mut row[px as usize * 4..][..4];
+            let keep = 255 - a;
+            // (v * a + 127) / 255, the same rounding as the cached pixmaps had
+            for i in 0..3 {
+                d[i] = ((rgb[i] * a + 127) / 255 + (d[i] as u32 * keep + 127) / 255).min(255) as u8;
+            }
+            d[3] = (a + (d[3] as u32 * keep + 127) / 255).min(255) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blends_over_what_is_there() {
+        let mut pm = Pixmap::new(4, 1).unwrap();
+        pm.data_mut().copy_from_slice(&[0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0, 0]);
+        let g = Glyph { mask: vec![255, 128, 0], w: 3, left: 0, top: 0, advance: 3.0 };
+        blend(&mut pm, &g, 0, 0, (255, 0, 0));
+        let d = pm.data();
+        assert_eq!(&d[0..4], &[255, 0, 0, 255], "full coverage: the colour");
+        assert_eq!(&d[4..8], &[128, 0, 127, 255], "half: half red over blue");
+        assert_eq!(&d[8..12], &[0, 0, 255, 255], "none: untouched");
+        blend(&mut pm, &g, 3, 0, (255, 0, 0)); // clipped at the right edge
+        assert_eq!(&pm.data()[12..16], &[255, 0, 0, 255]);
+    }
 
     #[test]
     fn measures_and_shortens() {

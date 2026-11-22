@@ -96,21 +96,62 @@ fn main_adapter(luids: &[u64]) -> Option<(String, Option<String>)> {
     best.map(|(_, n, ip)| (n, ip))
 }
 
+/// Received and sent bytes of these adapters, None if one has gone or is down.
+fn counters(luids: &[u64]) -> Option<(u64, u64)> {
+    let (mut down, mut up) = (0u64, 0u64);
+    for &luid in luids {
+        let mut row: MIB_IF_ROW2 = unsafe { std::mem::zeroed() };
+        row.InterfaceLuid.Value = luid;
+        if unsafe { GetIfEntry2(&mut row) } != 0 || row.OperStatus != IF_OPER_UP {
+            return None;
+        }
+        down += row.InOctets;
+        up += row.OutOctets;
+    }
+    Some((down, up))
+}
+
+/// The adapters are looked up again this often: the full table (every
+/// virtual adapter and filter, ~100 rows) and the addresses cost ~2 ms,
+/// a row each second ~0.05 ms.
+const ADAPTERS_EVERY_S: f64 = 30.0;
+
+struct Adapters {
+    at: f64,
+    luids: Vec<u64>,
+    name: Option<String>,
+    ipv4: Option<String>,
+}
+
 #[derive(Default)]
 pub struct NetReader {
     down: Rate,
     up: Rate,
+    adapters: Option<Adapters>,
 }
 
 impl NetReader {
     /// Speeds since the last call (None on the first one).
     pub fn read(&mut self) -> Option<Net> {
-        let adapters = physical()?;
         let t = now_s();
-        let down = self.down.update(t, adapters.iter().map(|a| a.1).sum());
-        let up = self.up.update(t, adapters.iter().map(|a| a.2).sum());
-        let luids: Vec<u64> = adapters.iter().map(|a| a.0).collect();
-        let (adapter, ipv4) = main_adapter(&luids).map_or((None, None), |(n, ip)| (Some(n), ip));
-        Some(Net { down_bps: down?, up_bps: up?, adapter, ipv4 })
+        let mut sums =
+            self.adapters.as_ref().filter(|a| t - a.at < ADAPTERS_EVERY_S).and_then(|a| counters(&a.luids));
+        if sums.is_none() {
+            // first, due, or an adapter went away / came up: look again
+            let list = physical()?;
+            let luids: Vec<u64> = list.iter().map(|a| a.0).collect();
+            if self.adapters.as_ref().is_none_or(|a| a.luids != luids) {
+                // other adapters, other counters: no speed from the old ones
+                (self.down, self.up) = (Rate::default(), Rate::default());
+            }
+            let (name, ipv4) = main_adapter(&luids).map_or((None, None), |(n, ip)| (Some(n), ip));
+            sums = Some((list.iter().map(|a| a.1).sum(), list.iter().map(|a| a.2).sum()));
+            self.adapters = Some(Adapters { at: t, luids, name, ipv4 });
+        }
+        let (down_total, up_total) = sums?;
+        let down = self.down.update(t, down_total);
+        let up = self.up.update(t, up_total);
+        let a = self.adapters.as_ref()?;
+        Some(Net { down_bps: down?, up_bps: up?, adapter: a.name.clone(), ipv4: a.ipv4.clone() })
     }
 }

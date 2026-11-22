@@ -98,6 +98,8 @@ fn run(shared: Arc<Shared>) {
     let mut drives = Vec::new();
     let mut battery = None;
     let (mut volumes_t, mut drives_t, mut battery_t) = (None::<Instant>, None::<Instant>, None::<Instant>);
+    let mut gpus = Vec::new();
+    let mut gpu_t = None::<Instant>;
     let mut next = Instant::now();
 
     while !shared.stop.load(Ordering::Relaxed) {
@@ -114,7 +116,15 @@ fn run(shared: Arc<Shared>) {
         }
         s.cpu.temp = zones.as_ref().and_then(|z| z.read());
         s.memory = memory::read();
-        s.gpus = gpu.read();
+        // the GPU's counters cost about as much as all the other readers together:
+        // at idle every 3 s, under load (a game) every second
+        let gpu_every =
+            if gpus.iter().any(|g: &pcm_core::model::Gpu| g.load.is_some_and(|l| l > 30.0)) { 1 } else { 3 };
+        if due(gpu_t, gpu_every) {
+            gpus = gpu.read();
+            gpu_t = Some(now);
+        }
+        s.gpus = gpus.clone();
         if due(volumes_t, 5) {
             volumes = disk::volumes();
             volumes_t = Some(now);
