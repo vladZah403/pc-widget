@@ -31,6 +31,7 @@ mod report_win;
 mod session_rec;
 mod taskbar;
 mod tray;
+mod updater;
 mod widget_win;
 
 /// The interface language from the setting ("auto" = the Windows one).
@@ -58,6 +59,9 @@ fn attach_console() {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == updater::FINISH_ARG) {
+        std::process::exit(updater::finish_update(&args)); // the new version installs itself
+    }
     if args.iter().any(|a| ["--diag", "--session", "--png", "--version"].contains(&a.as_str())) {
         attach_console();
     }
@@ -69,7 +73,8 @@ fn main() {
         let tab = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)?.parse().ok());
         let offscreen = args.iter().any(|a| a == "--offscreen");
         let shot = args.iter().position(|a| a == "--screenshot").and_then(|i| args.get(i + 1)).cloned();
-        std::process::exit(dashboard::run(tab.unwrap_or(0), offscreen, shot));
+        let scroll = args.iter().position(|a| a == "--scroll").and_then(|i| args.get(i + 1)?.parse().ok());
+        std::process::exit(dashboard::run(tab.unwrap_or(0), offscreen, shot, scroll));
     }
     if args.iter().any(|a| a == "--diag") {
         std::process::exit(diag::run(&args));

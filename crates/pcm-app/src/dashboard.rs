@@ -65,6 +65,9 @@ pub enum FromDashboard {
     SetAutostart(bool),
     /// "Права администратора (температуры)": may restart the widget elevated.
     SetAdmin(bool),
+    /// "Проверить сейчас" / "Обновить" in the settings.
+    CheckUpdates,
+    StartUpdate,
     /// The window was closed by the user (×, Alt+F4): the widget quits too
     /// if the settings say so.
     Closed,
@@ -298,11 +301,11 @@ impl eframe::App for Dashboard {
                     self.procs.ui(ui, rows.as_ref(), sc.as_ref());
                 }
                 4 => {
-                    let (cfg, start) = {
+                    let (cfg, start, data) = {
                         let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-                        (f.cfg.clone(), f.start.clone())
+                        (f.cfg.clone(), f.start.clone(), f.data.clone())
                     };
-                    self.settings.ui(ui, cfg.as_ref(), start.as_ref());
+                    self.settings.ui(ui, cfg.as_ref(), start.as_ref(), data.as_ref());
                 }
                 3 => {
                     let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
@@ -331,7 +334,7 @@ impl eframe::App for Dashboard {
 /// away. Returns the exit code.
 /// `offscreen`: far off the screen and not focused; `screenshot`: save the
 /// window as PNG and close (both for tests).
-pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
+pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Option<f32>) -> i32 {
     let feed = Arc::new(Mutex::new(Feed::default()));
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     {
@@ -390,6 +393,7 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
             }
             let mut d = Dashboard::new(cc, feed);
             d.tab = tab.min(TABS.len() - 1);
+            d.settings.start_offset = scroll;
             d.quit_on_close = !offscreen && screenshot.is_none();
             d.shot = screenshot.map(|p| (p, None));
             Ok(Box::new(d))

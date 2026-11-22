@@ -159,6 +159,14 @@ pub fn start_as_admin(exe: &Path, args: &str, dir: &Path, owner: isize) -> bool 
     rc as isize > 32 // 32 and below: an error (ERROR_CANCELLED when refused)
 }
 
+/// Open a web page (or a file) the way Explorer would.
+pub fn open(target: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let (verb, file) = (wide("open"), wide(target));
+    unsafe { ShellExecuteW(null_mut(), verb.as_ptr(), file.as_ptr(), null(), null(), SW_SHOWNORMAL) };
+}
+
 /// The window in front (to own a UAC prompt).
 pub fn foreground_window() -> isize {
     unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() as isize }

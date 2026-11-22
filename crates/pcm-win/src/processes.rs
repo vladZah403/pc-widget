@@ -146,6 +146,19 @@ pub fn image_name(pid: u32) -> Option<String> {
     }
 }
 
+/// Wait until process `pid` has exited (or `timeout` passed, or it can't be opened).
+pub fn wait_for_exit(pid: u32, timeout: std::time::Duration) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+    unsafe {
+        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if !h.is_null() {
+            WaitForSingleObject(h, timeout.as_millis().min(u32::MAX as u128) as u32);
+            CloseHandle(h);
+        }
+    }
+}
+
 /// End every process of the program `name` (without ".exe", as the list
 /// shows it) that runs under this Windows user — never another user's or the
 /// system's, never one of `keep`, never what can't be closed. Each process

@@ -58,11 +58,11 @@ pub fn release_instance() {
 
 // ---------- where we run from ----------
 
-fn this_exe() -> Option<PathBuf> {
+pub(crate) fn this_exe() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
-fn app_dir() -> Option<PathBuf> {
+pub(crate) fn app_dir() -> Option<PathBuf> {
     this_exe()?.parent().map(Path::to_path_buf)
 }
 
@@ -89,7 +89,7 @@ pub fn running_installed() -> bool {
 }
 
 /// A release folder (PC-Monitor.exe + _internal), not a bare build.
-fn is_release_folder(dir: &Path) -> bool {
+pub(crate) fn is_release_folder(dir: &Path) -> bool {
     dir.join(INTERNAL).is_dir()
 }
 
@@ -135,7 +135,7 @@ fn installed_is_current() -> bool {
     }
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -150,7 +150,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// A sibling folder: "C:\Program Files\PC-Monitor" + ".new".
-fn with_suffix(dir: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn with_suffix(dir: &Path, suffix: &str) -> PathBuf {
     let mut s = dir.as_os_str().to_owned();
     s.push(suffix);
     PathBuf::from(s)

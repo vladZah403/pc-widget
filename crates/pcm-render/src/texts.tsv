@@ -240,7 +240,6 @@ FPS в среднем	Average FPS	FPS у середньому	FPS im Schnitt
 Нужны для температур и напряжений CPU. Windows будет спрашивать разрешение при запуске, кроме автозапуска: он идёт без вопроса из копии в Program Files.	Needed for CPU temperatures and voltages. Windows will ask for permission at start, except at autostart: that runs without asking from the copy in Program Files.	Потрібні для температур і напруг CPU. Windows питатиме дозволу під час запуску, крім автозапуску: він іде без питання з копії в Program Files.	Nötig für CPU-Temperaturen und -Spannungen. Windows fragt beim Start um Erlaubnis, außer beim Autostart: der läuft ohne Nachfrage aus der Kopie in Program Files.
 Сейчас работает с правами администратора.	Running with admin rights now.	Зараз працює з правами адміністратора.	Läuft gerade mit Administratorrechten.
 Сейчас работает без прав администратора.	Running without admin rights now.	Зараз працює без прав адміністратора.	Läuft gerade ohne Administratorrechte.
-Проверка обновлений появится на этапе 6.4.	Update checks come in stage 6.4.	Перевірка оновлень з'явиться на етапі 6.4.	Die Update-Prüfung kommt in Stufe 6.4.
 Жду данные от виджета…	Waiting for data from the widget…	Чекаю на дані від віджета…	Warte auf Daten vom Widget…
 «{tab}» появится позже.	"{tab}" comes later.	«{tab}» з'явиться пізніше.	„{tab}“ kommt später.
 Windows отказала: нужны права администратора.	Windows refused: admin rights are needed.	Windows відмовила: потрібні права адміністратора.	Windows hat abgelehnt: Administratorrechte sind nötig.
@@ -319,3 +318,8 @@ PC Monitor: игровая сессия	PC Monitor: game session	PC Monitor: і�
 Крестик закрывает только окно: виджет, значки в трее и мини-панель работают дальше	The × closes only the window: the widget, tray icons and taskbar panel keep running	Хрестик закриває лише вікно: віджет, значки в треї та міні-панель працюють далі	Das × schließt nur das Fenster: Widget, Tray-Symbole und Mini-Leiste laufen weiter
 Крестик полностью закрывает программу	The × quits the program	Хрестик повністю закриває програму	Das × beendet das Programm
 Выйти совсем можно через «Выход» в меню значка в трее.	To quit completely, use “Exit” in the tray icon's menu.	Вийти зовсім можна через «Вихід» у меню значка в треї.	Ganz beenden: „Beenden“ im Menü des Tray-Symbols.
+Обновления	Updates	Оновлення	Updates
+Обновить	Update	Оновити	Aktualisieren
+Открыть страницу загрузки	Open the download page	Відкрити сторінку завантаження	Downloadseite öffnen
+подпись не прошла проверку	the signature doesn't check out	підпис не пройшов перевірку	die Signatur stimmt nicht
+не удалось запустить новую версию	the new version didn't start	не вдалося запустити нову версію	die neue Version startete nicht

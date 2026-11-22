@@ -14,7 +14,7 @@ use pcm_core::config::{self, Config};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
 use pcm_render::widget::{
-    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, View, alert_card, side_tab,
+    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, alert_card, side_tab,
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -41,6 +41,7 @@ use crate::report_win::{self, Action, ReportWin};
 use crate::session_rec::{self, Recorder, Recording, WM_APP_SESSION};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
+use crate::updater::{self, Checker, Stage, Updater, WM_APP_UPDATE};
 use pcm_render::format::{tr, trf};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
@@ -282,6 +283,8 @@ struct App {
     report: ReportWin,
     /// The alert card on screen tells about this session: a click opens its report.
     toast_session: Option<PathBuf>,
+    /// The alert card on screen is about an update: a click updates or opens this page.
+    toast_link: Option<ToastLink>,
     /// Since when a game is in front / since when none is (the automatic profile).
     game_seen: Option<std::time::Instant>,
     game_gone: Option<std::time::Instant>,
@@ -297,6 +300,17 @@ struct App {
     history_trimmed: i64,
     /// Starts with Windows (asked once: the admin task takes schtasks.exe).
     autostart: Option<bool>,
+    /// The background look for a new version, and the update under way.
+    checker: Checker,
+    updater: Option<Updater>,
+    /// "Проверить сейчас": the check count when asked, for the answer.
+    manual_check: Option<u32>,
+}
+
+/// What a click on the alert card does besides opening a session's report.
+enum ToastLink {
+    Update,
+    Page(String),
 }
 
 thread_local! {
@@ -899,6 +913,7 @@ impl App {
     /// The alert card in the bottom-right corner of the work area; a click closes it.
     fn show_toast(&mut self, a: &Alert) {
         self.toast_session = None;
+        self.toast_link = None;
         let scale = self.tab_scale();
         let sc = self.theme().scale();
         let accent = if a.hot { sc.at(1.0) } else { sc.at(0.75) };
@@ -1028,6 +1043,8 @@ impl App {
                     self.autostart = Some(elevation::set_autostart(on, self.cfg.run_as_admin))
                 }
                 // posted, not DestroyWindow here: WM_DESTROY needs the app (a game session is saved)
+                FromDashboard::CheckUpdates => self.check_updates_now(),
+                FromDashboard::StartUpdate => self.update_clicked(),
                 FromDashboard::Closed => {
                     if self.cfg.close_quits {
                         unsafe { PostMessageW(self.hwnd, WM_CLOSE, 0, 0) };
@@ -1089,6 +1106,7 @@ impl App {
         c.ping_host = new.ping_host;
         c.lang = new.lang;
         c.close_quits = new.close_quits;
+        c.check_updates = new.check_updates;
         c.sanitize();
         self.cfg = c;
         self.save();
@@ -1111,6 +1129,10 @@ impl App {
             && let Ok(mut h) = self.shared.ping_host.lock()
         {
             *h = self.cfg.ping_host.clone();
+        }
+        if self.cfg.check_updates != old.check_updates {
+            self.checker.set_enabled(self.cfg.check_updates);
+            self.fill_update();
         }
         if self.cfg.in_games != old.in_games {
             self.check_games();
@@ -1262,6 +1284,132 @@ impl App {
         if let Some(path) = self.toast_session.take() {
             self.open_report(&path);
         }
+        match self.toast_link.take() {
+            Some(ToastLink::Update) => self.update_clicked(),
+            Some(ToastLink::Page(url)) => updater::open_in_browser(&url),
+            None => {}
+        }
+    }
+
+    // --- updates (1.8's _update_notice / _update_clicked / _poll_updater) ---
+
+    /// The update row of the widget and the window: the version found, the
+    /// download's progress, whether a click updates in place.
+    fn fill_update(&mut self) {
+        let found = self.checker.state().found.filter(|_| self.cfg.check_updates);
+        let stage = self.updater.as_ref().map(Updater::stage);
+        let auto = found.as_ref().is_some_and(|r| r.installable()) && updater::update_target().is_some();
+        if let Some(d) = &mut self.data {
+            d.update = found.map(|r| r.version);
+            d.update_state = match stage {
+                Some(Stage::Download(f)) => Some(UpdateState::Download(f)),
+                Some(Stage::Install | Stage::Ready) => Some(UpdateState::Install),
+                _ => None,
+            };
+            d.update_auto = auto;
+        }
+    }
+
+    /// A check finished or the update moved on.
+    fn update_event(&mut self) {
+        self.poll_updater();
+        self.update_notice();
+        self.fill_update();
+        self.present();
+        self.feed_dashboard();
+    }
+
+    /// An alert card once per new version, and the answer to "Проверить сейчас".
+    fn update_notice(&mut self) {
+        let st = self.checker.state();
+        let manual = self.manual_check.is_some_and(|m| st.checks > m);
+        if manual {
+            self.manual_check = None;
+        }
+        let v = crate::APP_VERSION.to_string();
+        match st.found.filter(|_| self.cfg.check_updates) {
+            Some(r) if manual || r.version != self.cfg.update_seen => {
+                self.cfg.update_seen = r.version.clone();
+                self.save();
+                let auto = r.installable() && updater::update_target().is_some();
+                let body = if auto {
+                    trf("У тебя {v}. Нажми, чтобы обновить.", &[("v", v)])
+                } else {
+                    trf("У тебя {v}. Нажми, чтобы открыть страницу загрузки.", &[("v", v)])
+                };
+                let title = trf("Вышла версия {v}", &[("v", r.version)]);
+                self.show_toast(&Alert { title, body, hot: false });
+                self.toast_link = Some(ToastLink::Update);
+            }
+            _ if manual && st.failed => {
+                let alert = Alert {
+                    title: tr("Не удалось проверить"),
+                    body: tr("Нет связи с GitHub. Попробуй позже."),
+                    hot: true,
+                };
+                self.show_toast(&alert);
+            }
+            _ if manual => {
+                let body = trf("У тебя последняя версия, {v}.", &[("v", v)]);
+                self.show_toast(&Alert { title: tr("Обновлений нет"), body, hot: false });
+            }
+            _ => {}
+        }
+    }
+
+    /// Update in place when this copy can, otherwise open the release page.
+    fn update_clicked(&mut self) {
+        let Some(r) = self.checker.state().found else { return };
+        if self.updater.is_some() {
+            return;
+        }
+        match updater::update_target() {
+            Some(target) if r.installable() => {
+                self.updater = Updater::start(&r, target, self.hwnd as isize);
+                self.fill_update();
+                self.present();
+            }
+            _ => updater::open_in_browser(&r.page),
+        }
+    }
+
+    /// Ready: the new version finishes the job after we exit. Failed: say so.
+    fn poll_updater(&mut self) {
+        match self.updater.as_ref().map(Updater::stage) {
+            Some(Stage::Ready) => {
+                let u = self.updater.take().expect("an updater");
+                if updater::start_finish(&u.app_dir, &u.staging) {
+                    unsafe { PostMessageW(self.hwnd, WM_CLOSE, 0, 0) };
+                } else {
+                    self.update_failed(tr("не удалось запустить новую версию"));
+                }
+            }
+            Some(Stage::Error(e)) => {
+                self.updater = None;
+                self.update_failed(e);
+            }
+            _ => {}
+        }
+    }
+
+    fn update_failed(&mut self, error: String) {
+        let page =
+            self.checker.state().found.map_or_else(|| pcm_core::update::RELEASES_URL.to_string(), |r| r.page);
+        let body = trf("{error}. Нажми, чтобы открыть страницу загрузки.", &[("error", error)]);
+        self.show_toast(&Alert { title: tr("Не удалось обновить"), body, hot: true });
+        self.toast_link = Some(ToastLink::Page(page));
+    }
+
+    /// "Проверить сейчас" (it switches the checks on, as in 1.8).
+    fn check_updates_now(&mut self) {
+        self.manual_check = Some(self.checker.state().checks);
+        if self.cfg.check_updates {
+            self.checker.check_now();
+        } else {
+            self.cfg.check_updates = true;
+            self.save();
+            self.checker.set_enabled(true);
+        }
     }
 
     fn open_report(&mut self, path: &std::path::Path) {
@@ -1352,6 +1500,8 @@ impl App {
                 self.procs_armed = Some(name.clone());
                 unsafe { SetTimer(self.hwnd, TIMER_DISARM, 3000, None) };
             }
+        } else if inside(&b.update, x, y) {
+            self.update_clicked();
         } else if inside(&b.hero, x, y) {
             let open = !self.shared.want_procs.load(Ordering::Relaxed);
             self.shared.want_procs.store(open, Ordering::Relaxed);
@@ -1680,6 +1830,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 {
                     a.data = Some(new);
                 }
+                a.fill_update();
                 if let Some(d) = &a.data {
                     a.recorder.sample(d);
                 }
@@ -1883,6 +2034,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_APP_SESSION => {
             with_app(|a| a.session_written());
+            0
+        }
+        WM_APP_UPDATE => {
+            with_app(|a| a.update_event());
             0
         }
         WM_APP_OPEN => {
@@ -2116,10 +2271,15 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
         }
         let cfg_path = data_dir().join("config-2.toml");
         let cfg = load_or_migrate(&cfg_path);
+        let check_updates = cfg.check_updates;
         let args: Vec<String> = std::env::args().skip(1).collect();
         if let elevation::Start::Leave = elevation::at_start(cfg.run_as_admin, &args) {
             return 0; // an elevated copy took over
         }
+        // work from the data folder, not the program folder: a process sitting in
+        // it (and its children: the helper, the window) would block an update
+        let _ = std::env::set_current_dir(data_dir());
+        updater::clean_leftovers();
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         crate::apply_language(&cfg.lang);
         let shared = Shared::new(cfg.ping_host.clone());
@@ -2321,6 +2481,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
                 sessions_done: Arc::new(Mutex::new(Vec::new())),
                 report: ReportWin::new(report_hwnd),
                 toast_session: None,
+                toast_link: None,
                 game_seen: None,
                 game_gone: None,
                 auto_switched: false,
@@ -2331,6 +2492,9 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
                 history_last: 0,
                 history_trimmed: 0,
                 autostart: None,
+                checker: Checker::start(hwnd as isize, check_updates),
+                updater: None,
+                manual_check: None,
             })
         });
         collect::start(shared.clone());

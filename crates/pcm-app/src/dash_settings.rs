@@ -11,11 +11,13 @@ use pcm_core::config::{self, Config, FPS_SIZES, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
 use crate::dashboard::{FromDashboard, StartInfo, send};
 use pcm_render::format::{tr, trf};
+use pcm_render::widget::{Data, UpdateState};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
 const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
 const FAINT: Color32 = Color32::from_rgb(88, 96, 112);
 const HOT: Color32 = Color32::from_rgb(232, 68, 90);
+const ACCENT: Color32 = Color32::from_rgb(38, 140, 130);
 /// After a change here, the widget's copy (a feed behind) is not taken for this long.
 const SETTLE: Duration = Duration::from_secs(3);
 const PING_PRESETS: [(&str, &str); 3] =
@@ -27,6 +29,8 @@ pub struct SettingsTab {
     changed: Option<Instant>,
     host_text: String,
     host_bad: bool,
+    /// `--scroll N` (screenshots of the lower sections): start scrolled down.
+    pub start_offset: Option<f32>,
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
@@ -44,7 +48,13 @@ fn rgb_of(hex: &str) -> [u8; 3] {
 }
 
 impl SettingsTab {
-    pub fn ui(&mut self, ui: &mut egui::Ui, from_widget: Option<&Config>, start: Option<&StartInfo>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        from_widget: Option<&Config>,
+        start: Option<&StartInfo>,
+        data: Option<&Data>,
+    ) {
         // the widget's settings, unless ours are newer
         if self.changed.is_none_or(|t| t.elapsed() > SETTLE)
             && let Some(c) = from_widget
@@ -64,7 +74,11 @@ impl SettingsTab {
         };
         let before = c.clone();
         let mut action: Option<FromDashboard> = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        if let Some(o) = self.start_offset.take() {
+            area = area.vertical_scroll_offset(o);
+        }
+        area.show(ui, |ui| {
             ui.set_max_width(640.0);
 
             ui.spacing_mut().slider_width = 240.0;
@@ -299,8 +313,36 @@ impl SettingsTab {
                     );
                 }
             }
-            ui.add_space(18.0);
-            hint(ui, &tr("Проверка обновлений появится на этапе 6.4."));
+            heading(ui, &tr("Обновления"));
+            ui.checkbox(&mut c.check_updates, tr("Проверять обновления"));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("PC Monitor {}", crate::APP_VERSION)).color(DIM));
+                if ui.button(tr("Проверить сейчас")).clicked() {
+                    action = Some(FromDashboard::CheckUpdates);
+                }
+            });
+            if let Some(d) = data
+                && let Some(v) = &d.update
+            {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(trf("Вышла версия {v}", &[("v", v.clone())])).color(TEXT).strong());
+                    match &d.update_state {
+                        Some(UpdateState::Download(f)) => {
+                            let text = trf("скачиваю {p}%", &[("p", format!("{:.0}", f * 100.0))]);
+                            ui.add(egui::ProgressBar::new(*f).desired_width(220.0).fill(ACCENT).text(text));
+                        }
+                        Some(UpdateState::Install) => {
+                            ui.label(tr("устанавливаю…"));
+                        }
+                        None => {
+                            let label = if d.update_auto { tr("Обновить") } else { tr("Открыть страницу загрузки") };
+                            if ui.button(label).clicked() {
+                                action = Some(FromDashboard::StartUpdate);
+                            }
+                        }
+                    }
+                });
+            }
             ui.add_space(12.0);
         });
         if c != before {
