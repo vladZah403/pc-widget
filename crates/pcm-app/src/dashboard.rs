@@ -25,9 +25,27 @@ use pcm_render::format::{tr, trf};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ToDashboard {
     /// The latest readings and the colours to draw them in.
-    Feed { data: Box<Data>, theme: String, custom: [String; 2], cfg: Box<pcm_core::config::Config> },
+    Feed {
+        data: Box<Data>,
+        theme: String,
+        custom: [String; 2],
+        cfg: Box<pcm_core::config::Config>,
+        #[serde(default)]
+        start: StartInfo,
+    },
     /// "Открыть PC Monitor" again: come to the front.
     Focus,
+}
+
+/// How PC Monitor starts (not in the settings file: Windows keeps it).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StartInfo {
+    /// It starts with Windows (the Run key or the admin task).
+    pub autostart: bool,
+    /// This copy runs with admin rights.
+    pub admin: bool,
+    /// The sensor helper is there (admin rights are only for it).
+    pub helper: bool,
 }
 
 /// What the window asks the widget, one per line on its stdout.
@@ -43,6 +61,10 @@ pub enum FromDashboard {
     ResetShape,
     ResetPosition,
     SaveProfile,
+    /// "Запускать вместе с Windows".
+    SetAutostart(bool),
+    /// "Права администратора (температуры)": may restart the widget elevated.
+    SetAdmin(bool),
 }
 
 /// Ask the widget something.
@@ -61,6 +83,8 @@ const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
 
 const TABS: [&str; 5] = ["Обзор", "Процессы", "История", "Игровые сессии", "Настройки"];
+/// The index of "Настройки" in TABS (`--tab`).
+pub const SETTINGS_TAB: usize = 4;
 const GAP: f32 = 12.0;
 
 #[derive(Default)]
@@ -68,6 +92,7 @@ struct Feed {
     data: Option<Data>,
     theme: Option<Theme>,
     cfg: Option<pcm_core::config::Config>,
+    start: Option<StartInfo>,
     /// The theme's name and colours, to know when charts need drawing again.
     theme_key: String,
     /// Bumped with every new feed: the cards are drawn again.
@@ -257,8 +282,11 @@ impl eframe::App for Dashboard {
                     self.procs.ui(ui, rows.as_ref(), sc.as_ref());
                 }
                 4 => {
-                    let cfg = self.feed.lock().unwrap_or_else(|e| e.into_inner()).cfg.clone();
-                    self.settings.ui(ui, cfg.as_ref());
+                    let (cfg, start) = {
+                        let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+                        (f.cfg.clone(), f.start.clone())
+                    };
+                    self.settings.ui(ui, cfg.as_ref(), start.as_ref());
                 }
                 3 => {
                     let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
@@ -301,10 +329,11 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
                     let Ok(msg) = serde_json::from_str::<ToDashboard>(&line) else { continue };
                     if let Ok(mut f) = feed.lock() {
                         match msg {
-                            ToDashboard::Feed { data, theme, custom, cfg } => {
+                            ToDashboard::Feed { data, theme, custom, cfg, start } => {
                                 crate::apply_language(&cfg.lang);
                                 f.data = Some(*data);
                                 f.cfg = Some(*cfg);
+                                f.start = Some(start);
                                 f.theme = Some(theme_of(&theme, &custom));
                                 // the language too: charts and reports have words
                                 f.theme_key = format!("{theme}{custom:?}{}", pcm_render::format::language());
@@ -361,6 +390,7 @@ mod tests {
             theme: "ice".into(),
             custom: Default::default(),
             cfg: Box::default(),
+            start: StartInfo { autostart: true, admin: false, helper: true },
         };
         let line = serde_json::to_string(&feed).unwrap();
         assert!(!line.contains('\n'));
@@ -369,6 +399,10 @@ mod tests {
         let ask = serde_json::to_string(&FromDashboard::EndProgram("chrome".into())).unwrap();
         assert_eq!(ask, r#"{"EndProgram":"chrome"}"#);
         assert!(matches!(serde_json::from_str(r#"{"WantProcs":true}"#), Ok(FromDashboard::WantProcs(true))));
+        assert!(matches!(serde_json::from_str(r#"{"SetAdmin":true}"#), Ok(FromDashboard::SetAdmin(true))));
+        assert!(
+            matches!(serde_json::from_str(&line), Ok(ToDashboard::Feed { start, .. }) if start.autostart)
+        );
         // a partial feed still reads (missing readings = defaults)
         let partial =
             r##"{"Feed":{"data":{"cpu":12.5},"theme":"heat","custom":["#000000","#ffffff"],"cfg":{}}}"##;

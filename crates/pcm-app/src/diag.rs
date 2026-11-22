@@ -130,6 +130,7 @@ pub fn run(args: &[String]) -> i32 {
     let sy = &s.system;
     let _ = writeln!(w, "windows build: {}", opt(sy.windows_build, ""));
     let _ = writeln!(w, "admin: {}", sy.admin);
+    let _ = writeln!(w, "autostart: {}", crate::elevation::describe());
     let _ =
         writeln!(w, "uptime: {} h", sy.uptime_s.map_or("-".into(), |u| format!("{:.1}", u as f64 / 3600.0)));
     let _ = writeln!(w, "PawnIO: {}", if sy.pawnio { "installed" } else { "missing" });

@@ -19,7 +19,6 @@ use pcm_render::widget::{
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
@@ -36,7 +35,8 @@ const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
-use crate::dashboard::{FromDashboard, ToDashboard};
+use crate::dashboard::{FromDashboard, StartInfo, ToDashboard};
+use crate::elevation;
 use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
 use crate::report_win::{self, Action, ReportWin};
@@ -154,15 +154,20 @@ struct DashboardProc {
 
 /// The window asks something: its requests wait here for the widget's thread.
 const WM_APP_DASH: u32 = 0x8000 + 6;
+/// PC-Monitor.exe was started again by hand: open the window (at tab wParam).
+const WM_APP_OPEN: u32 = 0x8000 + 7;
+const WIDGET_CLASS: &str = "PCMonitor2Widget";
 
 impl DashboardProc {
-    fn start(hwnd: HWND, inbox: Arc<Mutex<Vec<FromDashboard>>>) -> Option<DashboardProc> {
+    fn start(hwnd: HWND, inbox: Arc<Mutex<Vec<FromDashboard>>>, tab: Option<usize>) -> Option<DashboardProc> {
         use std::io::{BufRead, Write};
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let exe = std::env::current_exe().ok()?;
+        let tab_args = tab.map(|t| vec!["--tab".to_string(), t.to_string()]).unwrap_or_default();
         let mut child = std::process::Command::new(exe)
             .arg("--dashboard")
+            .args(tab_args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -290,6 +295,8 @@ struct App {
     history: Option<pcm_core::history::History>,
     history_last: i64,
     history_trimmed: i64,
+    /// Starts with Windows (asked once: the admin task takes schtasks.exe).
+    autostart: Option<bool>,
 }
 
 thread_local! {
@@ -547,17 +554,26 @@ impl App {
         self.tab.cpu_shown = cpu.map(|c| c.round() as i32);
         if !self.tab.visible {
             self.tab.visible = true;
-            unsafe {
-                ShowWindow(self.tab.hwnd, SW_SHOWNOACTIVATE);
-                SetWindowPos(
-                    self.tab.hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
+            unsafe { ShowWindow(self.tab.hwnd, SW_SHOWNOACTIVATE) };
+        }
+        self.tab_raise();
+    }
+
+    /// Docked, the tab stays on top of everything; beside the widget it is
+    /// as high as the widget: in front of it, behind the windows covering it.
+    fn tab_raise(&self) {
+        const FLAGS: SET_WINDOW_POS_FLAGS = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        let tab = self.tab.hwnd;
+        let topmost = |h: HWND| unsafe { GetWindowLongW(h, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0;
+        unsafe {
+            if self.cfg.tucked || topmost(self.hwnd) {
+                SetWindowPos(tab, HWND_TOPMOST, 0, 0, 0, 0, FLAGS);
+                return;
+            }
+            SetWindowPos(tab, HWND_NOTOPMOST, 0, 0, 0, 0, FLAGS);
+            let above = GetWindow(self.hwnd, GW_HWNDPREV);
+            if !above.is_null() && above != tab && !topmost(above) {
+                SetWindowPos(tab, above, 0, 0, 0, 0, FLAGS); // right below it = right above the widget
             }
         }
     }
@@ -621,11 +637,9 @@ impl App {
         }
         let mut pt = POINT::default();
         unsafe { GetCursorPos(&mut pt) };
-        let r = self.widget_rect();
-        let (tw, th) = self.tab_size();
-        let over_widget = pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom;
-        let (tx, ty) = self.tab.pos;
-        let over_tab = pt.x >= tx && pt.x < tx + tw && pt.y >= ty && pt.y < ty + th;
+        // the window really under the mouse: over a window covering the widget is not over the widget
+        let under = unsafe { WindowFromPoint(pt) };
+        let (over_widget, over_tab) = (under == self.hwnd, under == self.tab.hwnd);
         if over_widget || over_tab || self.press.is_some() {
             self.tab.misses = 0;
             return;
@@ -966,8 +980,8 @@ impl App {
 
     // --- the PC Monitor window ---
 
-    /// Open the window, or bring it to the front if it is open.
-    fn open_dashboard(&mut self) {
+    /// Open the window (at this tab), or bring it to the front if it is open.
+    fn open_dashboard(&mut self, tab: Option<usize>) {
         if let Some(d) = &mut self.dashboard
             && d.alive()
         {
@@ -975,12 +989,15 @@ impl App {
             d.send(&ToDashboard::Focus);
             return;
         }
-        self.dashboard = DashboardProc::start(self.hwnd, self.dash_inbox.clone());
+        self.dashboard = DashboardProc::start(self.hwnd, self.dash_inbox.clone(), tab);
         self.feed_dashboard();
     }
 
-    /// What the window asked for: a process list, ending a program.
-    fn dashboard_asks(&mut self) {
+    /// What the window asked for: a process list, ending a program, the
+    /// settings. True: restart with admin rights (the caller does it, outside
+    /// `with_app`: the UAC prompt waits there while messages keep coming).
+    fn dashboard_asks(&mut self) -> bool {
+        let mut elevate = false;
         let asks: Vec<FromDashboard> =
             self.dash_inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
         for ask in asks {
@@ -1007,9 +1024,33 @@ impl App {
                     self.cfg.profiles.insert(name, view);
                     self.save();
                 }
+                FromDashboard::SetAutostart(on) => {
+                    self.autostart = Some(elevation::set_autostart(on, self.cfg.run_as_admin))
+                }
+                FromDashboard::SetAdmin(on) => {
+                    self.cfg.run_as_admin = on;
+                    self.save();
+                    if elevation::needs_restart(on) {
+                        elevate = true;
+                    } else if self.autostart.unwrap_or_else(elevation::autostart_enabled) {
+                        // autostart moves between the admin task and the Run key
+                        self.autostart = Some(elevation::set_autostart(true, on));
+                    }
+                }
             }
         }
         self.feed_dashboard(); // the window sees the result at once
+        elevate
+    }
+
+    /// UAC was refused (or the copy to Program Files failed): this copy keeps
+    /// running as it is, and without UAC's yes the setting is off again.
+    fn elevation_failed(&mut self) {
+        if !pcm_win::system::is_admin() {
+            self.cfg.run_as_admin = false;
+            self.save();
+        }
+        self.feed_dashboard();
     }
 
     /// Settings from the window: only what can be set there is taken (not
@@ -1111,11 +1152,17 @@ impl App {
             return;
         }
         let Some(data) = &self.data else { return };
+        let start = StartInfo {
+            autostart: *self.autostart.get_or_insert_with(elevation::autostart_enabled),
+            admin: pcm_win::system::is_admin(),
+            helper: pcm_win::sensors_helper::find().is_some(),
+        };
         let msg = ToDashboard::Feed {
             data: Box::new(data.clone()),
             theme: self.cfg.theme.clone(),
             custom: self.cfg.custom_colors.clone(),
             cfg: Box::new(self.cfg.clone()),
+            start,
         };
         if !d.send(&msg) {
             self.dashboard = None;
@@ -1488,7 +1535,7 @@ impl App {
                     return;
                 }
                 DASHBOARD => {
-                    self.open_dashboard();
+                    self.open_dashboard(None);
                     return;
                 }
                 AUTO_GAME => {
@@ -1825,8 +1872,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.session_written());
             0
         }
+        WM_APP_OPEN => {
+            with_app(|a| a.open_dashboard(Some(wp)));
+            0
+        }
         WM_APP_DASH => {
-            with_app(|a| a.dashboard_asks());
+            if with_app(|a| a.dashboard_asks()).unwrap_or(false) {
+                if elevation::restart_elevated(pcm_win::autostart::foreground_window()) {
+                    unsafe { DestroyWindow(hwnd) }; // the elevated copy takes over
+                } else {
+                    with_app(|a| a.elevation_failed());
+                }
+            }
             0
         }
         WM_TIMER if wp == TIMER_TOAST => {
@@ -2021,23 +2078,41 @@ unsafe extern "system" fn tab_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     }
 }
 
-/// Run the widget until it is closed (with a session's report open, if
-/// given). Returns the exit code.
-pub fn run(report: Option<String>) -> i32 {
+/// The running copy is to open its window (we were started again by hand).
+fn ask_running_copy(tab: usize) {
     unsafe {
-        // one widget at a time (not 1.8's mutex: both may run during the alpha)
-        let mutex = CreateMutexW(null(), 1, wide("Local\\PCMonitor2Widget").as_ptr());
-        if GetLastError() == ERROR_ALREADY_EXISTS {
+        let hwnd = FindWindowW(wide(WIDGET_CLASS).as_ptr(), null());
+        if !hwnd.is_null() {
+            AllowSetForegroundWindow(ASFW_ANY); // its window may come to the front
+            PostMessageW(hwnd, WM_APP_OPEN, tab, 0);
+        }
+    }
+}
+
+/// Run the widget until it is closed, with the PC Monitor window open at
+/// tab `open` (None: quietly, as at autostart) or a session's report.
+/// Returns the exit code.
+pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
+    unsafe {
+        // one widget at a time; started again by hand, the running one opens its window
+        if elevation::already_running() {
+            if let Some(tab) = open {
+                ask_running_copy(tab);
+            }
             return 0;
         }
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let cfg_path = data_dir().join("config-2.toml");
         let cfg = load_or_migrate(&cfg_path);
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if let elevation::Start::Leave = elevation::at_start(cfg.run_as_admin, &args) {
+            return 0; // an elevated copy took over
+        }
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         crate::apply_language(&cfg.lang);
         let shared = Shared::new(cfg.ping_host.clone());
 
         let hinst = GetModuleHandleW(null());
-        let class = wide("PCMonitor2Widget");
+        let class = wide(WIDGET_CLASS);
         let wc = WNDCLASSW {
             style: CS_DBLCLKS,
             lpfnWndProc: Some(wndproc),
@@ -2242,6 +2317,7 @@ pub fn run(report: Option<String>) -> i32 {
                 history: open_history(),
                 history_last: 0,
                 history_trimmed: 0,
+                autostart: None,
             })
         });
         collect::start(shared.clone());
@@ -2265,6 +2341,13 @@ pub fn run(report: Option<String>) -> i32 {
         if let Some(path) = report {
             with_app(|a| a.open_report(std::path::Path::new(&path)));
         }
+        let prefer_task = with_app(|a| a.cfg.run_as_admin).unwrap_or(false);
+        elevation::check_autostart(prefer_task);
+        // a copy started by hand (even a normal one, when this one is elevated) may ask for the window
+        ChangeWindowMessageFilterEx(hwnd, WM_APP_OPEN, MSGFLT_ALLOW, null_mut());
+        if let Some(tab) = open {
+            with_app(|a| a.open_dashboard(Some(tab)));
+        }
 
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -2274,7 +2357,7 @@ pub fn run(report: Option<String>) -> i32 {
         UnregisterHotKey(hwnd, HOTKEY_WIDGET);
         UnregisterHotKey(hwnd, HOTKEY_FPS);
         APP.with(|a| a.borrow_mut().take());
-        CloseHandle(mutex);
+        elevation::release_instance();
         0
     }
 }

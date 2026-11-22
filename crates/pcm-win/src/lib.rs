@@ -2,6 +2,7 @@
 //! program lives in this crate, behind safe functions that return the
 //! `pcm-core` model; anything a reader can't get is `None`, never a panic.
 
+pub mod autostart;
 pub mod battery;
 pub mod cpu;
 pub mod disk;

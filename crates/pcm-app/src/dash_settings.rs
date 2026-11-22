@@ -9,7 +9,7 @@ use eframe::egui;
 use egui::{Color32, RichText};
 use pcm_core::config::{self, Config, FPS_SIZES, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
-use crate::dashboard::{FromDashboard, send};
+use crate::dashboard::{FromDashboard, StartInfo, send};
 use pcm_render::format::{tr, trf};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
@@ -44,7 +44,7 @@ fn rgb_of(hex: &str) -> [u8; 3] {
 }
 
 impl SettingsTab {
-    pub fn ui(&mut self, ui: &mut egui::Ui, from_widget: Option<&Config>) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, from_widget: Option<&Config>, start: Option<&StartInfo>) {
         // the widget's settings, unless ours are newer
         if self.changed.is_none_or(|t| t.elapsed() > SETTLE)
             && let Some(c) = from_widget
@@ -265,11 +265,33 @@ impl SettingsTab {
                 );
             }
 
+            heading(ui, &tr("Запуск"));
+            if let Some(st) = start {
+                let mut auto = st.autostart;
+                if ui.checkbox(&mut auto, tr("Запускать вместе с Windows")).changed() {
+                    action = Some(FromDashboard::SetAutostart(auto));
+                }
+                if st.helper {
+                    let mut admin = c.run_as_admin;
+                    if ui.checkbox(&mut admin, tr("Права администратора (температуры)")).changed() {
+                        c.run_as_admin = admin;
+                        // the widget asks UAC: its prompt may come up in front of this window
+                        allow_foreground();
+                        action = Some(FromDashboard::SetAdmin(admin));
+                    }
+                    hint(ui, &tr("Нужны для температур и напряжений CPU. Windows будет спрашивать разрешение при запуске, кроме автозапуска: он идёт без вопроса из копии в Program Files."));
+                    hint(
+                        ui,
+                        &tr(if st.admin {
+                            "Сейчас работает с правами администратора."
+                        } else {
+                            "Сейчас работает без прав администратора."
+                        }),
+                    );
+                }
+            }
             ui.add_space(18.0);
-            hint(
-                ui,
-                &tr("Автозапуск, права администратора и обновления появятся вместе с установщиком (этап 6)."),
-            );
+            hint(ui, &tr("Проверка обновлений появится на этапе 6.4."));
             ui.add_space(12.0);
         });
         if c != before {
@@ -282,4 +304,10 @@ impl SettingsTab {
             send(&a);
         }
     }
+}
+
+/// Any process may take the foreground from us now (the widget's UAC prompt).
+fn allow_foreground() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
+    unsafe { AllowSetForegroundWindow(ASFW_ANY) };
 }

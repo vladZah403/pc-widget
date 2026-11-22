@@ -120,13 +120,12 @@ impl Tray {
     pub fn new(hwnd: HWND) -> Tray {
         let name: Vec<u16> = "TaskbarCreated".encode_utf16().chain(Some(0)).collect();
         let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) }.clamp(16, 64) as u32;
-        Tray {
-            hwnd,
-            icons: Vec::new(),
-            size,
-            taskbar_created: unsafe { RegisterWindowMessageW(name.as_ptr()) },
-            tip: String::new(),
+        let taskbar_created = unsafe { RegisterWindowMessageW(name.as_ptr()) };
+        // elevated, Windows drops these from explorer.exe (lower integrity) unless let through
+        for msg in [WM_APP_TRAY, taskbar_created] {
+            unsafe { ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, null_mut()) };
         }
+        Tray { hwnd, icons: Vec::new(), size, taskbar_created, tip: String::new() }
     }
 
     fn data(&self, icon: &Icon, flags: u32) -> NOTIFYICONDATAW {

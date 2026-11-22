@@ -62,7 +62,7 @@
 без перезагрузки {t}	up {t}	працює {t}	seit Neustart {t}
 Вышла версия {v}	Version {v} is out	Вийшла версія {v}	Version {v} ist da
 скачать	download	завантажити	herunterladen
-Температуры включаются в меню (ПКМ)	Temperatures: turn on in the menu	Температури вмикаються в меню (ПКМ)	Temperaturen im Menü einschalten
+Температуры включаются в Настройках	Temperatures: turn on in Settings	Температури вмикаються в Налаштуваннях	Temperaturen in den Einstellungen einschalten
 Нет доступа к датчикам: нужен PawnIO	No sensor access: PawnIO needed	Немає доступу до датчиків: треба PawnIO	Kein Sensorzugriff: PawnIO nötig
 CPU и GPU: нужен PawnIO	CPU and GPU: PawnIO needed	CPU і GPU: треба PawnIO	CPU und GPU: PawnIO nötig
 Запусти LibreHardwareMonitor от админа	Run LibreHardwareMonitor as admin	Запусти LibreHardwareMonitor від адміна	LibreHardwareMonitor als Admin starten
@@ -236,7 +236,11 @@ FPS в среднем	Average FPS	FPS у середньому	FPS im Schnitt
 Показывать FPS-панель (Ctrl+Alt+F)	Show the FPS panel (Ctrl+Alt+F)	Показувати FPS-панель (Ctrl+Alt+F)	FPS-Anzeige zeigen (Strg+Alt+F)
 Свой адрес:	Own address:	Своя адреса:	Eigene Adresse:
 Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).	That doesn't look like an address (e.g. eu.battle.net or 8.8.4.4).	Це не схоже на адресу (приклад: eu.battle.net або 8.8.4.4).	Das sieht nicht nach einer Adresse aus (z. B. eu.battle.net oder 8.8.4.4).
-Автозапуск, права администратора и обновления появятся вместе с установщиком (этап 6).	Autostart, admin rights and updates come with the installer (stage 6).	Автозапуск, права адміністратора й оновлення з'являться разом з інсталятором (етап 6).	Autostart, Administratorrechte und Updates kommen mit dem Installer (Stufe 6).
+Запуск	Startup	Запуск	Start
+Нужны для температур и напряжений CPU. Windows будет спрашивать разрешение при запуске, кроме автозапуска: он идёт без вопроса из копии в Program Files.	Needed for CPU temperatures and voltages. Windows will ask for permission at start, except at autostart: that runs without asking from the copy in Program Files.	Потрібні для температур і напруг CPU. Windows питатиме дозволу під час запуску, крім автозапуску: він іде без питання з копії в Program Files.	Nötig für CPU-Temperaturen und -Spannungen. Windows fragt beim Start um Erlaubnis, außer beim Autostart: der läuft ohne Nachfrage aus der Kopie in Program Files.
+Сейчас работает с правами администратора.	Running with admin rights now.	Зараз працює з правами адміністратора.	Läuft gerade mit Administratorrechten.
+Сейчас работает без прав администратора.	Running without admin rights now.	Зараз працює без прав адміністратора.	Läuft gerade ohne Administratorrechte.
+Проверка обновлений появится на этапе 6.4.	Update checks come in stage 6.4.	Перевірка оновлень з'явиться на етапі 6.4.	Die Update-Prüfung kommt in Stufe 6.4.
 Жду данные от виджета…	Waiting for data from the widget…	Чекаю на дані від віджета…	Warte auf Daten vom Widget…
 «{tab}» появится позже.	"{tab}" comes later.	«{tab}» з'явиться пізніше.	„{tab}“ kommt später.
 Windows отказала: нужны права администратора.	Windows refused: admin rights are needed.	Windows відмовила: потрібні права адміністратора.	Windows hat abgelehnt: Administratorrechte sind nötig.

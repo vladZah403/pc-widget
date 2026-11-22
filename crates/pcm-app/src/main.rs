@@ -1,11 +1,14 @@
 //! PC-Monitor.exe, PC Monitor 2.0.
 //!
-//! Without arguments it shows the desktop widget; `--diag [--out FILE]
+//! Without arguments it opens the PC Monitor window and runs the widget and
+//! the tray icons (`--autostart`: without the window); `--diag [--out FILE]
 //! [--helper PATH] [--ping HOST]` reads every source once and prints it;
 //! `--png FILE` draws the widget with live data into a PNG (no window);
 //! `--session FILE` prints a game session's summary; `--report FILE` starts
-//! the widget with that session's report open; `--dashboard` is the PC
-//! Monitor window (the widget starts it and feeds it on stdin).
+//! the widget with that session's report open, `--settings` with the
+//! settings open (after a restart with admin rights), `--no-elevate` without
+//! asking for admin rights; `--dashboard` is the PC Monitor window (the
+//! widget starts it and feeds it on stdin).
 //!
 //! A Windows program (no console window of its own); the commands that print
 //! write to the console they were started from.
@@ -21,6 +24,7 @@ mod dash_sessions;
 mod dash_settings;
 mod dashboard;
 mod diag;
+mod elevation;
 mod game;
 mod layered;
 mod report_win;
@@ -85,7 +89,15 @@ fn main() {
         std::process::exit(print_session(path));
     }
     let report = args.iter().position(|a| a == "--report").and_then(|i| args.get(i + 1)).cloned();
-    std::process::exit(widget_win::run(report));
+    // by hand: the PC Monitor window opens; with Windows (or with a report): quietly
+    let open = if args.iter().any(|a| a == "--settings") {
+        Some(dashboard::SETTINGS_TAB)
+    } else if report.is_some() || args.iter().any(|a| a == elevation::AUTOSTART_ARG) {
+        None
+    } else {
+        Some(0)
+    };
+    std::process::exit(widget_win::run(report, open));
 }
 
 fn print_session(path: &str) -> i32 {

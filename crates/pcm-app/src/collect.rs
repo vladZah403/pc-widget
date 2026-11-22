@@ -140,7 +140,7 @@ fn run(shared: Arc<Shared>) {
                 merge::apply(&mut s, &sensors::summarize(&r.hardware), r.admin);
                 online = true;
                 if !r.admin {
-                    hint = Some(tr("Температуры включаются в меню (ПКМ)").to_string());
+                    hint = Some(tr("Температуры включаются в Настройках").to_string());
                 } else if s.cpu.temp.is_none() && !system::pawnio_installed() {
                     hint = Some(tr("CPU и GPU: нужен PawnIO").to_string());
                 }
