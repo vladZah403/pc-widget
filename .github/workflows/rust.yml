@@ -116,6 +116,63 @@ jobs:
           $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
           if (@($run.PSObject.Properties.Value) -match $exe) { throw "the autostart entry stayed" }
 
+      - name: Downloads from GitHub (live)
+        # WinHTTP gets the API answer and the latest release's zip through the redirect
+        run: cargo test -p pcm-win -- --ignored live
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 1.8's updater installs this 2.0
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt --quiet
+          python tests\ci\update_from_1_8.py dist2\PC-Monitor.zip "$env:RUNNER_TEMP\u18"
+          if ($LASTEXITCODE -ne 0) { throw "1.8's updater failed" }
+
+      - name: Check the swap and 2.0's first start with 1.8's settings
+        shell: pwsh
+        run: |
+          $app = "$env:WORK\PC-Monitor"
+          $cfg = "$env:WORK\appdata\PC-Monitor\config-2.toml"
+          # 1.8's PowerShell waits for python, swaps the folders and starts 2.0, which takes 1.8's settings
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $cfg); $i++) { Start-Sleep -Seconds 1 }
+          Start-Sleep -Seconds 2
+          Get-Process PC-Monitor -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force
+          if (Test-Path "$app\old-1.8.txt") { throw "the 1.8 folder was not swapped out" }
+          if ((Get-FileHash "$app\PC-Monitor.exe").Hash -ne (Get-FileHash dist2\PC-Monitor\PC-Monitor.exe).Hash) { throw "the program folder has no 2.0" }
+          if (-not (Test-Path $cfg)) { throw "2.0 did not start, or did not take the 1.8 settings" }
+          $text = Get-Content $cfg -Raw
+          Write-Output $text
+          if ($text -notmatch 'theme = "neon"' -or $text -notmatch 'lang = "en"') { throw "1.8's settings were not taken over" }
+
+      - name: 2.0 updates itself (--finish-update)
+        shell: pwsh
+        run: |
+          $root = "$env:RUNNER_TEMP\u20"; $app = "$root\PC-Monitor"; $new = "$root\PC-Monitor.new"
+          New-Item -ItemType Directory $root | Out-Null
+          Copy-Item dist2\PC-Monitor $app -Recurse
+          Set-Content "$app\old-2.0.txt" "old"
+          Expand-Archive dist2\PC-Monitor.zip "$root\unzip"
+          Move-Item "$root\unzip\PC-Monitor" $new
+          $env:APPDATA = "$root\appdata"  # the program it starts keeps its settings here
+          # stands for the old version: --finish-update waits for it to exit
+          $old = Start-Process cmd -ArgumentList "/c", "ping -n 3 127.0.0.1 >nul" -PassThru -WindowStyle Hidden
+          $p = Start-Process "$new\PC-Monitor.exe" -ArgumentList "--finish-update", $app, $old.Id -PassThru
+          $null = $p.Handle  # keeps the exit code readable
+          if (-not $p.WaitForExit(90000)) { throw "--finish-update hangs" }
+          $code = $p.ExitCode
+          if ($code -ne 0) { throw "--finish-update exit $code" }
+          if (Test-Path "$app\old-2.0.txt") { throw "the old folder is still in place" }
+          if (-not (Test-Path "$app\_internal\pcm-sensors.exe")) { throw "the new folder is incomplete" }
+          # the new version it started clears away PC-Monitor.old and PC-Monitor.new
+          for ($i = 0; $i -lt 20 -and ((Test-Path "$root\PC-Monitor.old") -or (Test-Path $new)); $i++) { Start-Sleep -Seconds 1 }
+          $running = @(Get-Process PC-Monitor -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app\*" })
+          $running | Stop-Process -Force
+          if (-not $running) { throw "the new version did not start" }
+          if ((Test-Path "$root\PC-Monitor.old") -or (Test-Path $new)) { throw "the leftovers stayed" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: PC-Monitor-2
