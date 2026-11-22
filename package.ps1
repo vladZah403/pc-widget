@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
-if (-not (Test-Path $Exe)) { throw "no $Exe: cargo build --release -p pcm-app" }
+if (-not (Test-Path $Exe)) { throw "no ${Exe}: cargo build --release -p pcm-app" }
 if (-not (Test-Path "sensors-helper\bin\pcm-sensors.exe")) { throw "no sensors-helper\bin\pcm-sensors.exe: sensors-helper\build.bat" }
 
 $app = Join-Path $Out "PC-Monitor"
