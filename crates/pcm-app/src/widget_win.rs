@@ -1855,11 +1855,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_APP_TRAY => {
             match lp as u32 {
+                // the PC Monitor window comes first; the widget: the menu or Ctrl+Alt+W
                 WM_LBUTTONUP => {
-                    with_app(|a| {
-                        let on = !a.cfg.widget;
-                        a.set_widget(on);
-                    });
+                    with_app(|a| a.open_dashboard(None));
                 }
                 WM_RBUTTONUP => {
                     with_app(|a| a.menu());
