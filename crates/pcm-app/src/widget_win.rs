@@ -1027,6 +1027,10 @@ impl App {
                 FromDashboard::SetAutostart(on) => {
                     self.autostart = Some(elevation::set_autostart(on, self.cfg.run_as_admin))
                 }
+                // posted, not DestroyWindow here: WM_DESTROY needs the app (a game session is saved)
+                FromDashboard::Quit => unsafe {
+                    PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
+                },
                 FromDashboard::SetAdmin(on) => {
                     self.cfg.run_as_admin = on;
                     self.save();
@@ -1584,7 +1588,8 @@ impl App {
                     self.apply_pin();
                 }
                 CLOSE => {
-                    DestroyWindow(self.hwnd);
+                    // posted: WM_DESTROY must not come while the app is borrowed (it saves a game session)
+                    PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
                     return;
                 }
                 c if (THEME..THEME + themes.len()).contains(&c) => {

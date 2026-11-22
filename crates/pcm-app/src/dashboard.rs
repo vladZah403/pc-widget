@@ -65,6 +65,8 @@ pub enum FromDashboard {
     SetAutostart(bool),
     /// "Права администратора (температуры)": may restart the widget elevated.
     SetAdmin(bool),
+    /// The window's × was clicked: PC Monitor quits altogether (Vlad's choice).
+    Quit,
 }
 
 /// Ask the widget something.
@@ -98,6 +100,8 @@ struct Feed {
     /// Bumped with every new feed: the cards are drawn again.
     seq: u64,
     focus: bool,
+    /// The widget has gone: the window closes without asking it to quit.
+    gone: bool,
 }
 
 /// Segoe UI and Bahnschrift from the Windows fonts folder.
@@ -138,6 +142,8 @@ struct Dashboard {
     procs: ProcsTab,
     sessions: SessionsTab,
     settings: SettingsTab,
+    /// Closing the window quits PC Monitor (not in the offscreen test runs).
+    quit_on_close: bool,
     /// `--screenshot FILE`: save the window's own pixels once fed, then close.
     shot: Option<(String, Option<std::time::Instant>)>,
 }
@@ -165,6 +171,7 @@ impl Dashboard {
             procs: ProcsTab::default(),
             sessions: SessionsTab::default(),
             settings: SettingsTab::default(),
+            quit_on_close: false,
             shot: None,
         }
     }
@@ -246,6 +253,14 @@ impl Dashboard {
 }
 
 impl eframe::App for Dashboard {
+    /// The window closes: by its × (or Alt+F4) PC Monitor quits altogether;
+    /// not when the widget has gone already or in a test run.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.quit_on_close && !self.feed.lock().map(|f| f.gone).unwrap_or(true) {
+            send(&FromDashboard::Quit);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.screenshot(&ctx);
@@ -347,6 +362,9 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
                     }
                 }
                 // the widget has gone (its end of the pipe closed): so does the window
+                if let Ok(mut f) = feed.lock() {
+                    f.gone = true;
+                }
                 if let Some(ctx) = ctx_slot.lock().ok().and_then(|c| c.clone()) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     ctx.request_repaint();
@@ -371,6 +389,7 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
             }
             let mut d = Dashboard::new(cc, feed);
             d.tab = tab.min(TABS.len() - 1);
+            d.quit_on_close = !offscreen && screenshot.is_none();
             d.shot = screenshot.map(|p| (p, None));
             Ok(Box::new(d))
         }),
