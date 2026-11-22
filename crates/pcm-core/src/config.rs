@@ -100,7 +100,8 @@ pub struct Config {
     pub tucked: bool,
     /// The docked side tab's top (physical px).
     pub tab_y: Option<i32>,
-    /// The widget is shown (hidden, the program stays in the tray).
+    /// The widget is shown (hidden, the program stays in the tray). Off for
+    /// new users: the PC Monitor window comes first, the widget is an option.
     pub widget: bool,
     /// What the tray icons show, 1 to 3 of TRAY_KINDS.
     pub tray: Vec<String>,
@@ -161,7 +162,7 @@ impl Default for Config {
             in_games: "hide".into(),
             tucked: false,
             tab_y: None,
-            widget: true,
+            widget: false,
             tray: vec!["cpu".into()],
             alerts: true,
             alert_temp: 90,
@@ -334,7 +335,7 @@ impl Config {
     pub fn from_1_8_json(text: &str) -> Option<Config> {
         let v: serde_json::Value = serde_json::from_str(text).ok()?;
         let o = v.as_object()?;
-        let mut c = Config::default();
+        let mut c = Config { widget: true, ..Config::default() }; // 1.8 always showed it
         let b = |k: &str| o.get(k).and_then(|x| x.as_bool());
         let n = |k: &str| o.get(k).and_then(|x| x.as_f64());
         let s = |k: &str| o.get(k).and_then(|x| x.as_str()).map(str::to_string);
@@ -452,6 +453,7 @@ mod tests {
         let c = Config::from_1_8_json(json).unwrap();
         assert_eq!((c.x, c.y), (Some(1326), Some(282)));
         assert_eq!((c.pinned, c.compact, c.run_as_admin, c.auto_game), (false, true, true, false));
+        assert!(c.widget && !Config::default().widget, "1.8's widget stays; new users start without it");
         assert!((c.alpha - 0.97).abs() < 1e-6);
         assert_eq!(c.custom_colors, ["#00ffff".to_string(), "#0000ff".to_string()]);
         assert_eq!(c.hidden, vec!["uptime".to_string()], "unknown rows dropped");
