@@ -71,6 +71,9 @@ const GAME_AFTER: Duration = Duration::from_secs(2);
 
 /// The game in front.
 pub struct Game {
+    pub pid: u32,
+    /// The program name ("civilizationvi").
+    pub name: String,
     pub hwnd: HWND,
     pub rect: RECT,
     pub stats: FrameStats,
@@ -87,6 +90,11 @@ pub struct GameWatch {
 }
 
 impl GameWatch {
+    /// The frame counter, while it runs.
+    pub fn counter(&self) -> Option<&FrameCounter> {
+        self.counter.as_ref()
+    }
+
     pub fn start(&mut self) {
         if self.counter.is_none() {
             match FrameCounter::start() {
@@ -149,7 +157,7 @@ impl GameWatch {
         }
         let mut rect = RECT::default();
         unsafe { GetWindowRect(fg, &mut rect) };
-        Some(Game { hwnd: fg, rect, stats })
+        Some(Game { pid, name, hwnd: fg, rect, stats })
     }
 }
 

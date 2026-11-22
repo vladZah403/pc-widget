@@ -111,3 +111,10 @@ pub fn cores() -> Option<u32> {
 pub fn pawnio_installed() -> bool {
     reg_string(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\PawnIO", "ImagePath").is_some()
 }
+
+/// The local time now, "2026-11-22 13:05:41".
+pub fn local_time() -> String {
+    let mut t = windows_sys::Win32::Foundation::SYSTEMTIME::default();
+    unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t) };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}

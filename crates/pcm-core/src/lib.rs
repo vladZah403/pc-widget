@@ -11,4 +11,5 @@ pub mod nvme;
 pub mod processes;
 pub mod rate;
 pub mod sensors;
+pub mod session;
 pub mod smbios;

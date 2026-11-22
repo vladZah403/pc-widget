@@ -2,13 +2,15 @@
 //!
 //! Without arguments it shows the desktop widget; `--diag [--out FILE]
 //! [--helper PATH] [--ping HOST]` reads every source once and prints it;
-//! `--png FILE` draws the widget with live data into a PNG (no window).
+//! `--png FILE` draws the widget with live data into a PNG (no window);
+//! `--session FILE` prints a game session's summary.
 
 mod alerts;
 mod collect;
 mod diag;
 mod game;
 mod layered;
+mod session_rec;
 mod taskbar;
 mod tray;
 mod widget_win;
@@ -25,5 +27,29 @@ fn main() {
         };
         std::process::exit(widget_win::png(path));
     }
+    if let Some(i) = args.iter().position(|a| a == "--session") {
+        let Some(path) = args.get(i + 1) else {
+            eprintln!("--session needs a file name");
+            std::process::exit(2);
+        };
+        std::process::exit(print_session(path));
+    }
     std::process::exit(widget_win::run());
+}
+
+fn print_session(path: &str) -> i32 {
+    match pcm_core::session::Session::load(std::path::Path::new(path)) {
+        Ok(s) => {
+            let mut info = s.info.clone();
+            let samples = std::mem::take(&mut info.samples);
+            println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+            println!("samples: {} (first {:?})", samples.len(), samples.first());
+            println!("frames in the file: {}", s.frame_ms.len());
+            0
+        }
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            1
+        }
+    }
 }

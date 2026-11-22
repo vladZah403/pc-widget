@@ -7,8 +7,8 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use pcm_core::config::{self, Config};
 use pcm_render::text::Fonts;
@@ -38,6 +38,7 @@ use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
 use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
+use crate::session_rec::{self, Recorder, Recording, WM_APP_SESSION};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
 
@@ -88,6 +89,18 @@ fn fullscreen_app_active(own: HWND) -> bool {
             && r.top <= mi.rcMonitor.top
             && r.right >= mi.rcMonitor.right
             && r.bottom >= mi.rcMonitor.bottom
+    }
+}
+
+/// "42 мин", "1 ч 05 мин", "45 с"
+fn fmt_play_time(s: f64) -> String {
+    let m = (s / 60.0).round() as u64;
+    if s < 60.0 {
+        format!("{:.0} с", s)
+    } else if m < 60 {
+        format!("{m} мин")
+    } else {
+        format!("{} ч {:02} мин", m / 60, m % 60)
     }
 }
 
@@ -162,6 +175,9 @@ struct App {
     overlay: Overlay,
     /// A game is in front (counted frames), whether the panel shows or not.
     game_fps: bool,
+    recorder: Recorder,
+    /// Sessions written in the background, waiting for their alert card.
+    sessions_done: Arc<Mutex<Vec<pcm_core::session::SessionInfo>>>,
 }
 
 thread_local! {
@@ -765,6 +781,14 @@ impl App {
     fn fps_tick(&mut self) {
         let own = [self.hwnd, self.tab.hwnd, self.toast, self.overlay.hwnd, self.panel.hwnd];
         let game = if self.cfg.fps { self.game.check(&own, fullscreen_app_active(self.hwnd)) } else { None };
+        if let Some(g) = &game
+            && let Some(done) = self.recorder.seen(g, self.data.as_ref())
+        {
+            self.finish_session(done); // another game came to the front
+        }
+        if let Some(done) = self.recorder.poll(self.game.counter()) {
+            self.finish_session(done);
+        }
         let was = self.game_fps;
         self.game_fps = game.is_some();
         match &game {
@@ -798,9 +822,33 @@ impl App {
                 self.show_toast(&alert);
             }
         } else {
+            if let Some(done) = self.recorder.stop() {
+                self.finish_session(done);
+            }
             self.game.stop();
         }
         self.fps_tick();
+    }
+
+    fn finish_session(&self, rec: Recording) {
+        let dir = session_rec::sessions_dir(&data_dir());
+        session_rec::finish_in_background(rec, dir, self.sessions_done.clone(), self.hwnd);
+    }
+
+    /// "Сессия записана": the game, how long, the average FPS and 1% low.
+    fn session_written(&mut self) {
+        let done: Vec<_> = self.sessions_done.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default();
+        let Some(info) = done.last() else { return };
+        let s = &info.summary;
+        let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
+        let body = format!(
+            "{name}: {}, в среднем {:.0} FPS, 1% low {:.0}.",
+            fmt_play_time(s.active_s),
+            s.avg_fps,
+            s.low1
+        );
+        let alert = Alert { title: "Игровая сессия записана".into(), body, hot: false };
+        self.show_toast(&alert);
     }
 
     fn toggle_fps_panel(&mut self) {
@@ -941,6 +989,11 @@ impl App {
             }
             AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
             let fm = CreatePopupMenu();
+            if let Some(game) = self.recorder.game() {
+                // which game is being recorded (a line to read, not a command)
+                AppendMenuW(fm, MF_STRING | MF_GRAYED, 0, wide(&format!("● Идёт запись: {game}")).as_ptr());
+                AppendMenuW(fm, MF_SEPARATOR, 0, null());
+            }
             AppendMenuW(fm, MF_STRING | check(self.cfg.fps), FPS, wide("Считать FPS").as_ptr());
             let off = if self.cfg.fps { 0 } else { MF_GRAYED };
             let panel_text = wide("Показывать FPS-панель (Ctrl+Alt+F)");
@@ -1120,6 +1173,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     && let Some(new) = d.take()
                 {
                     a.data = Some(new);
+                }
+                if let Some(d) = &a.data {
+                    a.recorder.sample(d);
                 }
                 a.present();
                 a.tab_cpu();
@@ -1312,6 +1368,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.fps_tick());
             0
         }
+        WM_APP_SESSION => {
+            with_app(|a| a.session_written());
+            0
+        }
         WM_TIMER if wp == TIMER_TOAST => {
             with_app(|a| unsafe {
                 KillTimer(hwnd, TIMER_TOAST);
@@ -1361,6 +1421,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DESTROY => {
             with_app(|a| {
+                if let Some(rec) = a.recorder.stop() {
+                    session_rec::finish_now(rec, &session_rec::sessions_dir(&data_dir()));
+                }
                 a.panel.hide();
                 a.shared.stop.store(true, Ordering::Relaxed);
                 a.shared.hwnd.store(0, Ordering::Relaxed);
@@ -1619,6 +1682,8 @@ pub fn run() -> i32 {
                 game: GameWatch::default(),
                 overlay: Overlay::new(overlay_hwnd),
                 game_fps: false,
+                recorder: Recorder::default(),
+                sessions_done: Arc::new(Mutex::new(Vec::new())),
             })
         });
         collect::start(shared.clone());
