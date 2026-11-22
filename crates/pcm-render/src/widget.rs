@@ -43,6 +43,18 @@ pub struct Drive {
     pub written: Option<u64>,
 }
 
+/// A program in the PC Monitor window's process list.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProcRow {
+    pub name: String,
+    /// % of the whole PC.
+    pub cpu: f32,
+    /// Private bytes of all its processes.
+    pub memory: u64,
+    /// How many processes it has.
+    pub count: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum UpdateState {
     Download(f32),
@@ -102,6 +114,8 @@ pub struct Data {
     pub procs: Option<Vec<(String, f32, u64)>>,
     /// A program whose × was clicked once (the next click closes it).
     pub procs_armed: Option<String>,
+    /// Every program (busiest first), while the window's process tab is open.
+    pub procs_all: Option<Vec<ProcRow>>,
     /// Programs that can't be closed from the list.
     pub keep_running: Vec<String>,
     pub update: Option<String>,

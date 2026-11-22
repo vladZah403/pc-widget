@@ -36,7 +36,7 @@ const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
-use crate::dashboard::ToDashboard;
+use crate::dashboard::{FromDashboard, ToDashboard};
 use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
 use crate::report_win::{self, Action, ReportWin};
@@ -138,21 +138,39 @@ struct DashboardProc {
     tx: std::sync::mpsc::Sender<String>,
 }
 
+/// The window asks something: its requests wait here for the widget's thread.
+const WM_APP_DASH: u32 = 0x8000 + 6;
+
 impl DashboardProc {
-    fn start() -> Option<DashboardProc> {
-        use std::io::Write;
+    fn start(hwnd: HWND, inbox: Arc<Mutex<Vec<FromDashboard>>>) -> Option<DashboardProc> {
+        use std::io::{BufRead, Write};
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let exe = std::env::current_exe().ok()?;
         let mut child = std::process::Command::new(exe)
             .arg("--dashboard")
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .ok()?;
         let mut stdin = child.stdin.take()?;
+        let stdout = child.stdout.take()?;
+        let hwnd = hwnd as isize;
+        std::thread::Builder::new()
+            .name("dashboard-asks".into())
+            .spawn(move || {
+                for line in std::io::BufReader::new(stdout).lines() {
+                    let Ok(line) = line else { break };
+                    let Ok(msg) = serde_json::from_str::<FromDashboard>(&line) else { continue };
+                    if let Ok(mut q) = inbox.lock() {
+                        q.push(msg);
+                    }
+                    unsafe { PostMessageW(hwnd as HWND, WM_APP_DASH, 0, 0) };
+                }
+            })
+            .ok()?;
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         std::thread::Builder::new()
             .name("dashboard-feed".into())
@@ -252,6 +270,7 @@ struct App {
     auto_switched: bool,
     back_to: String,
     dashboard: Option<DashboardProc>,
+    dash_inbox: Arc<Mutex<Vec<FromDashboard>>>,
     /// The history database (None if it can't be opened) and when it got
     /// its last point / was last trimmed (unix s).
     history: Option<pcm_core::history::History>,
@@ -942,8 +961,27 @@ impl App {
             d.send(&ToDashboard::Focus);
             return;
         }
-        self.dashboard = DashboardProc::start();
+        self.dashboard = DashboardProc::start(self.hwnd, self.dash_inbox.clone());
         self.feed_dashboard();
+    }
+
+    /// What the window asked for: a process list, ending a program.
+    fn dashboard_asks(&mut self) {
+        let asks: Vec<FromDashboard> =
+            self.dash_inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+        for ask in asks {
+            match ask {
+                FromDashboard::WantProcs(on) => self.shared.want_procs_all.store(on, Ordering::Relaxed),
+                FromDashboard::EndProgram(name) => {
+                    // the same rules as the widget's ×: this user's programs, never Windows' own
+                    let mut keep = self.shared.pids.lock().map(|p| p.clone()).unwrap_or_default();
+                    if let Some(d) = &self.dashboard {
+                        keep.push(d.child.id());
+                    }
+                    pcm_win::processes::end_program(&name, &keep);
+                }
+            }
+        }
     }
 
     /// The latest readings to the window, if it is open.
@@ -951,6 +989,7 @@ impl App {
         let Some(d) = &mut self.dashboard else { return };
         if !d.alive() {
             self.dashboard = None; // closed: its memory is Windows' again
+            self.shared.want_procs_all.store(false, Ordering::Relaxed);
             return;
         }
         let Some(data) = &self.data else { return };
@@ -1641,6 +1680,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| a.session_written());
             0
         }
+        WM_APP_DASH => {
+            with_app(|a| a.dashboard_asks());
+            0
+        }
         WM_TIMER if wp == TIMER_TOAST => {
             with_app(|a| unsafe {
                 KillTimer(hwnd, TIMER_TOAST);
@@ -2049,6 +2092,7 @@ pub fn run(report: Option<String>) -> i32 {
                 auto_switched: false,
                 back_to: "work".into(),
                 dashboard: None,
+                dash_inbox: Arc::new(Mutex::new(Vec::new())),
                 history: open_history(),
                 history_last: 0,
                 history_trimmed: 0,

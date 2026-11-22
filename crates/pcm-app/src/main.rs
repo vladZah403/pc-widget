@@ -10,6 +10,7 @@
 mod alerts;
 mod collect;
 mod dash_history;
+mod dash_procs;
 mod dashboard;
 mod diag;
 mod game;

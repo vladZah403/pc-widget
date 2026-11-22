@@ -12,7 +12,7 @@ use pcm_core::model::{Snapshot, Temp};
 use pcm_core::processes::{KEEP_RUNNING, Tracker};
 use pcm_core::{merge, sensors};
 use pcm_render::format::{short_cpu_name, short_gpu_name};
-use pcm_render::widget::{Data, Drive, HISTORY_LEN};
+use pcm_render::widget::{Data, Drive, HISTORY_LEN, ProcRow};
 use pcm_win::*;
 
 /// What the window and the collector share.
@@ -22,6 +22,8 @@ pub struct Shared {
     pub hwnd: AtomicIsize,
     /// The process list is open: sample processes.
     pub want_procs: AtomicBool,
+    /// The PC Monitor window shows its process tab: every program.
+    pub want_procs_all: AtomicBool,
     pub stop: AtomicBool,
     pub ping_host: Mutex<String>,
     /// The program's own PIDs (it and its helper), never offered for closing.
@@ -36,6 +38,7 @@ impl Shared {
             data: Mutex::new(None),
             hwnd: AtomicIsize::new(0),
             want_procs: AtomicBool::new(false),
+            want_procs_all: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             ping_host: Mutex::new(ping_host),
             pids: Mutex::new(vec![std::process::id()]),
@@ -152,18 +155,30 @@ fn run(shared: Arc<Shared>) {
             }
         }
         let want_procs = shared.want_procs.load(Ordering::Relaxed);
-        let procs_list = if want_procs {
+        let want_all = shared.want_procs_all.load(Ordering::Relaxed);
+        let (procs_list, procs_all) = if want_procs || want_all {
             let own = shared.pids.lock().map(|p| p.clone()).unwrap_or_default();
-            let list = tracker.update(&procs.sample(), now_s(), threads);
-            Some(
-                list.into_iter()
-                    .filter(|g| !g.pids.iter().all(|p| own.contains(p)))
-                    .take(5)
-                    .map(|g| (g.name, g.cpu, g.memory))
-                    .collect(),
-            )
+            let list: Vec<_> = tracker
+                .update(&procs.sample(), now_s(), threads)
+                .into_iter()
+                .filter(|g| !g.pids.iter().all(|p| own.contains(p)))
+                .collect();
+            let top: Option<Vec<(String, f32, u64)>> =
+                want_procs.then(|| list.iter().take(5).map(|g| (g.name.clone(), g.cpu, g.memory)).collect());
+            let all: Option<Vec<ProcRow>> = want_all.then(|| {
+                list.iter()
+                    .take(80)
+                    .map(|g| ProcRow {
+                        name: g.name.clone(),
+                        cpu: g.cpu,
+                        memory: g.memory,
+                        count: g.pids.len() as u32,
+                    })
+                    .collect()
+            });
+            (top, all)
         } else {
-            None
+            (None, None)
         };
 
         let load = s.cpu.load.unwrap_or(0.0);
@@ -235,6 +250,7 @@ fn run(shared: Arc<Shared>) {
             ping_host,
             procs: procs_list,
             procs_armed: None,
+            procs_all,
             keep_running: KEEP_RUNNING.iter().map(|s| s.to_string()).collect(),
             update: None,
             update_state: None,

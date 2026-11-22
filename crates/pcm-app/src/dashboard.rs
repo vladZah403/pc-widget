@@ -16,6 +16,7 @@ use pcm_render::widget::Data;
 use serde::{Deserialize, Serialize};
 
 use crate::dash_history::HistoryTab;
+use crate::dash_procs::ProcsTab;
 
 /// What the widget sends, one per line.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,6 +25,24 @@ pub enum ToDashboard {
     Feed { data: Box<Data>, theme: String, custom: [String; 2] },
     /// "Открыть PC Monitor" again: come to the front.
     Focus,
+}
+
+/// What the window asks the widget, one per line on its stdout.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum FromDashboard {
+    /// The process tab is open (or closed): sample every program.
+    WantProcs(bool),
+    /// End this program (all its processes), as the widget's × does.
+    EndProgram(String),
+}
+
+/// Ask the widget something.
+pub fn send(msg: &FromDashboard) {
+    use std::io::Write;
+    if let Ok(line) = serde_json::to_string(msg) {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{line}").and_then(|_| out.flush());
+    }
 }
 
 const BG: Color32 = Color32::from_rgb(20, 23, 30);
@@ -81,6 +100,7 @@ struct Dashboard {
     /// The feed and the scale the textures were drawn for.
     drawn: (u64, f32),
     history: HistoryTab,
+    procs: ProcsTab,
 }
 
 impl Dashboard {
@@ -103,6 +123,7 @@ impl Dashboard {
             cards: vec![None; CARDS.len()],
             drawn: (0, 0.0),
             history: HistoryTab::default(),
+            procs: ProcsTab::default(),
         }
     }
 
@@ -162,6 +183,7 @@ impl eframe::App for Dashboard {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         self.update_cards(&ctx);
+        self.procs.visible(self.tab == 1);
         ui.painter().rect_filled(ui.max_rect(), 0.0, BG);
         egui::Frame::new().fill(BG).inner_margin(20).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -177,6 +199,16 @@ impl eframe::App for Dashboard {
             ui.add_space(16.0);
             match self.tab {
                 0 => self.overview(ui),
+                1 => {
+                    let (rows, sc) = {
+                        let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            f.data.as_ref().and_then(|d| d.procs_all.clone()),
+                            f.theme.as_ref().map(|t| t.scale()),
+                        )
+                    };
+                    self.procs.ui(ui, rows.as_ref(), sc.as_ref());
+                }
                 2 => {
                     let (theme, key) = {
                         let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
@@ -255,4 +287,28 @@ pub fn run(tab: usize) -> i32 {
         }),
     );
     if result.is_err() { 1 } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_both_ways() {
+        // the widget's lines for the window and back, as they go through the pipes
+        let feed =
+            ToDashboard::Feed { data: Box::default(), theme: "ice".into(), custom: Default::default() };
+        let line = serde_json::to_string(&feed).unwrap();
+        assert!(!line.contains('\n'));
+        assert!(matches!(serde_json::from_str(&line), Ok(ToDashboard::Feed { theme, .. }) if theme == "ice"));
+        assert_eq!(serde_json::to_string(&ToDashboard::Focus).unwrap(), "\"Focus\"");
+        let ask = serde_json::to_string(&FromDashboard::EndProgram("chrome".into())).unwrap();
+        assert_eq!(ask, r#"{"EndProgram":"chrome"}"#);
+        assert!(matches!(serde_json::from_str(r#"{"WantProcs":true}"#), Ok(FromDashboard::WantProcs(true))));
+        // a partial feed still reads (missing readings = defaults)
+        let partial = r##"{"Feed":{"data":{"cpu":12.5},"theme":"heat","custom":["#000000","#ffffff"]}}"##;
+        assert!(
+            matches!(serde_json::from_str(partial), Ok(ToDashboard::Feed { data, .. }) if data.cpu == 12.5)
+        );
+    }
 }
