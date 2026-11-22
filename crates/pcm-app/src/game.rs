@@ -7,7 +7,7 @@ use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 
 use pcm_core::frames::FrameStats;
-use pcm_render::overlay::{OverlayInfo, fps_overlay};
+use pcm_render::overlay::{Look, OverlayInfo, fps_overlay};
 use pcm_render::text::Fonts;
 use pcm_render::theme::Scale;
 use pcm_render::widget::Data;
@@ -189,8 +189,8 @@ pub struct Overlay {
     pub hwnd: HWND,
     surface: Option<Surface>,
     visible: bool,
-    /// What the picture on screen shows, to skip redrawing the same.
-    shown: Option<(OverlayInfo, u32)>,
+    /// What the picture on screen shows (and how), to skip redrawing the same.
+    shown: Option<(OverlayInfo, u32, Look, u32)>,
 }
 
 impl Overlay {
@@ -198,7 +198,9 @@ impl Overlay {
         Overlay { hwnd, surface: None, visible: false, shown: None }
     }
 
-    /// Show `info` in `corner` ("tl", "tr", "bl", "br") of the game window.
+    /// Show `info` in `corner` ("tl", "tr", "bl", "br") of the game window,
+    /// `size` %, its background `bg` (0..1) solid.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         fonts: &mut Fonts,
@@ -207,6 +209,8 @@ impl Overlay {
         g: &Game,
         corner: &str,
         size: u32,
+        look: Look,
+        bg: f32,
     ) {
         let dpi = unsafe {
             let mon = MonitorFromWindow(g.hwnd, MONITOR_DEFAULTTONEAREST);
@@ -223,7 +227,8 @@ impl Overlay {
             ..info.clone()
         };
         let skey = (scale * 100.0).round() as u32;
-        let redraw = self.shown.as_ref() != Some(&(key.clone(), skey));
+        let bkey = (bg * 100.0).round() as u32;
+        let redraw = self.shown.as_ref() != Some(&(key.clone(), skey, look, bkey));
         let r = g.rect;
         let m = (12.0 * scale).round() as i32;
         let place = |w: i32, h: i32| {
@@ -232,10 +237,10 @@ impl Overlay {
             (x, y)
         };
         if redraw {
-            let Some(pm) = fps_overlay(fonts, scale, sc, &key) else { return };
+            let Some(pm) = fps_overlay(fonts, scale, sc, &key, look, bg) else { return };
             let pos = place(pm.width() as i32, pm.height() as i32);
             layered::show(self.hwnd, &mut self.surface, &pm, 1.0, Some(pos));
-            self.shown = Some((key, skey));
+            self.shown = Some((key, skey, look, bkey));
         } else if let Some(s) = &self.surface {
             let pos = place(s.w, s.h);
             unsafe {

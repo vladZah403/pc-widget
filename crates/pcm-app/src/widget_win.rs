@@ -11,6 +11,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use pcm_core::config::{self, Config};
+use pcm_render::overlay::Look;
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
 use pcm_render::widget::{
@@ -1096,6 +1097,9 @@ impl App {
         c.fps_panel = new.fps_panel;
         c.fps_corner = new.fps_corner;
         c.fps_size = new.fps_size;
+        c.fps_style = new.fps_style;
+        c.fps_rows = new.fps_rows;
+        c.fps_bg = new.fps_bg;
         c.auto_game = new.auto_game;
         c.alerts = new.alerts;
         c.quiet_games = new.quiet_games;
@@ -1139,8 +1143,9 @@ impl App {
         }
         if new.fps != old.fps {
             self.set_fps(new.fps);
-        } else if (&self.cfg.fps_corner, self.cfg.fps_size, self.cfg.fps_panel)
-            != (&old.fps_corner, old.fps_size, old.fps_panel)
+        } else if (&self.cfg.fps_corner, self.cfg.fps_size, self.cfg.fps_panel, &self.cfg.fps_style)
+            != (&old.fps_corner, old.fps_size, old.fps_panel, &old.fps_style)
+            || (&self.cfg.fps_rows, self.cfg.fps_bg) != (&old.fps_rows, old.fps_bg)
         {
             self.fps_tick();
         }
@@ -1216,9 +1221,11 @@ impl App {
         self.game_fps = game.is_some();
         match &game {
             Some(g) if self.cfg.fps_panel => {
-                let info = overlay_info(g, self.data.as_ref());
+                let info = overlay_info(g, self.data.as_ref()).keep(&self.cfg.fps_rows);
                 let sc = self.theme().scale();
-                self.overlay.show(&mut self.fonts, &sc, &info, g, &self.cfg.fps_corner, self.cfg.fps_size);
+                let look = Look::from_name(&self.cfg.fps_style);
+                let c = &self.cfg;
+                self.overlay.show(&mut self.fonts, &sc, &info, g, &c.fps_corner, c.fps_size, look, c.fps_bg);
             }
             _ => self.overlay.hide(),
         }

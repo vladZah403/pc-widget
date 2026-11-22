@@ -16,8 +16,26 @@ pub const THEMES: &[&str] = &["heat", "neon", "ice", "custom"];
 pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
 /// Corners of the game window for the FPS panel: top-left, top-right, bottom-left, bottom-right.
 pub const FPS_CORNERS: &[&str] = &["tl", "tr", "bl", "br"];
-/// FPS panel sizes in %.
-pub const FPS_SIZES: &[u32] = &[100, 125, 150];
+/// FPS panel sizes in % offered in the tray menu; the settings take any of
+/// FPS_SIZE_MIN..=FPS_SIZE_MAX in steps of 5.
+pub const FPS_SIZES: &[u32] = &[75, 100, 125, 150];
+pub const FPS_SIZE_MIN: u32 = 60;
+pub const FPS_SIZE_MAX: u32 = 200;
+/// Looks of the FPS panel: the card (FPS, graph, a grid of readings), 1.8's
+/// pill, one line.
+pub const FPS_STYLES: &[&str] = &["card", "classic", "line"];
+/// What the FPS panel can show besides the FPS, with the settings' names.
+pub const FPS_ROWS: &[(&str, &str)] = &[
+    ("low", "1% low"),
+    ("graph", "График кадров"),
+    ("gpu", "Видеокарта"),
+    ("cpu", "Процессор"),
+    ("vram", "Видеопамять"),
+    ("clock", "Частота видеокарты"),
+    ("ping", "Пинг"),
+];
+/// The FPS panel's background can't go fainter than this.
+pub const FPS_BG_MIN: f32 = 0.2;
 /// The interface language: "auto" = the Windows one.
 pub const LANGS: &[&str] = &["auto", "ru", "en", "uk", "de"];
 /// "work" and "game": each remembers how the widget looks.
@@ -125,8 +143,14 @@ pub struct Config {
     pub fps_panel: bool,
     /// One of FPS_CORNERS.
     pub fps_corner: String,
-    /// One of FPS_SIZES.
+    /// FPS_SIZE_MIN..=FPS_SIZE_MAX, %.
     pub fps_size: u32,
+    /// One of FPS_STYLES.
+    pub fps_style: String,
+    /// Keys of FPS_ROWS shown, in any order (drawn in FPS_ROWS' order).
+    pub fps_rows: Vec<String>,
+    /// The panel's background opacity FPS_BG_MIN..1 (the text stays solid).
+    pub fps_bg: f32,
     /// One of PROFILES.
     pub profile: String,
     /// Switch to "game" while a game is in front, back after it.
@@ -178,6 +202,9 @@ impl Default for Config {
             fps_panel: true,
             fps_corner: "tl".into(),
             fps_size: 100,
+            fps_style: "card".into(),
+            fps_rows: ["low", "graph", "gpu", "cpu", "vram", "ping"].map(String::from).to_vec(),
+            fps_bg: 0.85,
             profile: "work".into(),
             auto_game: true,
             lang: "auto".into(),
@@ -257,9 +284,18 @@ impl Config {
         if !FPS_CORNERS.contains(&self.fps_corner.as_str()) {
             self.fps_corner = d.fps_corner.clone();
         }
-        if !FPS_SIZES.contains(&self.fps_size) {
-            self.fps_size = d.fps_size;
+        self.fps_size = ((self.fps_size.clamp(FPS_SIZE_MIN, FPS_SIZE_MAX) + 2) / 5) * 5;
+        if !FPS_STYLES.contains(&self.fps_style.as_str()) {
+            self.fps_style = d.fps_style.clone();
         }
+        let mut rows: Vec<String> = Vec::new();
+        for (k, _) in FPS_ROWS {
+            if self.fps_rows.iter().any(|r| r == k) {
+                rows.push(k.to_string());
+            }
+        }
+        self.fps_rows = rows;
+        self.fps_bg = if self.fps_bg.is_finite() { self.fps_bg.clamp(FPS_BG_MIN, 1.0) } else { d.fps_bg };
         if !LANGS.contains(&self.lang.as_str()) {
             self.lang = d.lang.clone();
         }
@@ -435,8 +471,12 @@ mod tests {
         assert_eq!(c.ping_host, "eu.battle.net");
         assert_eq!(Config::parse("size = 999").size, 200);
         assert_eq!(Config::parse("ping_host = \"bad host!\"").ping_host, "1.1.1.1");
-        let f = Config::parse("fps_corner = \"middle\"\nfps_size = 110");
-        assert_eq!((f.fps_corner.as_str(), f.fps_size), ("tl", 100));
+        let f = Config::parse("fps_corner = \"middle\"\nfps_size = 112\nfps_style = \"huge\"\nfps_bg = 0.0");
+        assert_eq!((f.fps_corner.as_str(), f.fps_size, f.fps_style.as_str()), ("tl", 110, "card"));
+        assert_eq!((Config::parse("fps_size = 7").fps_size, f.fps_bg), (FPS_SIZE_MIN, FPS_BG_MIN));
+        let r = Config::parse("fps_rows = [\"ping\", \"nope\", \"low\", \"ping\"]");
+        assert_eq!(r.fps_rows, ["low", "ping"], "known keys once, in FPS_ROWS' order");
+        assert!(Config::parse("fps_rows = []").fps_rows.is_empty(), "only the FPS is allowed");
         assert_eq!(Config::parse("fps_corner = \"br\"").fps_corner, "br");
         assert_eq!(Config::parse("profile = \"party\"").profile, "work");
     }

@@ -301,11 +301,12 @@ impl eframe::App for Dashboard {
                     self.procs.ui(ui, rows.as_ref(), sc.as_ref());
                 }
                 4 => {
-                    let (cfg, start, data) = {
+                    let (cfg, start, data, theme, key) = {
                         let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-                        (f.cfg.clone(), f.start.clone(), f.data.clone())
+                        (f.cfg.clone(), f.start.clone(), f.data.clone(), f.theme.clone(), f.theme_key.clone())
                     };
-                    self.settings.ui(ui, cfg.as_ref(), start.as_ref(), data.as_ref());
+                    let (cfg, start, data) = (cfg.as_ref(), start.as_ref(), data.as_ref());
+                    self.settings.ui(ui, cfg, start, data, &mut self.fonts, theme.as_ref(), &key);
                 }
                 3 => {
                     let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();

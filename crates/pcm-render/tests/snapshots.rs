@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use pcm_render::overlay::{fps_overlay, sample_overlay};
+use pcm_render::overlay::{Look, fps_overlay, sample_game, sample_overlay};
 use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
 use pcm_render::widget::{Edge, Renderer, View, sample_data};
@@ -100,10 +100,18 @@ fn widget_states() {
 #[test]
 fn fps_overlay_panel() {
     let mut fonts = Fonts::system();
-    let pm = fps_overlay(&mut fonts, 1.0, &Theme::Heat.scale(), &sample_overlay()).expect("render");
+    let sc = Theme::Heat.scale();
+    // 1.8's pill, as it was
+    let pm = fps_overlay(&mut fonts, 1.0, &sc, &sample_overlay(), Look::Classic, 1.0).expect("render");
     check_pm("overlay-100", &pm);
-    let pm = fps_overlay(&mut fonts, 1.5, &Theme::Heat.scale(), &sample_overlay()).expect("render");
+    let pm = fps_overlay(&mut fonts, 1.5, &sc, &sample_overlay(), Look::Classic, 1.0).expect("render");
     check_pm("overlay-150", &pm);
+    // the card and the line of 2.0
+    let rows: Vec<String> = ["low", "graph", "gpu", "cpu", "vram", "ping"].map(String::from).into();
+    let pm = fps_overlay(&mut fonts, 1.0, &sc, &sample_game().keep(&rows), Look::Card, 0.85).expect("render");
+    check_pm("overlay-card-100", &pm);
+    let pm = fps_overlay(&mut fonts, 1.5, &sc, &sample_game(), Look::Line, 1.0).expect("render");
+    check_pm("overlay-line-150", &pm);
 }
 
 #[test]

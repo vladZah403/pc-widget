@@ -192,6 +192,17 @@ impl Canvas {
         }
     }
 
+    /// Everything drawn so far at `alpha` (0..1) of its opacity.
+    pub fn fade(&mut self, alpha: f32) {
+        if alpha >= 1.0 {
+            return;
+        }
+        let a = (alpha.max(0.0) * 255.0).round() as u32;
+        for v in self.pm.data_mut() {
+            *v = ((*v as u32 * a + 127) / 255) as u8;
+        }
+    }
+
     /// A rounded rectangle's outline of `width` logical px.
     pub fn rrect_stroke(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, width: f32, c: Rgb) {
         let (a, b, cc, d) = (self.x(x0), self.y(y0), self.x(x1), self.y(y1));

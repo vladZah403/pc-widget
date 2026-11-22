@@ -323,3 +323,13 @@ PC Monitor: игровая сессия	PC Monitor: game session	PC Monitor: і�
 Открыть страницу загрузки	Open the download page	Відкрити сторінку завантаження	Downloadseite öffnen
 подпись не прошла проверку	the signature doesn't check out	підпис не пройшов перевірку	die Signatur stimmt nicht
 не удалось запустить новую версию	the new version didn't start	не вдалося запустити нову версію	die neue Version startete nicht
+Вид панели	Panel look	Вигляд панелі	Aussehen der Anzeige
+карточка	card	картка	Karte
+как в 1.8	as in 1.8	як у 1.8	wie in 1.8
+строка	line	рядок	Zeile
+Кроме FPS показывать:	Besides the FPS, show:	Крім FPS показувати:	Außer FPS zeigen:
+График кадров	Frame graph	Графік кадрів	Frame-Diagramm
+Видеопамять	Video memory	Відеопам'ять	Grafikspeicher
+Частота видеокарты	GPU clock	Частота відеокарти	GPU-Takt
+Фон панели	Panel background	Фон панелі	Hintergrund der Anzeige
+Пример — так панель будет выглядеть поверх игры:	A sample: this is how the panel will look over a game:	Приклад — так панель виглядатиме поверх гри:	Beispiel: So sieht die Anzeige über einem Spiel aus:

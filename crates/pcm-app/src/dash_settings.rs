@@ -7,10 +7,13 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui::{Color32, RichText};
-use pcm_core::config::{self, Config, FPS_SIZES, SECTIONS, TRAY_KINDS, TRAY_MAX};
+use pcm_core::config::{self, Config, FPS_ROWS, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
 use crate::dashboard::{FromDashboard, StartInfo, send};
 use pcm_render::format::{tr, trf};
+use pcm_render::overlay::{Look, preview, sample_game};
+use pcm_render::text::Fonts;
+use pcm_render::theme::Theme;
 use pcm_render::widget::{Data, UpdateState};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
@@ -31,6 +34,9 @@ pub struct SettingsTab {
     host_bad: bool,
     /// `--scroll N` (screenshots of the lower sections): start scrolled down.
     pub start_offset: Option<f32>,
+    /// The FPS panel over a made-up game, and what it was drawn for.
+    preview: Option<egui::TextureHandle>,
+    preview_key: String,
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
@@ -48,12 +54,16 @@ fn rgb_of(hex: &str) -> [u8; 3] {
 }
 
 impl SettingsTab {
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         from_widget: Option<&Config>,
         start: Option<&StartInfo>,
         data: Option<&Data>,
+        fonts: &mut Fonts,
+        theme: Option<&Theme>,
+        theme_key: &str,
     ) {
         // the widget's settings, unless ours are newer
         if self.changed.is_none_or(|t| t.elapsed() > SETTLE)
@@ -201,22 +211,62 @@ impl SettingsTab {
             ui.checkbox(&mut c.fps, tr("Считать FPS (панель, запись сессий)"));
             ui.add_enabled_ui(c.fps, |ui| {
                 ui.checkbox(&mut c.fps_panel, tr("Показывать FPS-панель (Ctrl+Alt+F)"));
-                ui.horizontal(|ui| {
-                    ui.label(tr("Угол панели"));
-                    for (key, name) in [
-                        ("tl", tr("слева вверху")),
-                        ("tr", tr("справа вверху")),
-                        ("bl", tr("слева внизу")),
-                        ("br", tr("справа внизу")),
-                    ] {
-                        ui.radio_value(&mut c.fps_corner, key.to_string(), name);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(tr("Размер панели"));
-                    for s in FPS_SIZES {
-                        ui.radio_value(&mut c.fps_size, *s, format!("{s}%"));
-                    }
+                ui.add_enabled_ui(c.fps_panel, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Вид панели"));
+                        for (key, name) in
+                            [("card", tr("карточка")), ("classic", tr("как в 1.8")), ("line", tr("строка"))]
+                        {
+                            ui.radio_value(&mut c.fps_style, key.to_string(), name);
+                        }
+                    });
+                    ui.label(RichText::new(tr("Кроме FPS показывать:")).color(DIM));
+                    ui.horizontal_wrapped(|ui| {
+                        for (key, name) in FPS_ROWS {
+                            let mut on = c.fps_rows.iter().any(|r| r == key);
+                            if ui.checkbox(&mut on, tr(name)).changed() {
+                                if on {
+                                    c.fps_rows.push(key.to_string());
+                                } else {
+                                    c.fps_rows.retain(|r| r != key);
+                                }
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Угол панели"));
+                        for (key, name) in [
+                            ("tl", tr("слева вверху")),
+                            ("tr", tr("справа вверху")),
+                            ("bl", tr("слева внизу")),
+                            ("br", tr("справа внизу")),
+                        ] {
+                            ui.radio_value(&mut c.fps_corner, key.to_string(), name);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Размер панели"));
+                        let mut size = c.fps_size as f32;
+                        let range = config::FPS_SIZE_MIN as f32..=config::FPS_SIZE_MAX as f32;
+                        let s = egui::Slider::new(&mut size, range).step_by(5.0).fixed_decimals(0).suffix("%");
+                        if ui.add(s).changed() {
+                            c.fps_size = size as u32;
+                        }
+                        if ui.button("100%").clicked() {
+                            c.fps_size = 100;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Фон панели"));
+                        let mut a = (c.fps_bg * 100.0).round();
+                        let range = (config::FPS_BG_MIN * 100.0)..=100.0;
+                        let s = egui::Slider::new(&mut a, range).step_by(5.0).fixed_decimals(0).suffix("%");
+                        if ui.add(s).changed() {
+                            c.fps_bg = a / 100.0;
+                        }
+                    });
+                    hint(ui, &tr("Пример — так панель будет выглядеть поверх игры:"));
+                    self.show_preview(ui, &c, fonts, theme, theme_key);
                 });
             });
             ui.horizontal(|ui| {
@@ -353,6 +403,47 @@ impl SettingsTab {
         self.edit = Some(c);
         if let Some(a) = action {
             send(&a);
+        }
+    }
+}
+
+impl SettingsTab {
+    /// The FPS panel as the settings stand, over a made-up game picture;
+    /// drawn again only when something it shows changes.
+    fn show_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Config,
+        fonts: &mut Fonts,
+        theme: Option<&Theme>,
+        theme_key: &str,
+    ) {
+        let Some(theme) = theme else { return };
+        let ppp = ui.ctx().pixels_per_point();
+        let key = format!(
+            "{}{:?}{}{}{}{theme_key}{ppp}",
+            c.fps_style, c.fps_rows, c.fps_bg, c.fps_size, c.fps_corner
+        );
+        if self.preview_key != key || self.preview.is_none() {
+            let info = sample_game().keep(&c.fps_rows);
+            let look = Look::from_name(&c.fps_style);
+            let sc = theme.scale();
+            let Some(pm) = preview(fonts, ppp, c.fps_size, &sc, &info, look, c.fps_bg, &c.fps_corner) else {
+                return;
+            };
+            let img = egui::ColorImage::from_rgba_premultiplied(
+                [pm.width() as usize, pm.height() as usize],
+                pm.data(),
+            );
+            match &mut self.preview {
+                Some(t) => t.set(img, egui::TextureOptions::LINEAR),
+                slot => *slot = Some(ui.ctx().load_texture("fps-preview", img, egui::TextureOptions::LINEAR)),
+            }
+            self.preview_key = key;
+        }
+        if let Some(t) = &self.preview {
+            let size = t.size_vec2() / ppp;
+            ui.add(egui::Image::new((t.id(), size)).corner_radius(8.0));
         }
     }
 }
