@@ -9,6 +9,7 @@ use egui::{Color32, RichText, Vec2};
 use pcm_core::history::{Column, FILE, History, Point, STEP_S, buckets, to_csv};
 use pcm_render::chart::{Chart, Series, chart, columns};
 use pcm_render::format::fmt_speed;
+use pcm_render::format::{tr, trf};
 use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
 
@@ -65,7 +66,7 @@ impl HistoryTab {
             match History::open_read(&path) {
                 Ok(db) => self.db = Some(db),
                 Err(_) => {
-                    self.note = Some("Истории пока нет: виджет записывает точку раз в 10 секунд.".into());
+                    self.note = Some(tr("Истории пока нет: виджет записывает точку раз в 10 секунд."));
                     return;
                 }
             }
@@ -78,7 +79,7 @@ impl HistoryTab {
                     self.points = p;
                     self.note = None;
                 }
-                Err(e) => self.note = Some(format!("История не читается: {e}")),
+                Err(e) => self.note = Some(trf("История не читается: {e}", &[("e", e.to_string())])),
             }
         }
         self.span = (from, now);
@@ -96,7 +97,7 @@ impl HistoryTab {
         let (a, z) = (sc.at(0.05), sc.at(0.55));
         vec![
             Chart {
-                title: "Процессор, %".into(),
+                title: tr("Процессор, %"),
                 series: vec![s("CPU", a, Column::Cpu)],
                 lo: 0.0,
                 hi: Some(100.0),
@@ -105,7 +106,7 @@ impl HistoryTab {
                 fmt: pct,
             },
             Chart {
-                title: "Температура".into(),
+                title: tr("Температура"),
                 series: vec![s("CPU", a, Column::CpuTemp), s("GPU", z, Column::GpuTemp)],
                 lo: 20.0,
                 hi: None,
@@ -114,7 +115,7 @@ impl HistoryTab {
                 fmt: deg,
             },
             Chart {
-                title: "Видеокарта, %".into(),
+                title: tr("Видеокарта, %"),
                 series: vec![s("GPU", z, Column::Gpu)],
                 lo: 0.0,
                 hi: Some(100.0),
@@ -123,7 +124,7 @@ impl HistoryTab {
                 fmt: pct,
             },
             Chart {
-                title: "Память, %".into(),
+                title: tr("Память, %"),
                 series: vec![s("RAM", a, Column::Ram)],
                 lo: 0.0,
                 hi: Some(100.0),
@@ -132,7 +133,7 @@ impl HistoryTab {
                 fmt: pct,
             },
             Chart {
-                title: "Сеть".into(),
+                title: tr("Сеть"),
                 series: vec![s("↓", a, Column::Down), s("↑", z, Column::Up)],
                 lo: 0.0,
                 hi: None,
@@ -159,7 +160,7 @@ impl HistoryTab {
         ui.horizontal(|ui| {
             for (i, (name, _)) in RANGES.iter().enumerate() {
                 let sel = self.range == i;
-                let text = RichText::new(*name).size(13.0).color(if sel { TEXT } else { DIM });
+                let text = RichText::new(tr(name)).size(13.0).color(if sel { TEXT } else { DIM });
                 if ui.add(egui::Button::selectable(sel, text)).clicked() && !sel {
                     self.range = i;
                     self.load();
@@ -167,10 +168,14 @@ impl HistoryTab {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let enabled = !self.points.is_empty();
-                if ui.add_enabled(enabled, egui::Button::new("Сохранить CSV")).clicked() {
+                if ui.add_enabled(enabled, egui::Button::new(tr("Сохранить CSV"))).clicked() {
                     self.save_csv();
                 }
-                ui.label(RichText::new(format!("точек: {}", self.points.len())).size(12.0).color(DIM));
+                ui.label(
+                    RichText::new(trf("точек: {n}", &[("n", self.points.len().to_string())]))
+                        .size(12.0)
+                        .color(DIM),
+                );
             });
         });
         ui.add_space(10.0);

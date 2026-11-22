@@ -13,6 +13,7 @@ use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
 
 use crate::report_win::{save_dialog, session_csv_name, write_session_csv};
+use pcm_render::format::{tr, trf};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
 const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
@@ -42,11 +43,11 @@ pub struct SessionsTab {
 fn play_time(s: f64) -> String {
     let m = (s / 60.0).round() as u64;
     if s < 60.0 {
-        format!("{s:.0} с")
+        trf("{v} с", &[("v", format!("{s:.0}"))])
     } else if m < 60 {
-        format!("{m} мин")
+        trf("{m} мин", &[("m", m.to_string())])
     } else {
-        format!("{} ч {:02} мин", m / 60, m % 60)
+        trf("{h} ч {m} мин", &[("h", (m / 60).to_string()), ("m", format!("{:02}", m % 60))])
     }
 }
 
@@ -85,8 +86,8 @@ impl SessionsTab {
         if self.list.is_empty() {
             ui.label(
                 RichText::new(
-                    "Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню \
-                     виджета) и игра идёт больше 30 секунд.",
+                    tr("Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню виджета) и \
+                     игра идёт больше 30 секунд."),
                 )
                 .color(DIM),
             );
@@ -95,8 +96,14 @@ impl SessionsTab {
         let mut open: Option<PathBuf> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("sessions").striped(true).spacing([24.0, 8.0]).show(ui, |ui| {
-                for h in ["Когда", "Игра", "Время игры", "FPS в среднем", "1% low", ""]
-                {
+                for h in [
+                    tr("Когда"),
+                    tr("Игра"),
+                    tr("Время игры"),
+                    tr("FPS в среднем"),
+                    "1% low".into(),
+                    String::new(),
+                ] {
                     ui.label(RichText::new(h).size(12.0).color(DIM));
                 }
                 ui.end_row();
@@ -110,7 +117,8 @@ impl SessionsTab {
                     ui.label(RichText::new(play_time(s.active_s)).size(13.0).color(TEXT));
                     ui.label(RichText::new(format!("{:.0}", s.avg_fps)).size(13.0).color(TEXT));
                     ui.label(RichText::new(format!("{:.0}", s.low1)).size(13.0).color(TEXT));
-                    if ui.add(egui::Button::new(RichText::new("Отчёт").size(12.0)).small()).clicked() {
+                    if ui.add(egui::Button::new(RichText::new(tr("Отчёт")).size(12.0)).small()).clicked()
+                    {
                         open = Some(p.clone());
                     }
                     ui.end_row();
@@ -120,7 +128,12 @@ impl SessionsTab {
         if let Some(p) = open {
             match Session::load(&p) {
                 Ok(session) => self.open = Some(Open { path: p, session, texture: None, drawn: None }),
-                Err(e) => self.note = Some(format!("Не удалось прочитать {}: {e}", p.display())),
+                Err(e) => {
+                    self.note = Some(trf(
+                        "Не удалось прочитать {file}: {e}",
+                        &[("file", p.display().to_string()), ("e", e.to_string())],
+                    ))
+                }
             }
         }
         if let Some(n) = &self.note {
@@ -137,15 +150,15 @@ impl SessionsTab {
         let mut deleted = false;
         let Some(o) = self.open.as_mut() else { return };
         ui.horizontal(|ui| {
-            if ui.button("← Все сессии").clicked() {
+            if ui.button(tr("← Все сессии")).clicked() {
                 back = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let armed = self.delete_armed.is_some();
                 let del = if armed {
-                    RichText::new("Точно удалить?").color(HOT)
+                    RichText::new(tr("Точно удалить?")).color(HOT)
                 } else {
-                    RichText::new("Удалить").color(DIM)
+                    RichText::new(tr("Удалить")).color(DIM)
                 };
                 if ui.button(del).clicked() {
                     if armed {
@@ -155,7 +168,7 @@ impl SessionsTab {
                         self.delete_armed = Some(Instant::now());
                     }
                 }
-                if ui.button("Сохранить CSV").clicked()
+                if ui.button(tr("Сохранить CSV")).clicked()
                     && let Some(path) = save_dialog(std::ptr::null_mut(), &session_csv_name(&o.session.info))
                 {
                     let _ = write_session_csv(&o.session, &path);
@@ -166,7 +179,7 @@ impl SessionsTab {
         if let Some(theme) = theme {
             let ctx = ui.ctx().clone();
             let ppp = ctx.pixels_per_point();
-            let key = ((ppp * 100.0) as u32, format!("{theme:?}"));
+            let key = ((ppp * 100.0) as u32, format!("{theme:?}{}", pcm_render::format::language()));
             if o.drawn.as_ref() != Some(&key)
                 && let Some((pm, _)) =
                     session_report(fonts, ppp, &theme.scale(), &o.session, ReportHover::default())
@@ -186,7 +199,7 @@ impl SessionsTab {
                 });
             }
         } else {
-            ui.label(RichText::new("Жду цвета от виджета…").color(FAINT));
+            ui.label(RichText::new(tr("Жду цвета от виджета…")).color(FAINT));
         }
         if self.delete_armed.is_some() {
             ui.ctx().request_repaint_after(ARMED);

@@ -19,6 +19,7 @@ use crate::dash_history::HistoryTab;
 use crate::dash_procs::ProcsTab;
 use crate::dash_sessions::SessionsTab;
 use crate::dash_settings::SettingsTab;
+use pcm_render::format::{tr, trf};
 
 /// What the widget sends, one per line.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -172,7 +173,7 @@ impl Dashboard {
 
     fn overview(&mut self, ui: &mut egui::Ui) {
         if self.cards.iter().all(|c| c.is_none()) {
-            ui.label(RichText::new("Жду данные от виджета…").color(DIM));
+            ui.label(RichText::new(tr("Жду данные от виджета…")).color(DIM));
             return;
         }
         let cols = (((ui.available_width() + GAP) / (CARD_W + GAP)).floor() as usize).max(1);
@@ -235,7 +236,7 @@ impl eframe::App for Dashboard {
             ui.horizontal(|ui| {
                 for (i, name) in TABS.iter().enumerate() {
                     let selected = self.tab == i;
-                    let text = RichText::new(*name).size(15.0).color(if selected { TEXT } else { DIM });
+                    let text = RichText::new(tr(name)).size(15.0).color(if selected { TEXT } else { DIM });
                     if ui.add(egui::Button::selectable(selected, text)).clicked() {
                         self.tab = i;
                     }
@@ -272,8 +273,7 @@ impl eframe::App for Dashboard {
                 }
                 n => {
                     ui.label(
-                        RichText::new(format!("«{}» появится в следующих частях этапа 5.", TABS[n]))
-                            .color(DIM),
+                        RichText::new(trf("«{tab}» появится позже.", &[("tab", tr(TABS[n]))])).color(DIM),
                     );
                 }
             }
@@ -302,10 +302,12 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
                     if let Ok(mut f) = feed.lock() {
                         match msg {
                             ToDashboard::Feed { data, theme, custom, cfg } => {
+                                crate::apply_language(&cfg.lang);
                                 f.data = Some(*data);
                                 f.cfg = Some(*cfg);
                                 f.theme = Some(theme_of(&theme, &custom));
-                                f.theme_key = format!("{theme}{custom:?}");
+                                // the language too: charts and reports have words
+                                f.theme_key = format!("{theme}{custom:?}{}", pcm_render::format::language());
                                 f.seq += 1;
                             }
                             ToDashboard::Focus => f.focus = true,

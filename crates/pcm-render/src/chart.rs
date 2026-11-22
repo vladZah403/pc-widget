@@ -4,6 +4,7 @@
 use tiny_skia::Pixmap;
 
 use crate::canvas::{Align, Canvas, part};
+use crate::format::tr;
 use crate::text::{Fonts, Style};
 use crate::theme::*;
 
@@ -64,7 +65,7 @@ pub fn chart(fonts: &mut Fonts, scale: f32, w: f32, h: f32, spec: &Chart) -> Opt
     }
     let has_data = spec.series.iter().any(|s| s.values.iter().any(|v| v.is_some()));
     if !has_data {
-        let msg = part("нет данных за это время", Style::Regular, 11.0, FAINT);
+        let msg = part(tr("нет данных за это время"), Style::Regular, 11.0, FAINT);
         c.rich(fonts, (x0 + x1) / 2.0, (y0 + y1) / 2.0 + 4.0, &[msg], Align::Center);
     }
     for s in &spec.series {

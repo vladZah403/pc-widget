@@ -137,3 +137,14 @@ pub fn local_time_of(unix: i64) -> String {
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
+
+/// The Windows display language as one of PC Monitor's: "ru", "uk", "de",
+/// anything else "en" (1.8's system_language).
+pub fn ui_language() -> &'static str {
+    match unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() } & 0x3ff {
+        0x19 => "ru",
+        0x22 => "uk",
+        0x07 => "de",
+        _ => "en",
+    }
+}

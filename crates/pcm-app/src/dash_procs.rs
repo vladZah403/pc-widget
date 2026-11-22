@@ -12,6 +12,7 @@ use pcm_render::theme::Scale;
 use pcm_render::widget::ProcRow;
 
 use crate::dashboard::{FromDashboard, send};
+use pcm_render::format::{tr, trf};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
 const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
@@ -51,7 +52,7 @@ impl ProcsTab {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, rows: Option<&Vec<ProcRow>>, sc: Option<&Scale>) {
         let Some(rows) = rows else {
-            ui.label(RichText::new("Собираю список программ…").color(DIM));
+            ui.label(RichText::new(tr("Собираю список программ…")).color(DIM));
             return;
         };
         if self.armed.as_ref().is_some_and(|(_, t)| t.elapsed() > ARMED) {
@@ -65,9 +66,12 @@ impl ProcsTab {
         }
         let total_mem: u64 = rows.iter().map(|r| r.memory).sum();
         ui.label(
-            RichText::new(format!("Программ: {}  ·  их память: {}", rows.len(), fmt_mem(total_mem)))
-                .size(12.0)
-                .color(DIM),
+            RichText::new(trf(
+                "Программ: {n}  ·  их память: {mem}",
+                &[("n", rows.len().to_string()), ("mem", fmt_mem(total_mem))],
+            ))
+            .size(12.0)
+            .color(DIM),
         );
         ui.add_space(8.0);
         let header = |ui: &mut egui::Ui, text: &str, sort: Sort, me: &mut Sort| {
@@ -82,10 +86,10 @@ impl ProcsTab {
         let mut end: Option<String> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("procs").striped(true).min_col_width(70.0).spacing([24.0, 6.0]).show(ui, |ui| {
-                header(ui, "Программа", Sort::Name, &mut self.sort);
+                header(ui, &tr("Программа"), Sort::Name, &mut self.sort);
                 header(ui, "CPU", Sort::Cpu, &mut self.sort);
-                header(ui, "Память", Sort::Memory, &mut self.sort);
-                ui.label(RichText::new("Процессов").size(12.0).color(DIM));
+                header(ui, &tr("Память"), Sort::Memory, &mut self.sort);
+                ui.label(RichText::new(tr("Процессов")).size(12.0).color(DIM));
                 ui.label("");
                 ui.end_row();
                 for r in &rows {
@@ -98,9 +102,9 @@ impl ProcsTab {
                     if can_close(&r.name) {
                         let armed = self.armed.as_ref().is_some_and(|(n, _)| *n == r.name);
                         let text = if armed {
-                            RichText::new("Точно закрыть?").size(12.0).color(HOT)
+                            RichText::new(tr("Точно закрыть?")).size(12.0).color(HOT)
                         } else {
-                            RichText::new("Закрыть").size(12.0).color(DIM)
+                            RichText::new(tr("Закрыть")).size(12.0).color(DIM)
                         };
                         if ui.add(egui::Button::new(text).small()).clicked() {
                             if armed {
@@ -110,7 +114,7 @@ impl ProcsTab {
                             }
                         }
                     } else {
-                        ui.label(RichText::new("системная").size(11.0).color(FAINT));
+                        ui.label(RichText::new(tr("системная")).size(11.0).color(FAINT));
                     }
                     ui.end_row();
                 }

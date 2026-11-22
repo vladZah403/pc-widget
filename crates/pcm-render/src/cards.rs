@@ -120,11 +120,15 @@ pub fn card(fonts: &mut Fonts, scale: f32, kind: CardKind, d: &Data, theme: &The
         CardKind::Cpu => {
             k.frame("Процессор", &d.cpu_name);
             k.ring(Some(d.cpu / 100.0), &pct(d.cpu), "%", |t| sc.at(t));
-            let clock = d.cpu_clock_ghz.filter(|c| *c > 0.0).map(|c| dec(format!("{c:.1}")) + " ГГц");
+            let clock = d
+                .cpu_clock_ghz
+                .filter(|c| *c > 0.0)
+                .map(|c| trf("{v} ГГц", &[("v", dec(format!("{c:.1}")))]));
             k.row(COL_X, x1, 92.0, "Частота", &clock.unwrap_or("—".into()), TEXT);
             let (t, tc) = k.temp_text(d.temp_cpu, d.temp_cpu_approx);
             k.row(COL_X, x1, 114.0, "Температура", &t, tc);
-            let power = d.cpu_power_w.filter(|p| *p > 0.0).map(|p| format!("{p:.0} Вт"));
+            let power =
+                d.cpu_power_w.filter(|p| *p > 0.0).map(|p| trf("{v} Вт", &[("v", format!("{p:.0}"))]));
             k.row(COL_X, x1, 136.0, "Мощность", &power.unwrap_or("—".into()), TEXT);
             // a bar per core
             let n = d.cores.len().max(1) as f32;
@@ -150,23 +154,25 @@ pub fn card(fonts: &mut Fonts, scale: f32, kind: CardKind, d: &Data, theme: &The
             let shared = d.gpu_shared && d.temp_gpu.is_none() && d.temp_cpu.is_some();
             let (t, tc) = k.temp_text(if shared { d.temp_cpu } else { d.temp_gpu }, shared);
             k.row(COL_X, x1, 92.0, "Температура", &t, tc);
-            let clock = d.gpu_clock.filter(|c| *c > 0.0).map(|c| format!("{c:.0} МГц"));
+            let clock = d.gpu_clock.filter(|c| *c > 0.0).map(|c| trf("{v} МГц", &[("v", format!("{c:.0}"))]));
             k.row(COL_X, x1, 114.0, "Частота", &clock.unwrap_or("—".into()), TEXT);
             match (d.vram_used_mb, d.vram_total_mb) {
                 (Some(u), Some(t)) if t > 0.0 => {
-                    let v = format!(
-                        "{} / {} ГБ",
-                        dec(format!("{:.1}", u / 1024.0)),
-                        dec(format!("{:.1}", t / 1024.0))
+                    let v = trf(
+                        "{used} / {total} ГБ",
+                        &[
+                            ("used", dec(format!("{:.1}", u / 1024.0))),
+                            ("total", dec(format!("{:.1}", t / 1024.0))),
+                        ],
                     );
-                    k.row(COL_X, x1, 136.0, "Память", &v, TEXT);
+                    k.row(COL_X, x1, 136.0, "VRAM", &v, TEXT);
                     k.bar(COL_X, x1, 148.0, u / t, sc.at(u / t));
                 }
-                _ => k.row(COL_X, x1, 136.0, "Память", "—", FAINT),
+                _ => k.row(COL_X, x1, 136.0, "VRAM", "—", FAINT),
             }
         }
         CardKind::Memory => {
-            k.frame("Память", "ОЗУ");
+            k.frame("Память", &tr("ОЗУ"));
             k.ring(Some(d.ram_pct / 100.0), &pct(d.ram_pct), "%", |t| sc.at(t));
             k.row(COL_X, x1, 92.0, "Занято", &fmt_mem(d.ram_used), TEXT);
             k.row(COL_X, x1, 114.0, "Свободно", &fmt_mem(d.ram_total.saturating_sub(d.ram_used)), TEXT);
@@ -256,13 +262,13 @@ pub fn card(fonts: &mut Fonts, scale: f32, kind: CardKind, d: &Data, theme: &The
         CardKind::Power => match d.battery {
             Some((charge, on_ac)) => {
                 let state = if !on_ac {
-                    "От батареи"
+                    tr("От батареи")
                 } else if charge >= 99.0 {
-                    "От сети, заряжена"
+                    tr("От сети, заряжена")
                 } else {
-                    "Заряжается"
+                    tr("Заряжается")
                 };
-                k.frame("Питание", &tr(state));
+                k.frame("Питание", &state);
                 // little charge = the hot end of the scale
                 k.ring(Some(charge / 100.0), &pct(charge), "%", |t| sc.at(1.0 - t));
                 let left = d.battery_left.filter(|_| !on_ac).map(fmt_left);
@@ -270,11 +276,16 @@ pub fn card(fonts: &mut Fonts, scale: f32, kind: CardKind, d: &Data, theme: &The
                 let wear = d.battery_wear.map(|w| format!("{w:.0}%"));
                 let wear_col = d.battery_wear.map_or(FAINT, |w| sc.at(w / 40.0));
                 k.row(COL_X, x1, 114.0, "Износ", &wear.unwrap_or("—".into()), wear_col);
-                let rate =
-                    d.battery_rate.filter(|r| r.abs() > 0.05).map(|r| dec(format!("{:.1}", r.abs())) + " Вт");
+                let rate = d
+                    .battery_rate
+                    .filter(|r| r.abs() > 0.05)
+                    .map(|r| trf("{v} Вт", &[("v", dec(format!("{:.1}", r.abs())))]));
                 k.row(COL_X, x1, 136.0, "Мощность", &rate.unwrap_or("—".into()), TEXT);
                 if let (Some(full), Some(design)) = (d.battery_full, d.battery_design) {
-                    let v = format!("{full:.0} / {design:.0} Вт·ч");
+                    let v = trf(
+                        "{full} / {design} Вт·ч",
+                        &[("full", format!("{full:.0}")), ("design", format!("{design:.0}"))],
+                    );
                     k.row(COL_X, x1, 158.0, "Ёмкость", &v, DIM);
                 }
             }
@@ -301,7 +312,7 @@ pub fn card(fonts: &mut Fonts, scale: f32, kind: CardKind, d: &Data, theme: &The
             } else {
                 for (i, rpm) in d.fans.iter().take(3).enumerate() {
                     let label = trf("Вентилятор {n}", &[("n", (i + 1).to_string())]);
-                    k.row(PAD, x1, y, &label, &format!("{rpm:.0} об/мин"), TEXT);
+                    k.row(PAD, x1, y, &label, &trf("{v} об/мин", &[("v", format!("{rpm:.0}"))]), TEXT);
                     y += 22.0;
                 }
             }

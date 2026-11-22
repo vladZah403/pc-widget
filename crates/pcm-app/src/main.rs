@@ -23,6 +23,12 @@ mod taskbar;
 mod tray;
 mod widget_win;
 
+/// The interface language from the setting ("auto" = the Windows one).
+pub fn apply_language(setting: &str) {
+    let code = if setting == "auto" { pcm_win::system::ui_language() } else { setting };
+    pcm_render::format::set_language(code);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--dashboard") {

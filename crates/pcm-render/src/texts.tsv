@@ -1,0 +1,313 @@
+# PC Monitor's interface texts: Russian (the key, as written in the code), English, Ukrainian,
+# German, separated by tabs. A missing row shows the Russian text. {name} = a field filled in;
+# \n = a line break.
+# From 1.8's translations.py; then the texts new in 2.0.
+
+Тепло	Warm	Тепло	Warm
+Неон	Neon	Неон	Neon
+Лёд	Ice	Лід	Eis
+Свои	Custom	Свої	Eigene
+Выбрать свои цвета…	Choose custom colours…	Вибрати свої кольори…	Eigene Farben wählen…
+Цвет: низкая нагрузка	Colour: low load	Колір: низьке навантаження	Farbe: geringe Last
+Цвет: высокая нагрузка	Colour: high load	Колір: високе навантаження	Farbe: hohe Last
+{v} Б/с	{v} B/s	{v} Б/с	{v} B/s
+{v} КБ/с	{v} KB/s	{v} КБ/с	{v} KB/s
+{v} МБ/с	{v} MB/s	{v} МБ/с	{v} MB/s
+{v} МБ	{v} MB	{v} МБ	{v} MB
+{v} ГБ	{v} GB	{v} ГБ	{v} GB
+{v} ГГц	{v} GHz	{v} ГГц	{v} GHz
+{v} Вт	{v} W	{v} Вт	{v} W
+{v} мс	{v} ms	{v} мс	{v} ms
+{h} ч {m} мин	{h} h {m} min	{h} год {m} хв	{h} Std. {m} Min.
+{m} мин	{m} min	{m} хв	{m} Min.
+{d} д {h} ч	{d} d {h} h	{d} д {h} год	{d} T. {h} Std.
+Система	System	Система	System
+Спрятать за край экрана	Tuck behind the screen edge	Сховати за край екрана	Hinter den Bildschirmrand schieben
+Показать виджет. Язычок можно передвинуть вверх или вниз	Show the widget. The tab can be dragged up or down	Показати віджет. Язичок можна пересунути вгору або вниз	Widget anzeigen. Die Lasche lässt sich nach oben oder unten ziehen
+Нажми ещё раз — закрыть	Click again to close	Натисни ще раз — закрити	Nochmal klicken zum Schließen
+Процессор	Processor	Процесор	Prozessor
+Программа	Program	Програма	Programm
+собираю данные…	collecting data…	збираю дані…	sammle Daten…
+Ядра	Cores	Ядра	Kerne
+Память	Memory	Пам'ять	RAM
+Видео	GPU	Відео	GPU
+Видеокарта	Graphics	Відеокарта	Grafikkarte
+Диск	Disk	Диск	Disk
+Диски	Disks	Диски	Laufwerke
+Диск {name}	Disk {name}	Диск {name}	Laufwerk {name}
+{used} из {total} ГБ	{used} of {total} GB	{used} з {total} ГБ	{used} von {total} GB
+{used} из {total} ТБ	{used} of {total} TB	{used} з {total} ТБ	{used} von {total} TB
+нет данных	no data	немає даних	keine Daten
+Температура	Temperature	Температура	Temperatur
+Нет данных о температуре	No temperature data	Немає даних про температуру	Keine Temperaturdaten
+Батарея	Battery	Батарея	Akku
+износ	wear	знос	Verschleiß
+расход {v} Вт	draw {v} W	витрата {v} Вт	Verbrauch {v} W
+{full} из {design} Вт·ч	{full} of {design} Wh	{full} з {design} Вт·год	{full} von {design} Wh
+Вентиляторы	Fans	Вентилятори	Lüfter
+об/мин	RPM	об/хв	U/min
+Сеть	Network	Мережа	Netzwerk
+График сети	Network graph	Графік мережі	Netzwerkgrafik
+Пинг	Ping	Пінг	Ping
+пинг	ping	пінг	Ping
+нет	none	нема	keine
+нет ответа	no reply	немає відповіді	keine Antwort
+до {host}	to {host}	до {host}	zu {host}
+чтение	read	читання	lesen
+запись	write	запис	schreiben
+Чтение и запись диска	Disk read and write	Читання і запис диска	Laufwerk lesen/schreiben
+Износ батареи	Battery wear	Знос батареї	Akkuverschleiß
+Время без перезагрузки	Uptime	Час без перезавантаження	Laufzeit seit Neustart
+Без перезагрузки {t}	Up {t}	Без перезавантаження {t}	Seit Neustart {t}
+без перезагрузки {t}	up {t}	працює {t}	seit Neustart {t}
+Вышла версия {v}	Version {v} is out	Вийшла версія {v}	Version {v} ist da
+скачать	download	завантажити	herunterladen
+Температуры включаются в меню (ПКМ)	Temperatures: turn on in the menu	Температури вмикаються в меню (ПКМ)	Temperaturen im Menü einschalten
+Нет доступа к датчикам: нужен PawnIO	No sensor access: PawnIO needed	Немає доступу до датчиків: треба PawnIO	Kein Sensorzugriff: PawnIO nötig
+CPU и GPU: нужен PawnIO	CPU and GPU: PawnIO needed	CPU і GPU: треба PawnIO	CPU und GPU: PawnIO nötig
+Запусти LibreHardwareMonitor от админа	Run LibreHardwareMonitor as admin	Запусти LibreHardwareMonitor від адміна	LibreHardwareMonitor als Admin starten
+Нужен LibreHardwareMonitor с веб-сервером	LibreHardwareMonitor web server needed	Потрібен LibreHardwareMonitor з веб-сервером	LibreHardwareMonitor-Webserver nötig
+Больше всех	Top process	Найбільше	Top-Prozess
+Нажми, чтобы открыть виджет	Click to open the widget	Натисни, щоб відкрити віджет	Klicken, um das Widget zu öffnen
+История	History	Історія	Verlauf
+час	hour	година	Stunde
+сутки	day	доба	Tag
+макс	max	макс	max
+средн.	avg	серед.	Ø
+Температура CPU	CPU temperature	Температура CPU	CPU-Temperatur
+Загрузка CPU	CPU load	Завантаження CPU	CPU-Auslastung
+нет данных: нужны права администратора	no data: admin rights needed	немає даних: потрібні права адміністратора	keine Daten: Administratorrechte nötig
+сейчас	now	зараз	jetzt
+Температура GPU	GPU temperature	Температура GPU	GPU-Temperatur
+Загрузка GPU	GPU load	Завантаження GPU	GPU-Auslastung
+Занято памяти	Memory used	Зайнято пам'яті	RAM belegt
+Приём	Download	Прийом	Download
+Отдача	Upload	Віддача	Upload
+Сохранить CSV	Save CSV	Зберегти CSV	CSV speichern
+Нажми, чтобы закрыть	Click to close	Натисни, щоб закрити	Klicken zum Schließen
+ошибка, см. лог	error, see the log	помилка, див. лог	Fehler, siehe Protokoll
+нужны права администратора	admin rights needed	потрібні права адміністратора	Administratorrechte nötig
+ошибка ETW {rc}	ETW error {rc}	помилка ETW {rc}	ETW-Fehler {rc}
+FPS недоступен	FPS unavailable	FPS недоступний	FPS nicht verfügbar
+Windows отказала: {error}.	Windows refused: {error}.	Windows відмовила: {error}.	Windows hat abgelehnt: {error}.
+Включи в меню «Права администратора (температуры)».	Turn on “Admin rights (temperatures)” in the menu.	Увімкни в меню «Права адміністратора (температури)».	Schalte im Menü „Administratorrechte (Temperaturen)“ ein.
+Настройки…	Settings…	Налаштування…	Einstellungen…
+Настройки	Settings	Налаштування	Einstellungen
+Общие	General	Загальні	Allgemein
+Вид	Look	Вигляд	Aussehen
+Сеть и игры	Network and games	Мережа та ігри	Netzwerk und Spiele
+Закрепить на рабочем столе	Pin to desktop	Закріпити на робочому столі	Auf dem Desktop fixieren
+Мини-панель на панели задач	Mini panel on the taskbar	Міні-панель на панелі завдань	Mini-Leiste in der Taskleiste
+Значок в трее	Tray icon	Значок у треї	Symbol im Infobereich
+FPS в играх	FPS in games	FPS в іграх	FPS in Spielen
+Список процессов	Process list	Список процесів	Prozessliste
+Компактный режим	Compact mode	Компактний режим	Kompaktmodus
+Запускать вместе с Windows	Start with Windows	Запускати разом з Windows	Mit Windows starten
+Права администратора (температуры)	Admin rights (temperatures)	Права адміністратора (температури)	Administratorrechte (Temperaturen)
+Показывать	Show	Показувати	Anzeigen
+Показывать предупреждения	Show alerts	Показувати попередження	Warnungen anzeigen
+Перегрев CPU от	CPU overheating from	Перегрів CPU від	CPU-Überhitzung ab
+Память занята от	Memory used from	Пам'ять зайнята від	RAM belegt ab
+Батарея ниже	Battery below	Батарея нижче	Akku unter
+Предупреждения	Alerts	Попередження	Warnungen
+Цвета	Colours	Кольори	Farben
+Непрозрачность	Opacity	Непрозорість	Deckkraft
+В играх и видео на весь экран	In games and fullscreen videos	В іграх і відео на весь екран	In Spielen und Vollbildvideos
+прятать	hide	ховати	ausblenden
+тускнеть	dim	тьмяніти	abdunkeln
+ничего	nothing	нічого	nichts
+Размер	Size	Розмір	Größe
+Тяни за уголок, правый край или низ — меняется форма. Ctrl + колёсико — размер. Двойной клик по уголку — обычная форма.	Drag the corner, the right edge or the bottom to change the shape. Ctrl + mouse wheel: size. Double-click the corner: the standard shape.	Тягни за куточок, правий край або низ — змінюється форма. Ctrl + коліщатко — розмір. Подвійний клік по куточку — звичайна форма.	Ecke, rechten Rand oder Unterkante ziehen: Form ändern. Strg + Mausrad: Größe. Doppelklick auf die Ecke: Standardform.
+Размер — ещё Ctrl + колёсико над виджетом.\nФорма — тяни виджет за правый край, низ или уголок.	Size: also Ctrl + mouse wheel over the widget.\nShape: drag the widget's right edge, bottom or corner.	Розмір — ще Ctrl + коліщатко над віджетом.\nФорма — тягни віджет за правий край, низ або куточок.	Größe: auch Strg + Mausrad über dem Widget.\nForm: rechten Rand, Unterkante oder Ecke ziehen.
+Обычная форма	Standard shape	Звичайна форма	Standardform
+Открепить от рабочего стола	Unpin from desktop	Відкріпити від робочого столу	Vom Desktop lösen
+Закрыть: нажми два раза	Close: click twice	Закрити: натисни двічі	Schließen: zweimal klicken
+Поверх всех окон	Always on top	Поверх усіх вікон	Immer im Vordergrund
+В правый верхний угол	Move to the top right corner	У правий верхній кут	In die obere rechte Ecke
+История за час и сутки	History (hour and day)	Історія за годину і добу	Verlauf (Stunde und Tag)
+Пинг до	Ping to	Пінг до	Ping zu
+Свой адрес…	Custom address…	Своя адреса…	Eigene Adresse…
+О программе	About	Про програму	Über
+Проверять обновления	Check for updates	Перевіряти оновлення	Nach Updates suchen
+Проверить сейчас	Check now	Перевірити зараз	Jetzt prüfen
+Страница программы	Program page	Сторінка програми	Programmseite
+Как в Windows	Same as Windows	Як у Windows	Wie Windows
+Скрыть  ({hotkey} — показать)	Hide  ({hotkey} to show)	Сховати  ({hotkey} — показати)	Ausblenden  ({hotkey} zum Anzeigen)
+Закрыть	Close	Закрити	Schließen
+«{text}» не похоже на адрес.	“{text}” doesn't look like an address.	«{text}» не схоже на адресу.	„{text}“ sieht nicht wie eine Adresse aus.
+Профиль «Работа»	Profile: Work	Профіль «Робота»	Profil „Arbeit“
+Профиль «Игра»	Profile: Game	Профіль «Гра»	Profil „Spiel“
+Профиль	Profile	Профіль	Profil
+Работа	Work	Робота	Arbeit
+Игра	Game	Гра	Spiel
+Запомнить текущий вид	Remember the current look	Запам'ятати поточний вигляд	Aktuelles Aussehen merken
+Включать «Игру», когда запущена игра	Switch to “Game” while a game is running	Вмикати «Гру», коли запущена гра	„Spiel“ einschalten, solange ein Spiel läuft
+Во время игры — показать после неё	During a game — show after it	Під час гри — показати після неї	Während eines Spiels — danach zeigen
+Здоровье SSD	SSD health	Здоров'я SSD	SSD-Zustand
+неисправен	failing	несправний	defekt
+записано {v}	{v} written	записано {v}	{v} geschrieben
+{v} ТБ	{v} TB	{v} ТБ	{v} TB
+Закрыть {name}?	Close {name}?	Закрити {name}?	{name} schließen?
+Не получилось закрыть {name}	Couldn't close {name}	Не вийшло закрити {name}	{name} ließ sich nicht schließen
+Программа запущена от администратора или уже закрылась.	It runs as administrator or has already closed.	Програма запущена від адміністратора або вже закрилася.	Das Programm läuft als Administrator oder ist schon beendet.
+Мало места на диске {name}	Drive {name} is almost full	Мало місця на диску {name}	Laufwerk {name} ist fast voll
+Свободно {free} ГБ ({pct}%). Очисти корзину и «Загрузки» или удали ненужные программы.	{free} GB free ({pct}%). Empty the Recycle Bin and Downloads or remove programs you don't need.	Вільно {free} ГБ ({pct}%). Очисти кошик і «Завантаження» або видали непотрібні програми.	{free} GB frei ({pct} %). Leere den Papierkorb und „Downloads“ oder entferne unnötige Programme.
+{name} сообщает о неисправности	{name} reports a fault	{name} повідомляє про несправність	{name} meldet einen Fehler
+{name} изношен	{name} is worn out	{name} зношений	{name} ist verschlissen
+Сделай копию важных файлов.	Back up your important files.	Зроби копію важливих файлів.	Sichere deine wichtigen Dateien.
+Износ {wear}%. Сделай копию важных файлов и присмотри замену.	{wear}% worn. Back up your important files and look for a replacement.	Знос {wear}%. Зроби копію важливих файлів і придивися до заміни.	{wear} % verschlissen. Sichere wichtige Dateien und sieh dich nach Ersatz um.
+Свободно на диске C: меньше	Free space on C: below	Вільно на диску C: менше	Freier Platz auf C: unter
+Показывать FPS-панель ({hotkey})	Show the FPS panel ({hotkey})	Показувати FPS-панель ({hotkey})	FPS-Anzeige zeigen ({hotkey})
+Угол панели	Panel corner	Кут панелі	Ecke der Anzeige
+слева вверху	top left	зліва вгорі	oben links
+справа вверху	top right	справа вгорі	oben rechts
+слева внизу	bottom left	зліва внизу	unten links
+справа внизу	bottom right	справа внизу	unten rechts
+Размер панели	Panel size	Розмір панелі	Größe der Anzeige
+У тебя {v}. Нажми, чтобы открыть страницу загрузки.	You have {v}. Click to open the download page.	У тебе {v}. Натисни, щоб відкрити сторінку завантаження.	Du hast {v}. Klicken, um die Download-Seite zu öffnen.
+обновить	update	оновити	aktualisieren
+скачиваю {p}%	downloading {p}%	завантажую {p}%	lade {p}%
+устанавливаю…	installing…	встановлюю…	installiere…
+У тебя {v}. Нажми, чтобы обновить.	You have {v}. Click to update.	У тебе {v}. Натисни, щоб оновити.	Du hast {v}. Klicken zum Aktualisieren.
+Не удалось обновить	Update failed	Не вдалося оновити	Aktualisierung fehlgeschlagen
+{error}. Нажми, чтобы открыть страницу загрузки.	{error}. Click to open the download page.	{error}. Натисни, щоб відкрити сторінку завантаження.	{error}. Klicken, um die Download-Seite zu öffnen.
+файл скачался не полностью	the download is incomplete	файл завантажився не повністю	der Download ist unvollständig
+контрольная сумма не совпала	the checksum doesn't match	контрольна сума не збіглася	die Prüfsumme stimmt nicht
+в архиве нет программы	the archive has no program in it	в архіві немає програми	im Archiv ist kein Programm
+Не удалось проверить	Couldn't check	Не вдалося перевірити	Prüfung fehlgeschlagen
+Нет связи с GitHub. Попробуй позже.	No connection to GitHub. Try again later.	Немає зв'язку з GitHub. Спробуй пізніше.	Keine Verbindung zu GitHub. Versuch es später.
+Обновлений нет	No updates	Оновлень немає	Keine Updates
+У тебя последняя версия, {v}.	You have the latest version, {v}.	У тебе остання версія, {v}.	Du hast die neueste Version, {v}.
+Процессор перегревается	The processor is overheating	Процесор перегрівається	Der Prozessor überhitzt
+CPU {t}°. Закрой тяжёлые программы или проверь, не забиты ли решётки.	CPU {t}°. Close heavy programs or check that the vents aren't clogged.	CPU {t}°. Закрий важкі програми або перевір, чи не забиті решітки.	CPU {t}°. Schließe schwere Programme oder prüfe, ob die Lüftungsgitter verstopft sind.
+Видеокарта перегревается	The graphics card is overheating	Відеокарта перегрівається	Die Grafikkarte überhitzt
+GPU {t}°. Понизь настройки графики или ограничь FPS.	GPU {t}°. Lower the graphics settings or cap the FPS.	GPU {t}°. Знизь налаштування графіки або обмеж FPS.	GPU {t}°. Senke die Grafikeinstellungen oder begrenze die FPS.
+Занято {pct}% ({used} из {total} ГБ).	{pct}% used ({used} of {total} GB).	Зайнято {pct}% ({used} з {total} ГБ).	{pct}% belegt ({used} von {total} GB).
+Больше всех: {name} — {mem}.	Uses the most: {name} — {mem}.	Найбільше: {name} — {mem}.	Am meisten: {name} – {mem}.
+Память почти закончилась	Memory is almost full	Пам'ять майже закінчилася	Der Arbeitsspeicher ist fast voll
+Батарея садится	Battery is running low	Батарея сідає	Akku wird schwach
+Осталось {level}%	{level}% left	Залишилось {level}%	Noch {level}%
+, примерно на {left}	, about {left}	, приблизно на {left}	, etwa {left}
+Подключи зарядку.	Plug in the charger.	Підключи зарядку.	Schließ das Ladegerät an.
+
+# 2.0: the PC Monitor window, game sessions, cards, menus
+Обзор	Overview	Огляд	Übersicht
+Процессы	Processes	Процеси	Prozesse
+Игровые сессии	Game sessions	Ігрові сесії	Spielsitzungen
+Час	Hour	Година	Stunde
+Сутки	Day	Доба	Tag
+Неделя	Week	Тиждень	Woche
+30 дней	30 days	30 днів	30 Tage
+Нет помощника датчиков рядом с программой	The sensor helper is missing next to the program	Немає помічника датчиків поруч із програмою	Der Sensor-Helfer fehlt neben dem Programm
+Истории пока нет: виджет записывает точку раз в 10 секунд.	No history yet: the widget records a point every 10 seconds.	Історії поки немає: віджет записує точку раз на 10 секунд.	Noch kein Verlauf: Das Widget speichert alle 10 Sekunden einen Punkt.
+История не читается: {e}	The history can't be read: {e}	Історія не читається: {e}	Verlauf nicht lesbar: {e}
+Процессор, %	CPU, %	Процесор, %	CPU, %
+Видеокарта, %	GPU, %	Відеокарта, %	GPU, %
+Память, %	Memory, %	Пам'ять, %	Arbeitsspeicher, %
+точек: {n}	points: {n}	точок: {n}	Punkte: {n}
+Собираю список программ…	Collecting the list of programs…	Збираю список програм…	Programmliste wird erstellt…
+Программ: {n}  ·  их память: {mem}	Programs: {n}  ·  their memory: {mem}	Програм: {n}  ·  їхня пам'ять: {mem}	Programme: {n}  ·  ihr Speicher: {mem}
+Процессов	Processes	Процесів	Prozesse
+Точно закрыть?	Close it?	Точно закрити?	Wirklich schließen?
+системная	system	системна	System
+{v} с	{v} s	{v} с	{v} s
+Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню виджета) и игра идёт больше 30 секунд.	No sessions yet. They are recorded by themselves while you play ("Count FPS" in the widget's menu) and the game runs for more than 30 seconds.	Сесій поки немає. Вони записуються самі, коли ти граєш (потрібно «Рахувати FPS» у меню віджета) і гра йде понад 30 секунд.	Noch keine Sitzungen. Sie werden von selbst aufgezeichnet, während du spielst („FPS zählen“ im Widget-Menü) und das Spiel länger als 30 Sekunden läuft.
+Когда	When	Коли	Wann
+Время игры	Play time	Час гри	Spielzeit
+FPS в среднем	Average FPS	FPS у середньому	FPS im Schnitt
+Отчёт	Report	Звіт	Bericht
+Не удалось прочитать {file}: {e}	Couldn't read {file}: {e}	Не вдалося прочитати {file}: {e}	{file} konnte nicht gelesen werden: {e}
+← Все сессии	← All sessions	← Усі сесії	← Alle Sitzungen
+Точно удалить?	Delete it?	Точно видалити?	Wirklich löschen?
+Удалить	Delete	Видалити	Löschen
+Жду цвета от виджета…	Waiting for the colours from the widget…	Чекаю на кольори від віджета…	Warte auf die Farben vom Widget…
+Жду настройки от виджета…	Waiting for the settings from the widget…	Чекаю на налаштування від віджета…	Warte auf die Einstellungen vom Widget…
+Виджет	Widget	Віджет	Widget
+Показывать виджет (Ctrl+Alt+W)	Show the widget (Ctrl+Alt+W)	Показувати віджет (Ctrl+Alt+W)	Widget anzeigen (Strg+Alt+W)
+Размер — ещё Ctrl + колёсико над виджетом. Форма — тяни виджет за правый или нижний край.	Size: also Ctrl + mouse wheel over the widget. Shape: drag the widget's right or bottom edge.	Розмір — ще Ctrl + коліщатко над віджетом. Форма — тягни віджет за правий або нижній край.	Größe: auch Strg + Mausrad über dem Widget. Form: den rechten oder unteren Rand ziehen.
+Малая нагрузка	Low load	Мале навантаження	Geringe Last
+Большая нагрузка	High load	Велике навантаження	Hohe Last
+Показывать в виджете	Show in the widget	Показувати у віджеті	Im Widget anzeigen
+Трей и панель задач	Tray and taskbar	Трей і панель завдань	Infobereich und Taskleiste
+Значки в трее (1–{n}):	Tray icons (1–{n}):	Значки в треї (1–{n}):	Symbole im Infobereich (1–{n}):
+Игры	Games	Ігри	Spiele
+В играх и видео на весь экран виджет:	In games and fullscreen videos the widget:	В іграх і відео на весь екран віджет:	In Spielen und Vollbildvideos wird das Widget:
+Считать FPS (панель, запись сессий)	Count FPS (the panel, session recording)	Рахувати FPS (панель, запис сесій)	FPS zählen (Anzeige, Sitzungsaufzeichnung)
+Показывать FPS-панель (Ctrl+Alt+F)	Show the FPS panel (Ctrl+Alt+F)	Показувати FPS-панель (Ctrl+Alt+F)	FPS-Anzeige zeigen (Strg+Alt+F)
+Свой адрес:	Own address:	Своя адреса:	Eigene Adresse:
+Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).	That doesn't look like an address (e.g. eu.battle.net or 8.8.4.4).	Це не схоже на адресу (приклад: eu.battle.net або 8.8.4.4).	Das sieht nicht nach einer Adresse aus (z. B. eu.battle.net oder 8.8.4.4).
+Автозапуск, права администратора и обновления появятся вместе с установщиком (этап 6).	Autostart, admin rights and updates come with the installer (stage 6).	Автозапуск, права адміністратора й оновлення з'являться разом з інсталятором (етап 6).	Autostart, Administratorrechte und Updates kommen mit dem Installer (Stufe 6).
+Жду данные от виджета…	Waiting for data from the widget…	Чекаю на дані від віджета…	Warte auf Daten vom Widget…
+«{tab}» появится позже.	"{tab}" comes later.	«{tab}» з'явиться пізніше.	„{tab}“ kommt später.
+Windows отказала: нужны права администратора.	Windows refused: admin rights are needed.	Windows відмовила: потрібні права адміністратора.	Windows hat abgelehnt: Administratorrechte sind nötig.
+{name}: {time}, в среднем {fps} FPS, 1% low {low}. Нажми, чтобы открыть отчёт.	{name}: {time}, {fps} FPS on average, 1% low {low}. Click to open the report.	{name}: {time}, у середньому {fps} FPS, 1% low {low}. Натисни, щоб відкрити звіт.	{name}: {time}, im Schnitt {fps} FPS, 1% low {low}. Klicken öffnet den Bericht.
+Игровая сессия записана	Game session recorded	Ігрову сесію записано	Spielsitzung aufgezeichnet
+Не удалось прочитать {file}.	Couldn't read {file}.	Не вдалося прочитати {file}.	{file} konnte nicht gelesen werden.
+Отчёт не открылся	The report didn't open	Звіт не відкрився	Der Bericht ließ sich nicht öffnen
+CSV сохранён	CSV saved	CSV збережено	CSV gespeichert
+{a} (по секундам) и {b} (каждый кадр).	{a} (each second) and {b} (each frame).	{a} (по секундах) і {b} (кожен кадр).	{a} (jede Sekunde) und {b} (jedes Bild).
+CSV не сохранён	CSV not saved	CSV не збережено	CSV nicht gespeichert
+Прятать	Hide it	Ховати	Ausblenden
+Делать прозрачным	Make it transparent	Робити прозорим	Durchsichtig machen
+Не трогать	Leave it	Не чіпати	Nichts tun
+Слева сверху	Top left	Зліва вгорі	Oben links
+Справа сверху	Top right	Справа вгорі	Oben rechts
+Слева снизу	Bottom left	Зліва внизу	Unten links
+Справа снизу	Bottom right	Справа внизу	Unten rechts
+Спрятать виджет (Ctrl+Alt+W)	Hide the widget (Ctrl+Alt+W)	Сховати віджет (Ctrl+Alt+W)	Widget ausblenden (Strg+Alt+W)
+Показать виджет (Ctrl+Alt+W)	Show the widget (Ctrl+Alt+W)	Показати віджет (Ctrl+Alt+W)	Widget anzeigen (Strg+Alt+W)
+Открыть PC Monitor	Open PC Monitor	Відкрити PC Monitor	PC Monitor öffnen
+Поверх окон	On top of windows	Поверх вікон	Über anderen Fenstern
+● Идёт запись: {game}	● Recording: {game}	● Іде запис: {game}	● Aufnahme läuft: {game}
+Отчёт о последней игре	Report on the last game	Звіт про останню гру	Bericht zum letzten Spiel
+Считать FPS	Count FPS	Рахувати FPS	FPS zählen
+Размер {v}%	Size {v}%	Розмір {v}%	Größe {v}%
+Значки в трее	Tray icons	Значки в треї	Symbole im Infobereich
+Панель на панели задач	Panel on the taskbar	Панель на панелі завдань	Anzeige in der Taskleiste
+Выход	Exit	Вихід	Beenden
+PC Monitor: игровая сессия	PC Monitor: game session	PC Monitor: ігрова сесія	PC Monitor: Spielsitzung
+{v} МГц	{v} MHz	{v} МГц	{v} MHz
+{used} / {total} ГБ	{used} / {total} GB	{used} / {total} ГБ	{used} / {total} GB
+ОЗУ	RAM	ОЗП	RAM
+Чтение	Read	Читання	Lesen
+износ {v}%	wear {v}%	знос {v}%	Verschleiß {v}%
+пинг {host}: {v} мс	ping {host}: {v} ms	пінг {host}: {v} мс	Ping {host}: {v} ms
+{host} не отвечает	{host} doesn't answer	{host} не відповідає	{host} antwortet nicht
+От батареи	On battery	Від батареї	Akkubetrieb
+От сети, заряжена	Plugged in, charged	Від мережі, заряджена	Am Netz, geladen
+Заряжается	Charging	Заряджається	Wird geladen
+{full} / {design} Вт·ч	{full} / {design} Wh	{full} / {design} Вт·год	{full} / {design} Wh
+От сети	Plugged in	Від мережі	Am Netz
+Батареи нет	No battery	Батареї немає	Kein Akku
+без перезагрузки {v}	up for {v}	без перезавантаження {v}	ohne Neustart seit {v}
+Вентиляторы не видны	No fans seen	Вентилятори не видно	Keine Lüfter erkannt
+Вентилятор {n}	Fan {n}	Вентилятор {n}	Lüfter {n}
+{v} об/мин	{v} rpm	{v} об/хв	{v} U/min
+нет данных за это время	no data for this time	немає даних за цей час	keine Daten für diesen Zeitraum
+ @ {v} Гц	 @ {v} Hz	 @ {v} Гц	 @ {v} Hz
+Время кадра, мс	Frame time, ms	Час кадру, мс	Bildzeit, ms
+плохие кадры	bad frames	погані кадри	schlechte Bilder
+Загрузка, %	Load, %	Навантаження, %	Auslastung, %
+Температура, °C	Temperature, °C	Температура, °C	Temperatur, °C
+датчики температуры не отвечали	the temperature sensors didn't answer	датчики температури не відповідали	die Temperatursensoren antworteten nicht
+  FPS в среднем	  FPS on average	  FPS у середньому	  FPS im Schnitt
+Мин / макс за секунду	Min / max per second	Мін / макс за секунду	Min / max pro Sekunde
+Медиана кадра	Median frame	Медіана кадру	Median-Bildzeit
+Плохие кадры	Bad frames	Погані кадри	Schlechte Bilder
+Кадров	Frames	Кадрів	Bilder
+Игра без пауз	Play without pauses	Гра без пауз	Spielzeit ohne Pausen
+ОЗУ {v} ГБ	RAM {v} GB	ОЗП {v} ГБ	RAM {v} GB
+ядро (DX9 / OpenGL / Vulkan)	kernel (DX9 / OpenGL / Vulkan)	ядро (DX9 / OpenGL / Vulkan)	Kernel (DX9 / OpenGL / Vulkan)
+Кадры: {src}	Frames: {src}	Кадри: {src}	Bilder: {src}
+Загрузка видеокарты	GPU load	Навантаження відеокарти	GPU-Auslastung
+Температура видеокарты	GPU temperature	Температура відеокарти	GPU-Temperatur
+Ёмкость	Capacity	Ємність	Kapazität
+Без перезагрузки	Up time	Без перезавантаження	Ohne Neustart
+Всего	Total	Усього	Gesamt
+Занято	In use	Зайнято	Belegt
+Износ	Wear	Знос	Verschleiß
+Мощность	Power	Потужність	Leistung
+Осталось	Left	Залишилось	Rest
+Питание	Power	Живлення	Stromversorgung
+Свободно	Free	Вільно	Frei
+Частота	Clock	Частота	Takt

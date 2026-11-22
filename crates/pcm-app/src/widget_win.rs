@@ -43,6 +43,7 @@ use crate::report_win::{self, Action, ReportWin};
 use crate::session_rec::{self, Recorder, Recording, WM_APP_SESSION};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
+use pcm_render::format::{tr, trf};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
 const EDGE: f32 = 6.0;
@@ -101,11 +102,11 @@ fn fullscreen_app_active(own: HWND) -> bool {
 fn fmt_play_time(s: f64) -> String {
     let m = (s / 60.0).round() as u64;
     if s < 60.0 {
-        format!("{:.0} с", s)
+        trf("{v} с", &[("v", format!("{s:.0}"))])
     } else if m < 60 {
-        format!("{m} мин")
+        trf("{m} мин", &[("m", m.to_string())])
     } else {
-        format!("{} ч {:02} мин", m / 60, m % 60)
+        trf("{h} ч {m} мин", &[("h", (m / 60).to_string()), ("m", format!("{:02}", m % 60))])
     }
 }
 
@@ -1026,9 +1027,16 @@ impl App {
         c.alert_battery = new.alert_battery;
         c.alert_disk = new.alert_disk;
         c.ping_host = new.ping_host;
+        c.lang = new.lang;
         c.sanitize();
         self.cfg = c;
         self.save();
+        if self.cfg.lang != old.lang {
+            // everything with words is drawn again: the widget below, the tray, the panel
+            crate::apply_language(&self.cfg.lang);
+            self.update_tray();
+            self.update_panel();
+        }
         if self.cfg.pinned != old.pinned || self.cfg.topmost != old.topmost {
             self.apply_pin();
         }
@@ -1140,11 +1148,11 @@ impl App {
             if let Some(e) = &self.game.error {
                 let body = match e {
                     pcm_win::frames::Error::AccessDenied => {
-                        "Windows отказала: нужны права администратора.".to_string()
+                        tr("Windows отказала: нужны права администратора.").to_string()
                     }
-                    other => format!("Windows отказала: {other}."),
+                    other => trf("Windows отказала: {error}.", &[("error", other.to_string())]),
                 };
-                let alert = Alert { title: "FPS недоступен".into(), body, hot: false };
+                let alert = Alert { title: tr("FPS недоступен"), body, hot: false };
                 self.show_toast(&alert);
             }
         } else {
@@ -1167,13 +1175,16 @@ impl App {
         let Some((path, info)) = done.last() else { return };
         let s = &info.summary;
         let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
-        let body = format!(
-            "{name}: {}, в среднем {:.0} FPS, 1% low {:.0}. Нажми, чтобы открыть отчёт.",
-            fmt_play_time(s.active_s),
-            s.avg_fps,
-            s.low1
+        let body = trf(
+            "{name}: {time}, в среднем {fps} FPS, 1% low {low}. Нажми, чтобы открыть отчёт.",
+            &[
+                ("name", name.to_string()),
+                ("time", fmt_play_time(s.active_s)),
+                ("fps", format!("{:.0}", s.avg_fps)),
+                ("low", format!("{:.0}", s.low1)),
+            ],
         );
-        let alert = Alert { title: "Игровая сессия записана".into(), body, hot: false };
+        let alert = Alert { title: tr("Игровая сессия записана"), body, hot: false };
         let path = path.clone();
         self.show_toast(&alert);
         self.toast_session = Some(path);
@@ -1189,8 +1200,8 @@ impl App {
     fn open_report(&mut self, path: &std::path::Path) {
         let sc = self.theme().scale();
         if !self.report.open(path, &mut self.fonts, &sc) {
-            let body = format!("Не удалось прочитать {}.", path.display());
-            self.show_toast(&Alert { title: "Отчёт не открылся".into(), body, hot: false });
+            let body = trf("Не удалось прочитать {file}.", &[("file", path.display().to_string())]);
+            self.show_toast(&Alert { title: tr("Отчёт не открылся"), body, hot: false });
         }
     }
 
@@ -1204,11 +1215,14 @@ impl App {
             };
             let alert = match a.report.write_csv(&path) {
                 Ok(frames) => Alert {
-                    title: "CSV сохранён".into(),
-                    body: format!("{} (по секундам) и {} (каждый кадр).", file(&path), file(&frames)),
+                    title: tr("CSV сохранён"),
+                    body: trf(
+                        "{a} (по секундам) и {b} (каждый кадр).",
+                        &[("a", file(&path)), ("b", file(&frames))],
+                    ),
                     hot: false,
                 },
-                Err(e) => Alert { title: "CSV не сохранён".into(), body: e.to_string(), hot: true },
+                Err(e) => Alert { title: tr("CSV не сохранён"), body: e.to_string(), hot: true },
             };
             a.show_toast(&alert);
         });
@@ -1303,31 +1317,40 @@ impl App {
         const PROFILE: usize = 90;
         const CORNER: usize = 70;
         const FPS_SIZE: usize = 80;
-        let themes = [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд")];
+        let themes = [("heat", tr("Тепло")), ("neon", tr("Неон")), ("ice", tr("Лёд"))];
         let sizes = [80u32, 100, 125, 150, 200];
         let alphas = [100u32, 90, 80, 70, 60];
-        let games = [("hide", "Прятать"), ("dim", "Делать прозрачным"), ("off", "Не трогать")];
-        let corners =
-            [("tl", "Слева сверху"), ("tr", "Справа сверху"), ("bl", "Слева снизу"), ("br", "Справа снизу")];
+        let games = [("hide", tr("Прятать")), ("dim", tr("Делать прозрачным")), ("off", tr("Не трогать"))];
+        let corners = [
+            ("tl", tr("Слева сверху")),
+            ("tr", tr("Справа сверху")),
+            ("bl", tr("Слева снизу")),
+            ("br", tr("Справа снизу")),
+        ];
         unsafe {
             let m = CreatePopupMenu();
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
             let widget_text = if self.cfg.widget {
-                "Спрятать виджет (Ctrl+Alt+W)"
+                tr("Спрятать виджет (Ctrl+Alt+W)")
             } else {
-                "Показать виджет (Ctrl+Alt+W)"
+                tr("Показать виджет (Ctrl+Alt+W)")
             };
-            AppendMenuW(m, MF_STRING | MF_DEFAULT, DASHBOARD, wide("Открыть PC Monitor").as_ptr());
-            AppendMenuW(m, MF_STRING, WIDGET, wide(widget_text).as_ptr());
+            AppendMenuW(m, MF_STRING | MF_DEFAULT, DASHBOARD, wide(&tr("Открыть PC Monitor")).as_ptr());
+            AppendMenuW(m, MF_STRING, WIDGET, wide(&widget_text).as_ptr());
             AppendMenuW(m, MF_SEPARATOR, 0, null());
-            AppendMenuW(m, MF_STRING | check(self.cfg.compact), COMPACT, wide("Компактный режим").as_ptr());
+            AppendMenuW(
+                m,
+                MF_STRING | check(self.cfg.compact),
+                COMPACT,
+                wide(&tr("Компактный режим")).as_ptr(),
+            );
             let top_flags = MF_STRING | check(self.cfg.topmost) | if self.cfg.pinned { MF_GRAYED } else { 0 };
-            AppendMenuW(m, top_flags, TOPMOST, wide("Поверх окон").as_ptr());
+            AppendMenuW(m, top_flags, TOPMOST, wide(&tr("Поверх окон")).as_ptr());
             let tm = CreatePopupMenu();
             for (i, (key, name)) in themes.iter().enumerate() {
                 AppendMenuW(tm, MF_STRING | check(self.cfg.theme == *key), THEME + i, wide(name).as_ptr());
             }
-            AppendMenuW(m, MF_POPUP, tm as usize, wide("Цвета").as_ptr());
+            AppendMenuW(m, MF_POPUP, tm as usize, wide(&tr("Цвета")).as_ptr());
             let sm = CreatePopupMenu();
             for (i, s) in sizes.iter().enumerate() {
                 AppendMenuW(
@@ -1337,27 +1360,28 @@ impl App {
                     wide(&format!("{s}%")).as_ptr(),
                 );
             }
-            AppendMenuW(m, MF_POPUP, sm as usize, wide("Размер").as_ptr());
+            AppendMenuW(m, MF_POPUP, sm as usize, wide(&tr("Размер")).as_ptr());
             let am = CreatePopupMenu();
             let alpha_now = (self.cfg.alpha * 100.0).round() as u32;
             for (i, a) in alphas.iter().enumerate() {
                 let on = check(alpha_now == *a);
                 AppendMenuW(am, MF_STRING | on, ALPHA + i, wide(&format!("{a}%")).as_ptr());
             }
-            AppendMenuW(m, MF_POPUP, am as usize, wide("Непрозрачность").as_ptr());
+            AppendMenuW(m, MF_POPUP, am as usize, wide(&tr("Непрозрачность")).as_ptr());
             let rm = CreatePopupMenu();
             for (i, (key, name)) in config::SECTIONS.iter().enumerate() {
                 let on = check(!self.cfg.hidden.iter().any(|h| h == key));
-                AppendMenuW(rm, MF_STRING | on, ROWS + i, wide(name).as_ptr());
+                AppendMenuW(rm, MF_STRING | on, ROWS + i, wide(&tr(name)).as_ptr());
             }
-            AppendMenuW(m, MF_POPUP, rm as usize, wide("Показывать").as_ptr());
+            AppendMenuW(m, MF_POPUP, rm as usize, wide(&tr("Показывать")).as_ptr());
             let gm = CreatePopupMenu();
             for (i, (key, name)) in games.iter().enumerate() {
                 AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
             }
-            AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
+            AppendMenuW(m, MF_POPUP, gm as usize, wide(&tr("В играх и видео на весь экран")).as_ptr());
             let pm = CreatePopupMenu();
-            for (i, (key, name)) in [("work", "Работа"), ("game", "Игра")].iter().enumerate() {
+            for (i, (key, name)) in [("work", tr("Работа")), ("game", tr("Игра"))].iter().enumerate()
+            {
                 AppendMenuW(
                     pm,
                     MF_STRING | check(self.cfg.profile == *key),
@@ -1366,22 +1390,27 @@ impl App {
                 );
             }
             AppendMenuW(pm, MF_SEPARATOR, 0, null());
-            let auto_text = wide("Включать «Игру», когда запущена игра");
+            let auto_text = wide(&tr("Включать «Игру», когда запущена игра"));
             AppendMenuW(pm, MF_STRING | check(self.cfg.auto_game), AUTO_GAME, auto_text.as_ptr());
-            AppendMenuW(m, MF_POPUP, pm as usize, wide("Профиль").as_ptr());
+            AppendMenuW(m, MF_POPUP, pm as usize, wide(&tr("Профиль")).as_ptr());
             let fm = CreatePopupMenu();
             if let Some(game) = self.recorder.game() {
                 // which game is being recorded (a line to read, not a command)
-                AppendMenuW(fm, MF_STRING | MF_GRAYED, 0, wide(&format!("● Идёт запись: {game}")).as_ptr());
+                AppendMenuW(
+                    fm,
+                    MF_STRING | MF_GRAYED,
+                    0,
+                    wide(&trf("● Идёт запись: {game}", &[("game", game.to_string())])).as_ptr(),
+                );
                 AppendMenuW(fm, MF_SEPARATOR, 0, null());
             }
             let last = report_win::latest_session(&session_rec::sessions_dir(&data_dir()));
             let last_flags = MF_STRING | if last.is_some() { 0 } else { MF_GRAYED };
-            AppendMenuW(fm, last_flags, LAST_SESSION, wide("Отчёт о последней игре").as_ptr());
+            AppendMenuW(fm, last_flags, LAST_SESSION, wide(&tr("Отчёт о последней игре")).as_ptr());
             AppendMenuW(fm, MF_SEPARATOR, 0, null());
-            AppendMenuW(fm, MF_STRING | check(self.cfg.fps), FPS, wide("Считать FPS").as_ptr());
+            AppendMenuW(fm, MF_STRING | check(self.cfg.fps), FPS, wide(&tr("Считать FPS")).as_ptr());
             let off = if self.cfg.fps { 0 } else { MF_GRAYED };
-            let panel_text = wide("Показывать FPS-панель (Ctrl+Alt+F)");
+            let panel_text = wide(&tr("Показывать FPS-панель (Ctrl+Alt+F)"));
             AppendMenuW(fm, MF_STRING | off | check(self.cfg.fps_panel), FPS_PANEL, panel_text.as_ptr());
             AppendMenuW(fm, MF_SEPARATOR, 0, null());
             for (i, (key, name)) in corners.iter().enumerate() {
@@ -1391,9 +1420,14 @@ impl App {
             AppendMenuW(fm, MF_SEPARATOR, 0, null());
             for (i, sz) in config::FPS_SIZES.iter().enumerate() {
                 let on = check(self.cfg.fps_size == *sz);
-                AppendMenuW(fm, MF_STRING | off | on, FPS_SIZE + i, wide(&format!("Размер {sz}%")).as_ptr());
+                AppendMenuW(
+                    fm,
+                    MF_STRING | off | on,
+                    FPS_SIZE + i,
+                    wide(&trf("Размер {v}%", &[("v", sz.to_string())])).as_ptr(),
+                );
             }
-            AppendMenuW(m, MF_POPUP, fm as usize, wide("FPS в играх").as_ptr());
+            AppendMenuW(m, MF_POPUP, fm as usize, wide(&tr("FPS в играх")).as_ptr());
             let trm = CreatePopupMenu();
             for (i, (key, name)) in tray::KINDS.iter().enumerate() {
                 let on = self.cfg.tray.iter().any(|k| k == key);
@@ -1401,18 +1435,18 @@ impl App {
                 let full = !on && self.cfg.tray.len() >= tray::MAX_ICONS;
                 let last = on && self.cfg.tray.len() == 1;
                 let flags = MF_STRING | check(on) | if full || last { MF_GRAYED } else { 0 };
-                AppendMenuW(trm, flags, TRAY + i, wide(name).as_ptr());
+                AppendMenuW(trm, flags, TRAY + i, wide(&tr(name)).as_ptr());
             }
-            AppendMenuW(m, MF_POPUP, trm as usize, wide("Значки в трее").as_ptr());
-            AppendMenuW(m, MF_STRING | check(self.cfg.alerts), ALERTS, wide("Предупреждения").as_ptr());
+            AppendMenuW(m, MF_POPUP, trm as usize, wide(&tr("Значки в трее")).as_ptr());
+            AppendMenuW(m, MF_STRING | check(self.cfg.alerts), ALERTS, wide(&tr("Предупреждения")).as_ptr());
             AppendMenuW(
                 m,
                 MF_STRING | check(self.taskbar_on()),
                 PANEL,
-                wide("Панель на панели задач").as_ptr(),
+                wide(&tr("Панель на панели задач")).as_ptr(),
             );
             AppendMenuW(m, MF_SEPARATOR, 0, null());
-            AppendMenuW(m, MF_STRING, CLOSE, wide("Выход").as_ptr());
+            AppendMenuW(m, MF_STRING, CLOSE, wide(&tr("Выход")).as_ptr());
             let mut pt = POINT::default();
             GetCursorPos(&mut pt);
             SetForegroundWindow(self.hwnd);
@@ -1986,6 +2020,7 @@ pub fn run(report: Option<String>) -> i32 {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let cfg_path = data_dir().join("config-2.toml");
         let cfg = Config::load(&cfg_path);
+        crate::apply_language(&cfg.lang);
         let shared = Shared::new(cfg.ping_host.clone());
 
         let hinst = GetModuleHandleW(null());
@@ -2127,7 +2162,7 @@ pub fn run(report: Option<String>) -> i32 {
             ..Default::default()
         };
         RegisterClassW(&rc);
-        let report_title = wide("PC Monitor: игровая сессия");
+        let report_title = wide(&tr("PC Monitor: игровая сессия"));
         let report_hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_APPWINDOW,
             report_class.as_ptr(),
@@ -2234,6 +2269,7 @@ pub fn run(report: Option<String>) -> i32 {
 /// Draw the widget with live data (after a few seconds of samples) into a PNG.
 pub fn png(path: &str) -> i32 {
     let cfg = Config::load(&data_dir().join("config-2.toml"));
+    crate::apply_language(&cfg.lang);
     let shared = Shared::new(cfg.ping_host.clone());
     collect::start(shared.clone());
     std::thread::sleep(std::time::Duration::from_millis(3500));

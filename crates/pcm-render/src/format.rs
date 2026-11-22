@@ -1,9 +1,56 @@
-//! Numbers as the widget writes them, in 1.8's words. Russian is the source
-//! language (as in 1.8): `tr` will look up the other languages in stage 5.
+//! Numbers as the widget writes them, in 1.8's words, and the interface
+//! texts in the chosen language. Russian is the source language (as in
+//! 1.8): the code is written in Russian and `tr` looks the text up in
+//! texts.tsv (English, Ukrainian, German); a missing row shows Russian.
 
-/// The interface text in the current language (Russian for now).
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// The interface languages: code and own name.
+pub const LANGS: [(&str, &str); 4] =
+    [("ru", "Русский"), ("en", "English"), ("uk", "Українська"), ("de", "Deutsch")];
+
+static LANG: AtomicU8 = AtomicU8::new(0);
+
+/// Russian text -> [English, Ukrainian, German].
+fn table() -> &'static HashMap<String, [String; 3]> {
+    static T: OnceLock<HashMap<String, [String; 3]>> = OnceLock::new();
+    T.get_or_init(|| {
+        // "\n" in the file is a line break in the text
+        let unescape = |s: &str| s.replace("\\n", "\n");
+        include_str!("texts.tsv")
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| {
+                let c: Vec<&str> = l.split('\t').collect();
+                (c.len() == 4).then(|| (unescape(c[0]), [unescape(c[1]), unescape(c[2]), unescape(c[3])]))
+            })
+            .collect()
+    })
+}
+
+/// "ru", "en", "uk" or "de" (anything else: Russian).
+pub fn set_language(code: &str) {
+    let i = LANGS.iter().position(|(c, _)| *c == code).unwrap_or(0);
+    LANG.store(i as u8, Ordering::Relaxed);
+}
+
+pub fn language() -> &'static str {
+    LANGS[(LANG.load(Ordering::Relaxed) as usize).min(LANGS.len() - 1)].0
+}
+
+/// The interface text in the current language.
 pub fn tr(text: &str) -> String {
-    text.to_string()
+    tr_in(LANG.load(Ordering::Relaxed) as usize, text)
+}
+
+/// The text in LANGS[lang].
+fn tr_in(lang: usize, text: &str) -> String {
+    if lang == 0 {
+        return text.to_string();
+    }
+    table().get(text).map_or_else(|| text.to_string(), |row| row[lang - 1].clone())
 }
 
 /// `tr` with "{name}" fields filled in.
@@ -15,9 +62,9 @@ pub fn trf(text: &str, fields: &[(&str, String)]) -> String {
     s
 }
 
-/// Decimal comma (Russian, Ukrainian, German).
+/// A decimal comma in Russian, Ukrainian and German; a point in English.
 pub fn dec(s: String) -> String {
-    s.replace('.', ",")
+    if language() == "en" { s } else { s.replace('.', ",") }
 }
 
 pub fn fmt_gb(bytes: u64) -> String {
@@ -175,5 +222,40 @@ mod tests {
         assert_eq!(short_gpu_name("NVIDIA GeForce RTX 3060"), "GeForce RTX 3060");
         assert_eq!(short_gpu_name("AMD Radeon(TM) Graphics"), "Radeon Graphics");
         assert_eq!(short_gpu_name("Intel(R) Graphics"), "Intel Graphics");
+    }
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::*;
+
+    /// "{name}" fields of a text, sorted.
+    fn fields(s: &str) -> Vec<String> {
+        let mut f: Vec<String> =
+            s.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(n, _)| n.to_string())).collect();
+        f.sort();
+        f
+    }
+
+    #[test]
+    fn every_translation_keeps_its_fields() {
+        assert!(table().len() > 250);
+        for (ru, row) in table() {
+            for (i, t) in row.iter().enumerate() {
+                assert!(!t.is_empty(), "{ru:?} has an empty translation");
+                assert_eq!(fields(ru), fields(t), "{ru:?} -> {t:?} ({})", LANGS[i + 1].0);
+            }
+        }
+    }
+
+    #[test]
+    fn lookup() {
+        assert_eq!(tr_in(1, "Выход"), "Exit");
+        assert_eq!(tr_in(3, "Выход"), "Beenden");
+        assert_eq!(tr_in(0, "Выход"), "Выход");
+        assert_eq!(tr_in(1, "нет такой строки"), "нет такой строки", "a missing row stays Russian");
+        // "\n" in the file is a line break on both sides
+        let multi = table().keys().find(|k| k.contains('\n')).expect("a text with a line break");
+        assert!(tr_in(1, multi).contains('\n'));
     }
 }

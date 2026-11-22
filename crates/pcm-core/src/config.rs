@@ -18,6 +18,8 @@ pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
 pub const FPS_CORNERS: &[&str] = &["tl", "tr", "bl", "br"];
 /// FPS panel sizes in %.
 pub const FPS_SIZES: &[u32] = &[100, 125, 150];
+/// The interface language: "auto" = the Windows one.
+pub const LANGS: &[&str] = &["auto", "ru", "en", "uk", "de"];
 /// "work" and "game": each remembers how the widget looks.
 pub const PROFILES: &[&str] = &["work", "game"];
 
@@ -128,6 +130,8 @@ pub struct Config {
     pub profile: String,
     /// Switch to "game" while a game is in front, back after it.
     pub auto_game: bool,
+    /// One of LANGS.
+    pub lang: String,
     /// The saved look of each profile (last: TOML puts tables after values).
     pub profiles: BTreeMap<String, ProfileView>,
 }
@@ -166,6 +170,7 @@ impl Default for Config {
             fps_size: 100,
             profile: "work".into(),
             auto_game: true,
+            lang: "auto".into(),
             profiles: BTreeMap::new(),
         }
     }
@@ -240,6 +245,9 @@ impl Config {
         }
         if !FPS_SIZES.contains(&self.fps_size) {
             self.fps_size = d.fps_size;
+        }
+        if !LANGS.contains(&self.lang.as_str()) {
+            self.lang = d.lang.clone();
         }
         if !PROFILES.contains(&self.profile.as_str()) {
             self.profile = d.profile.clone();

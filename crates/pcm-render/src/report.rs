@@ -6,6 +6,7 @@ use pcm_core::session::{BAD_FRAME, Session};
 use tiny_skia::Pixmap;
 
 use crate::canvas::{Align, Canvas, part};
+use crate::format::{dec, tr, trf};
 use crate::text::{Fonts, Style};
 use crate::theme::*;
 
@@ -147,7 +148,7 @@ pub fn session_report(
     if info.width > 0 {
         sub += &format!("  ·  {}×{}", info.width, info.height);
         if info.refresh_hz > 0 {
-            sub += &format!(" @ {} Гц", info.refresh_hz);
+            sub += &trf(" @ {v} Гц", &[("v", info.refresh_hz.to_string())]);
         }
     }
     c.text(fonts, PAD, 56.0, &sub, Style::Regular, 12.0, DIM);
@@ -183,8 +184,17 @@ pub fn session_report(
     // 2. frame time: each column the range of its frames; bad frames in red
     let med = sum.median_ms as f32;
     let ms_hi = nice_max((med * 4.0).max(20.0), 10.0);
-    let p =
-        panel(&mut c, fonts, ys[1].0, ys[1].1, "Время кадра, мс", &[("плохие кадры", bad)], 0.0, ms_hi, "");
+    let p = panel(
+        &mut c,
+        fonts,
+        ys[1].0,
+        ys[1].1,
+        &tr("Время кадра, мс"),
+        &[(&tr("плохие кадры"), bad)],
+        0.0,
+        ms_hi,
+        "",
+    );
     let bad_ms = med * BAD_FRAME;
     let bad_y = p.y(bad_ms);
     // the red zone: above twice the median
@@ -218,7 +228,7 @@ pub fn session_report(
         fonts,
         ys[2].0,
         ys[2].1,
-        "Загрузка, %",
+        &tr("Загрузка, %"),
         &[("CPU", cpu_col), ("GPU", gpu_col)],
         0.0,
         100.0,
@@ -239,7 +249,7 @@ pub fn session_report(
         fonts,
         ys[3].0,
         ys[3].1,
-        "Температура, °C",
+        &tr("Температура, °C"),
         &[("CPU", cpu_col), ("GPU", gpu_col)],
         t_lo,
         t_hi,
@@ -251,7 +261,7 @@ pub fn session_report(
         let pts: Vec<_> = info.samples.iter().map(|x| (x.t, x.gpu_t)).collect();
         series(&mut c, &p, span, &pts, gpu_col);
     } else {
-        let msg = "датчики температуры не отвечали";
+        let msg = tr("датчики температуры не отвечали");
         c.rich(
             fonts,
             (p.x0 + p.x1) / 2.0,
@@ -275,23 +285,23 @@ pub fn session_report(
         122.0,
         &[
             part(format!("{:.0}", sum.avg_fps), Style::SemiBoldCondensed, 46.0, fps_scale(sc, sum.avg_fps)),
-            part("  FPS в среднем", Style::Regular, 12.0, DIM),
+            part(tr("  FPS в среднем"), Style::Regular, 12.0, DIM),
         ],
         Align::Left,
     );
     let pct_bad = if sum.frames > 0 { sum.bad_frames as f64 * 100.0 / sum.frames as f64 } else { 0.0 };
-    let rows: Vec<(&str, String, Rgb)> = vec![
-        ("1% low", format!("{:.0} FPS", sum.low1), fps_scale(sc, sum.low1)),
-        ("0.1% low", format!("{:.0} FPS", sum.low01), fps_scale(sc, sum.low01)),
-        ("Мин / макс за секунду", format!("{:.0} / {:.0}", sum.min_fps, sum.max_fps), TEXT),
-        ("Медиана кадра", format!("{:.1} мс", sum.median_ms), TEXT),
+    let rows: Vec<(String, String, Rgb)> = vec![
+        ("1% low".into(), format!("{:.0} FPS", sum.low1), fps_scale(sc, sum.low1)),
+        ("0.1% low".into(), format!("{:.0} FPS", sum.low01), fps_scale(sc, sum.low01)),
+        (tr("Мин / макс за секунду"), format!("{:.0} / {:.0}", sum.min_fps, sum.max_fps), TEXT),
+        (tr("Медиана кадра"), trf("{v} мс", &[("v", dec(format!("{:.1}", sum.median_ms)))]), TEXT),
         (
-            "Плохие кадры",
-            format!("{} ({:.1}%)", sum.bad_frames, pct_bad),
+            tr("Плохие кадры"),
+            format!("{} ({}%)", sum.bad_frames, dec(format!("{pct_bad:.1}"))),
             if pct_bad >= 1.0 { bad } else { TEXT },
         ),
-        ("Кадров", format_count(sum.frames), TEXT),
-        ("Игра без пауз", fmt_clock(sum.active_s), TEXT),
+        (tr("Кадров"), format_count(sum.frames), TEXT),
+        (tr("Игра без пауз"), fmt_clock(sum.active_s), TEXT),
     ];
     let mut y = 156.0;
     for (label, value, col) in &rows {
@@ -310,7 +320,7 @@ pub fn session_report(
     }
     let mut line = Vec::new();
     if info.ram_gb > 0.0 {
-        line.push(format!("ОЗУ {:.0} ГБ", info.ram_gb));
+        line.push(trf("ОЗУ {v} ГБ", &[("v", format!("{:.0}", info.ram_gb))]));
     }
     if !info.windows.is_empty() {
         line.push(format!("Windows {}", info.windows));
@@ -319,9 +329,12 @@ pub fn session_report(
         facts.push(line.join("  ·  "));
     }
     if !info.source.is_empty() {
-        let src =
-            if info.source == "dxgi" { "DXGI (DirectX 10–12)" } else { "ядро (DX9 / OpenGL / Vulkan)" };
-        facts.push(format!("Кадры: {src}"));
+        let src = if info.source == "dxgi" {
+            "DXGI (DirectX 10–12)"
+        } else {
+            &tr("ядро (DX9 / OpenGL / Vulkan)")
+        };
+        facts.push(trf("Кадры: {src}", &[("src", src.to_string())]));
     }
     for f in &facts {
         let t = c.ellipsize(fonts, f, Style::Regular, 11.0, r - x);
@@ -330,12 +343,12 @@ pub fn session_report(
     }
 
     // "Сохранить CSV"
-    let label = "Сохранить CSV";
-    let lw = c.width(fonts, label, Style::SemiBold, 12.0);
+    let label = tr("Сохранить CSV");
+    let lw = c.width(fonts, &label, Style::SemiBold, 12.0);
     let csv = [r - lw - 28.0, h - 44.0, r, h - 16.0];
     c.rrect(csv[0], csv[1], csv[2], csv[3], 8.0, if hover.csv { ROW_HOVER } else { HIST_TRACK });
     c.rrect_stroke(csv[0], csv[1], csv[2], csv[3], 8.0, 1.0, if hover.csv { sc.at(0.05) } else { BORDER });
-    c.text(fonts, csv[0] + 14.0, h - 25.5, label, Style::SemiBold, 12.0, if hover.csv { TEXT } else { DIM });
+    c.text(fonts, csv[0] + 14.0, h - 25.5, &label, Style::SemiBold, 12.0, if hover.csv { TEXT } else { DIM });
 
     let px = |b: [f32; 4]| b.map(|v| v * scale);
     Some((c.pm, ReportBoxes { close: px(close), csv: px(csv) }))

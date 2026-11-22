@@ -10,6 +10,7 @@ use egui::{Color32, RichText};
 use pcm_core::config::{self, Config, FPS_SIZES, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
 use crate::dashboard::{FromDashboard, send};
+use pcm_render::format::{tr, trf};
 
 const DIM: Color32 = Color32::from_rgb(139, 147, 163);
 const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
@@ -58,7 +59,7 @@ impl SettingsTab {
             self.edit = Some(c.clone());
         }
         let Some(mut c) = self.edit.clone() else {
-            ui.label(RichText::new("Жду настройки от виджета…").color(DIM));
+            ui.label(RichText::new(tr("Жду настройки от виджета…")).color(DIM));
             return;
         };
         let before = c.clone();
@@ -67,13 +68,20 @@ impl SettingsTab {
             ui.set_max_width(640.0);
 
             ui.spacing_mut().slider_width = 240.0;
-            heading(ui, "Виджет");
-            ui.checkbox(&mut c.widget, "Показывать виджет (Ctrl+Alt+W)");
-            ui.checkbox(&mut c.pinned, "Закрепить на рабочем столе");
-            ui.add_enabled(!c.pinned, egui::Checkbox::new(&mut c.topmost, "Поверх всех окон"));
-            ui.checkbox(&mut c.compact, "Компактный режим");
+            heading(ui, "Язык / Language");
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(&mut c.lang, "auto".to_string(), tr("Как в Windows"));
+                for (code, name) in pcm_render::format::LANGS {
+                    ui.radio_value(&mut c.lang, code.to_string(), name);
+                }
+            });
+            heading(ui, &tr("Виджет"));
+            ui.checkbox(&mut c.widget, tr("Показывать виджет (Ctrl+Alt+W)"));
+            ui.checkbox(&mut c.pinned, tr("Закрепить на рабочем столе"));
+            ui.add_enabled(!c.pinned, egui::Checkbox::new(&mut c.topmost, tr("Поверх всех окон")));
+            ui.checkbox(&mut c.compact, tr("Компактный режим"));
             ui.horizontal(|ui| {
-                ui.label("Размер");
+                ui.label(tr("Размер"));
                 let mut size = c.size as f32;
                 let s = egui::Slider::new(&mut size, config::SIZE_MIN as f32..=config::SIZE_MAX as f32)
                     .step_by(config::SIZE_STEP as f64)
@@ -87,7 +95,7 @@ impl SettingsTab {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Непрозрачность");
+                ui.label(tr("Непрозрачность"));
                 let mut a = (c.alpha * 100.0).round();
                 if ui
                     .add(egui::Slider::new(&mut a, 30.0..=100.0).step_by(5.0).fixed_decimals(0).suffix("%"))
@@ -97,30 +105,30 @@ impl SettingsTab {
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button("Обычная форма").clicked() {
+                if ui.button(tr("Обычная форма")).clicked() {
                     action = Some(FromDashboard::ResetShape);
                 }
-                if ui.button("В правый верхний угол").clicked() {
+                if ui.button(tr("В правый верхний угол")).clicked() {
                     action = Some(FromDashboard::ResetPosition);
                 }
             });
             hint(
                 ui,
-                "Размер — ещё Ctrl + колёсико над виджетом. Форма — тяни виджет за правый или нижний край.",
+                &tr("Размер — ещё Ctrl + колёсико над виджетом. Форма — тяни виджет за правый или нижний край."),
             );
 
-            heading(ui, "Цвета");
+            heading(ui, &tr("Цвета"));
             ui.horizontal(|ui| {
-                for (key, name) in [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд"), ("custom", "Свои")]
+                for (key, name) in [("heat", tr("Тепло")), ("neon", tr("Неон")), ("ice", tr("Лёд")), ("custom", tr("Свои"))]
                 {
                     ui.radio_value(&mut c.theme, key.to_string(), name);
                 }
             });
             if c.theme == "custom" {
                 ui.horizontal(|ui| {
-                    for (i, label) in ["Малая нагрузка", "Большая нагрузка"].iter().enumerate()
+                    for (i, label) in [tr("Малая нагрузка"), tr("Большая нагрузка")].iter().enumerate()
                     {
-                        ui.label(*label);
+                        ui.label(label.as_str());
                         let mut rgb = rgb_of(&c.custom_colors[i]);
                         if ui.color_edit_button_srgb(&mut rgb).changed() {
                             c.custom_colors[i] = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
@@ -130,11 +138,11 @@ impl SettingsTab {
                 });
             }
 
-            heading(ui, "Показывать в виджете");
+            heading(ui, &tr("Показывать в виджете"));
             egui::Grid::new("sections").num_columns(2).spacing([24.0, 4.0]).show(ui, |ui| {
                 for (i, (key, name)) in SECTIONS.iter().enumerate() {
                     let mut on = !c.hidden.iter().any(|h| h == key);
-                    if ui.checkbox(&mut on, *name).changed() {
+                    if ui.checkbox(&mut on, tr(name)).changed() {
                         if on {
                             c.hidden.retain(|h| h != key);
                         } else {
@@ -147,14 +155,14 @@ impl SettingsTab {
                 }
             });
 
-            heading(ui, "Трей и панель задач");
-            ui.label(RichText::new(format!("Значки в трее (1–{TRAY_MAX}):")).color(DIM));
+            heading(ui, &tr("Трей и панель задач"));
+            ui.label(RichText::new(trf("Значки в трее (1–{n}):", &[("n", TRAY_MAX.to_string())])).color(DIM));
             ui.horizontal_wrapped(|ui| {
                 for (key, name) in TRAY_KINDS {
                     let mut on = c.tray.iter().any(|k| k == key);
                     let full = !on && c.tray.len() >= TRAY_MAX;
                     let last = on && c.tray.len() == 1;
-                    if ui.add_enabled(!(full || last), egui::Checkbox::new(&mut on, *name)).changed() {
+                    if ui.add_enabled(!(full || last), egui::Checkbox::new(&mut on, tr(name))).changed() {
                         if on {
                             c.tray.push(key.to_string());
                         } else {
@@ -164,58 +172,58 @@ impl SettingsTab {
                 }
             });
             let mut panel = c.taskbar.unwrap_or_else(|| !pcm_win::system::is_windows_11());
-            if ui.checkbox(&mut panel, "Мини-панель на панели задач").changed() {
+            if ui.checkbox(&mut panel, tr("Мини-панель на панели задач")).changed() {
                 c.taskbar = Some(panel);
             }
 
-            heading(ui, "Игры");
-            ui.label(RichText::new("В играх и видео на весь экран виджет:").color(DIM));
+            heading(ui, &tr("Игры"));
+            ui.label(RichText::new(tr("В играх и видео на весь экран виджет:")).color(DIM));
             ui.horizontal(|ui| {
-                for (key, name) in [("hide", "прятать"), ("dim", "тускнеть"), ("off", "ничего")]
+                for (key, name) in [("hide", tr("прятать")), ("dim", tr("тускнеть")), ("off", tr("ничего"))]
                 {
                     ui.radio_value(&mut c.in_games, key.to_string(), name);
                 }
             });
-            ui.checkbox(&mut c.fps, "Считать FPS (панель, запись сессий)");
+            ui.checkbox(&mut c.fps, tr("Считать FPS (панель, запись сессий)"));
             ui.add_enabled_ui(c.fps, |ui| {
-                ui.checkbox(&mut c.fps_panel, "Показывать FPS-панель (Ctrl+Alt+F)");
+                ui.checkbox(&mut c.fps_panel, tr("Показывать FPS-панель (Ctrl+Alt+F)"));
                 ui.horizontal(|ui| {
-                    ui.label("Угол панели");
+                    ui.label(tr("Угол панели"));
                     for (key, name) in [
-                        ("tl", "слева вверху"),
-                        ("tr", "справа вверху"),
-                        ("bl", "слева внизу"),
-                        ("br", "справа внизу"),
+                        ("tl", tr("слева вверху")),
+                        ("tr", tr("справа вверху")),
+                        ("bl", tr("слева внизу")),
+                        ("br", tr("справа внизу")),
                     ] {
                         ui.radio_value(&mut c.fps_corner, key.to_string(), name);
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Размер панели");
+                    ui.label(tr("Размер панели"));
                     for s in FPS_SIZES {
                         ui.radio_value(&mut c.fps_size, *s, format!("{s}%"));
                     }
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Профиль");
-                ui.radio_value(&mut c.profile, "work".to_string(), "Работа");
-                ui.radio_value(&mut c.profile, "game".to_string(), "Игра");
-                if ui.button("Запомнить текущий вид").clicked() {
+                ui.label(tr("Профиль"));
+                ui.radio_value(&mut c.profile, "work".to_string(), tr("Работа"));
+                ui.radio_value(&mut c.profile, "game".to_string(), tr("Игра"));
+                if ui.button(tr("Запомнить текущий вид")).clicked() {
                     action = Some(FromDashboard::SaveProfile);
                 }
             });
-            ui.checkbox(&mut c.auto_game, "Включать «Игру», когда запущена игра");
+            ui.checkbox(&mut c.auto_game, tr("Включать «Игру», когда запущена игра"));
 
-            heading(ui, "Предупреждения");
-            ui.checkbox(&mut c.alerts, "Показывать предупреждения");
-            ui.checkbox(&mut c.quiet_games, "Во время игры — показать после неё");
+            heading(ui, &tr("Предупреждения"));
+            ui.checkbox(&mut c.alerts, tr("Показывать предупреждения"));
+            ui.checkbox(&mut c.quiet_games, tr("Во время игры — показать после неё"));
             ui.add_enabled_ui(c.alerts, |ui| {
                 let limits: [(&str, &mut u32, [u32; 4], &str); 4] = [
-                    ("Перегрев CPU от", &mut c.alert_temp, [80, 85, 90, 95], "°"),
-                    ("Память занята от", &mut c.alert_ram, [80, 85, 90, 95], "%"),
-                    ("Батарея ниже", &mut c.alert_battery, [10, 15, 20, 30], "%"),
-                    ("Свободно на диске C: меньше", &mut c.alert_disk, [5, 10, 15, 20], "%"),
+                    (&tr("Перегрев CPU от"), &mut c.alert_temp, [80, 85, 90, 95], "°"),
+                    (&tr("Память занята от"), &mut c.alert_ram, [80, 85, 90, 95], "%"),
+                    (&tr("Батарея ниже"), &mut c.alert_battery, [10, 15, 20, 30], "%"),
+                    (&tr("Свободно на диске C: меньше"), &mut c.alert_disk, [5, 10, 15, 20], "%"),
                 ];
                 for (title, value, choices, unit) in limits {
                     ui.horizontal(|ui| {
@@ -227,7 +235,7 @@ impl SettingsTab {
                 }
             });
 
-            heading(ui, "Пинг");
+            heading(ui, &tr("Пинг"));
             ui.horizontal(|ui| {
                 for (host, name) in PING_PRESETS {
                     if ui.radio(c.ping_host == host, format!("{host} ({name})")).clicked() {
@@ -237,7 +245,7 @@ impl SettingsTab {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Свой адрес:");
+                ui.label(tr("Свой адрес:"));
                 let r = ui.add(egui::TextEdit::singleline(&mut self.host_text).desired_width(200.0));
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("OK").clicked() || enter {
@@ -253,14 +261,14 @@ impl SettingsTab {
             });
             if self.host_bad {
                 ui.label(
-                    RichText::new("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).").color(HOT),
+                    RichText::new(tr("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).")).color(HOT),
                 );
             }
 
             ui.add_space(18.0);
             hint(
                 ui,
-                "Автозапуск, права администратора и обновления появятся вместе с установщиком (этап 6).",
+                &tr("Автозапуск, права администратора и обновления появятся вместе с установщиком (этап 6)."),
             );
             ui.add_space(12.0);
         });

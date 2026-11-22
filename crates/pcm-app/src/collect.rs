@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use pcm_core::model::{Snapshot, Temp};
 use pcm_core::processes::{KEEP_RUNNING, Tracker};
 use pcm_core::{merge, sensors};
+use pcm_render::format::tr;
 use pcm_render::format::{short_cpu_name, short_gpu_name};
 use pcm_render::widget::{Data, Drive, HISTORY_LEN, ProcRow};
 use pcm_win::*;
@@ -139,13 +140,13 @@ fn run(shared: Arc<Shared>) {
                 merge::apply(&mut s, &sensors::summarize(&r.hardware), r.admin);
                 online = true;
                 if !r.admin {
-                    hint = Some("Температуры включаются в меню (ПКМ)".to_string());
+                    hint = Some(tr("Температуры включаются в меню (ПКМ)").to_string());
                 } else if s.cpu.temp.is_none() && !system::pawnio_installed() {
-                    hint = Some("CPU и GPU: нужен PawnIO".to_string());
+                    hint = Some(tr("CPU и GPU: нужен PawnIO").to_string());
                 }
             }
         } else {
-            hint = Some("Нет помощника датчиков рядом с программой".to_string());
+            hint = Some(tr("Нет помощника датчиков рядом с программой").to_string());
         }
         for d in &mut s.drives {
             if d.letters.is_empty()

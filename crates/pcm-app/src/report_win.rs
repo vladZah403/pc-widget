@@ -19,6 +19,7 @@ use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::layered::{self, Surface};
+use pcm_render::format::tr;
 
 /// What a click on the report asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,7 +157,7 @@ pub fn save_dialog(owner: HWND, suggested: &str) -> Option<PathBuf> {
     }
     let filter: Vec<u16> = "CSV\0*.csv\0\0".encode_utf16().collect();
     let ext: Vec<u16> = "csv\0".encode_utf16().collect();
-    let title: Vec<u16> = "Сохранить CSV\0".encode_utf16().collect();
+    let title: Vec<u16> = (tr("Сохранить CSV") + "\0").encode_utf16().collect();
     let mut ofn = OPENFILENAMEW {
         lStructSize: size_of::<OPENFILENAMEW>() as u32,
         hwndOwner: owner,
