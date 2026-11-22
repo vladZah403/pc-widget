@@ -99,6 +99,36 @@ jobs:
             if ($names -notcontains $need) { throw "PC-Monitor.zip has no $need" }
           }
 
+      - name: Targets (idle CPU and memory, exe size)
+        # the plan's targets: a build that misses one is not released
+        # (the PC Monitor window needs OpenGL, which GitHub's machines lack:
+        # its <= 120 MB is measured on a real PC)
+        shell: pwsh
+        run: |
+          $exe = "dist2\PC-Monitor\PC-Monitor.exe"
+          $mb = (Get-Item $exe).Length / 1MB
+          "exe: {0:N1} MB" -f $mb
+          if ($mb -gt 15) { throw "the exe is over 15 MB" }
+          $env:APPDATA = "$env:RUNNER_TEMP\idle"
+          New-Item -ItemType Directory "$env:APPDATA\PC-Monitor" | Out-Null
+          # the plan's case: the widget and the tray, the window closed
+          Set-Content "$env:APPDATA\PC-Monitor\config-2.toml" "widget = true"
+          $p = Start-Process $exe -ArgumentList "--autostart" -PassThru
+          Start-Sleep -Seconds 30  # warming up: the helper starts, the first readings
+          $t0 = (Get-Process -Id $p.Id).TotalProcessorTime
+          Start-Sleep -Seconds 120
+          $proc = Get-Process -Id $p.Id
+          $cpu = ($proc.TotalProcessorTime - $t0).TotalSeconds / 120 * 100
+          $mem = $proc.PrivateMemorySize64 / 1MB
+          $h = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id) and Name='pcm-sensors.exe'"
+          $hmem = if ($h) { (Get-Process -Id $h.ProcessId).PrivateMemorySize64 / 1MB } else { 0 }
+          "idle 2 min: CPU {0:N2}% of one core, {1:N1} MB private; sensor helper {2:N1} MB" -f $cpu, $mem, $hmem
+          Stop-Process -Id $p.Id -Force
+          if ($h) { Stop-Process -Id $h.ProcessId -Force -ErrorAction SilentlyContinue }
+          if ($cpu -gt 1) { throw "idle CPU over 1% of one core" }
+          if ($mem -gt 30) { throw "over 30 MB without the helper" }
+          if ($mem + $hmem -gt 70) { throw "over 70 MB with the helper" }
+
       - name: Build the installer
         shell: pwsh
         run: |
