@@ -99,6 +99,12 @@ impl SettingsTab {
             });
             heading(ui, &tr("Виджет"));
             ui.checkbox(&mut c.widget, tr("Показывать виджет (Ctrl+Alt+W)"));
+            ui.horizontal(|ui| {
+                ui.label(tr("Вид"));
+                ui.radio_value(&mut c.widget_style, "cards".to_string(), tr("Карточки"));
+                ui.radio_value(&mut c.widget_style, "classic".to_string(), tr("Классический (как в 1.8)"));
+            });
+            ui.checkbox(&mut c.window_light, tr("Светлая тема (окно и виджет «Карточки»)"));
             ui.checkbox(&mut c.pinned, tr("Закрепить на рабочем столе"));
             ui.add_enabled(!c.pinned, egui::Checkbox::new(&mut c.topmost, tr("Поверх всех окон")));
             ui.checkbox(&mut c.compact, tr("Компактный режим"));

@@ -11,6 +11,9 @@ use crate::format::*;
 use crate::text::{Fonts, Style};
 use crate::theme::*;
 
+mod cards_look;
+pub use cards_look::{CARDS_W, COMPACT_W};
+
 pub const PAD: f32 = 16.0;
 pub const WIDTH_STD: f32 = 264.0;
 pub const WIDTH_MAX: f32 = 900.0;
@@ -129,6 +132,9 @@ pub struct Data {
     pub cpu_cores: Option<u32>,
     /// The GPU's load over the last minute, oldest first (up to 60).
     pub gpu_hist: Vec<f32>,
+    /// Memory in use (%) and disk reads + writes (bytes/s) over the last minute.
+    pub ram_hist: Vec<f32>,
+    pub io_hist: Vec<f32>,
     /// RAM from SMBIOS: "DDR4", MT/s, each stick's size in bytes.
     pub mem_kind: Option<String>,
     pub mem_speed: Option<u32>,
@@ -153,8 +159,28 @@ pub enum Edge {
     Bottom,
 }
 
+/// How the widget looks: 1.8's rows or the concept's cards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WidgetLook {
+    #[default]
+    Classic,
+    Cards,
+}
+
+impl WidgetLook {
+    /// "cards" / "classic" (the settings' names); anything else is classic.
+    pub fn from_name(name: &str) -> WidgetLook {
+        if name == "cards" { WidgetLook::Cards } else { WidgetLook::Classic }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
+    pub look: WidgetLook,
+    /// Light colours (the cards look only; classic stays dark).
+    pub light: bool,
+    /// The mouse is over "›" (the cards look's way to the PC Monitor window).
+    pub open_hover: bool,
     pub theme: Theme,
     pub scale: f32,
     /// Logical width, WIDTH_STD..WIDTH_MAX.
@@ -178,6 +204,9 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         View {
+            look: WidgetLook::Classic,
+            light: false,
+            open_hover: false,
             theme: Theme::Heat,
             scale: 1.0,
             width: WIDTH_STD,
@@ -202,6 +231,8 @@ pub type BoxPx = [f32; 4];
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Boxes {
     pub close: BoxPx,
+    /// "›" in the cards look: open the PC Monitor window.
+    pub open: BoxPx,
     pub pin: BoxPx,
     pub hero: BoxPx,
     pub update: BoxPx,
@@ -461,6 +492,9 @@ impl Renderer<'_> {
 
     /// Height of the widget in logical px.
     pub fn layout_height(d: &Data, view: &View) -> f32 {
+        if view.look == WidgetLook::Cards {
+            return cards_look::height(d, view);
+        }
         if view.compact {
             let rows = if Self::compact_rows(clean_width(view.width)) == 2 { 50.0 } else { 28.0 };
             return HERO_H + Self::extras(view, true).0 + rows;
@@ -470,6 +504,9 @@ impl Renderer<'_> {
     }
 
     pub fn render(&mut self, data: &Data, view: &View) -> Option<Frame> {
+        if view.look == WidgetLook::Cards {
+            return cards_look::render(self.fonts, data, view);
+        }
         let s = view.scale;
         let width = clean_width(view.width);
         let mut d = data.clone();
@@ -1399,6 +1436,10 @@ pub fn sample_data() -> Data {
         update: None,
         update_state: None,
         update_auto: false,
+        // the minute the cards look draws beside each ring
+        gpu_hist: (0..60).map(|i| 20.0 + 6.0 * ((i as f32) / 4.0).sin()).collect(),
+        ram_hist: (0..60).map(|i| 41.0 + ((i as f32) / 9.0).sin()).collect(),
+        io_hist: (0..60).map(|i| 4e5 * (1.0 + ((i as f32) / 3.0).cos())).collect(),
         ..Data::default()
     }
 }

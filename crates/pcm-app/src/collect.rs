@@ -98,6 +98,8 @@ fn run(shared: Arc<Shared>) {
     let pawnio = system::pawnio_installed();
     let sticks = pcm_win::smbios::read().map(|t| t.memory).unwrap_or_default();
     let mut gpu_hist = VecDeque::new();
+    let mut ram_hist = VecDeque::new();
+    let mut io_hist = VecDeque::new();
     let mut cpu_hist = VecDeque::new();
     let mut net_hist = VecDeque::new();
     let mut volumes = Vec::new();
@@ -208,6 +210,8 @@ fn run(shared: Arc<Shared>) {
         // the GPU worth showing: the busiest (a game's), else the first
         let g = s.gpus.iter().max_by(|a, b| a.load.unwrap_or(0.0).total_cmp(&b.load.unwrap_or(0.0)));
         push(&mut gpu_hist, g.and_then(|g| g.load).unwrap_or(0.0));
+        push(&mut ram_hist, s.memory.map_or(0.0, |m| m.percent()));
+        push(&mut io_hist, s.disk_io.as_ref().map_or(0.0, |d| (d.read_bps + d.write_bps) as f32));
         let (own_cpu, own_mem) = own.read();
         let gpu_temp = g.and_then(|g| g.temp);
         let (ping_ready, ping_ms, ping_host) = ping.lock().map(|p| p.clone()).unwrap_or_default();
@@ -279,6 +283,8 @@ fn run(shared: Arc<Shared>) {
             update_auto: false,
             cpu_cores,
             gpu_hist: gpu_hist.iter().copied().collect(),
+            ram_hist: ram_hist.iter().copied().collect(),
+            io_hist: io_hist.iter().copied().collect(),
             mem_kind: sticks.iter().find_map(|m| m.kind.clone()),
             mem_speed: sticks.iter().find_map(|m| m.speed_mts),
             mem_sticks: sticks.iter().map(|m| m.size).collect(),

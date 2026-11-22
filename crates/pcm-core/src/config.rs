@@ -41,6 +41,9 @@ pub const LANGS: &[&str] = &["auto", "ru", "en", "uk", "de"];
 /// "work" and "game": each remembers how the widget looks.
 pub const PROFILES: &[&str] = &["work", "game"];
 
+/// The widget's looks (`widget_style`).
+pub const WIDGET_STYLES: [&str; 2] = ["cards", "classic"];
+
 /// What a profile remembers (1.8's PROFILE_KEYS).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -104,6 +107,8 @@ pub struct Config {
     /// Extra height for the graphs.
     pub stretch: u32,
     pub compact: bool,
+    /// "cards" (the concept: rings and lines, dark or light) or "classic" (1.8).
+    pub widget_style: String,
     /// Lives on the desktop (survives Win+D, below other windows).
     pub pinned: bool,
     /// Above other windows when not pinned.
@@ -183,6 +188,7 @@ impl Default for Config {
             width: WIDTH_STD,
             stretch: 0,
             compact: false,
+            widget_style: "cards".into(),
             pinned: true,
             topmost: true,
             alpha: 1.0,
@@ -256,6 +262,9 @@ impl Config {
         }
         if !THEMES.contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
+        }
+        if !WIDGET_STYLES.contains(&self.widget_style.as_str()) {
+            self.widget_style = d.widget_style.clone();
         }
         for (c, def) in self.custom_colors.iter_mut().zip(d.custom_colors.iter()) {
             if !is_color(c) {
@@ -378,7 +387,8 @@ impl Config {
     pub fn from_1_8_json(text: &str) -> Option<Config> {
         let v: serde_json::Value = serde_json::from_str(text).ok()?;
         let o = v.as_object()?;
-        let mut c = Config { widget: true, ..Config::default() }; // 1.8 always showed it
+        // 1.8 always showed it, and in its own look
+        let mut c = Config { widget: true, widget_style: "classic".into(), ..Config::default() };
         let b = |k: &str| o.get(k).and_then(|x| x.as_bool());
         let n = |k: &str| o.get(k).and_then(|x| x.as_f64());
         let s = |k: &str| o.get(k).and_then(|x| x.as_str()).map(str::to_string);

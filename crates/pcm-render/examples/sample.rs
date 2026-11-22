@@ -1,7 +1,7 @@
 //! Renders the sample data into PNG files: `cargo run -p pcm-render --example sample -- OUT_DIR`
 
 use pcm_render::text::Fonts;
-use pcm_render::widget::{Renderer, View, sample_data};
+use pcm_render::widget::{Renderer, View, WidgetLook, sample_data};
 
 fn main() {
     let out = std::env::args().nth(1).unwrap_or_else(|| ".".into());
@@ -12,6 +12,14 @@ fn main() {
         ("full-150", View { scale: 1.5, ..View::default() }),
         ("compact-100", View { compact: true, ..View::default() }),
         ("wide-100", View { width: 792.0, ..View::default() }),
+        ("cards-dark", View { look: WidgetLook::Cards, ..View::default() }),
+        ("cards-light", View { look: WidgetLook::Cards, light: true, ..View::default() }),
+        ("cards-compact", View { look: WidgetLook::Cards, compact: true, ..View::default() }),
+        (
+            "cards-compact-light",
+            View { look: WidgetLook::Cards, compact: true, light: true, ..View::default() },
+        ),
+        ("cards-150", View { look: WidgetLook::Cards, scale: 1.5, ..View::default() }),
     ];
     let mut r = Renderer::new(&mut fonts);
     for (name, v) in views {

@@ -15,7 +15,8 @@ use pcm_render::overlay::Look;
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
 use pcm_render::widget::{
-    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, alert_card, side_tab,
+    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, WidgetLook, alert_card,
+    side_tab,
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -373,7 +374,8 @@ impl App {
     fn edge_at(&self, x: f32, y: f32) -> Option<(Edge, bool)> {
         let s = self.scale();
         let (w, h) = (self.size_px.0 as f32, self.size_px.1 as f32);
-        if self.cfg.compact {
+        // the cards look has one shape (Ctrl + wheel scales it)
+        if self.cfg.compact || self.cards_look() {
             return None;
         }
         let corner = inside(&self.boxes.grip, x, y) || (x >= w - GRIP * s && y >= h - GRIP * s);
@@ -389,6 +391,10 @@ impl App {
         None
     }
 
+    fn cards_look(&self) -> bool {
+        WidgetLook::from_name(&self.cfg.widget_style) == WidgetLook::Cards
+    }
+
     fn view(&self) -> View {
         let shaping = match self.press {
             Some(Press::Shape { edge, corner, .. }) => Some((edge, corner)),
@@ -401,6 +407,9 @@ impl App {
         };
         let edge = shaping.or(edge_hover);
         View {
+            look: WidgetLook::from_name(&self.cfg.widget_style),
+            light: self.cfg.window_light,
+            open_hover: self.hover_on(&self.boxes.open),
             theme: self.theme(),
             scale: self.scale(),
             width: self.cfg.width as f32,
@@ -1115,6 +1124,7 @@ impl App {
         c.lang = new.lang;
         c.close_quits = new.close_quits;
         c.window_light = new.window_light;
+        c.widget_style = new.widget_style;
         c.check_updates = new.check_updates;
         c.sanitize();
         self.cfg = c;
@@ -1515,6 +1525,10 @@ impl App {
             }
         } else if inside(&b.update, x, y) {
             self.update_clicked();
+        } else if inside(&b.open, x, y) || (self.cards_look() && b.rows.iter().any(|(_, r)| inside(r, x, y)))
+        {
+            // the cards look: "›" or a reading opens the PC Monitor window
+            self.open_dashboard(None);
         } else if inside(&b.hero, x, y) {
             let open = !self.shared.want_procs.load(Ordering::Relaxed);
             self.shared.want_procs.store(open, Ordering::Relaxed);
@@ -2567,6 +2581,8 @@ pub fn png(path: &str) -> i32 {
     };
     let theme = Theme::from_name(&cfg.theme);
     let view = View {
+        look: WidgetLook::from_name(&cfg.widget_style),
+        light: cfg.window_light,
         theme,
         scale: cfg.size as f32 / 100.0,
         width: cfg.width as f32,

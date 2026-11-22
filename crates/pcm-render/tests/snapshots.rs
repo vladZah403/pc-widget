@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use pcm_render::overlay::{Look, fps_overlay, sample_game, sample_overlay};
 use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
-use pcm_render::widget::{Edge, Renderer, View, sample_data};
+use pcm_render::widget::{Edge, Renderer, View, WidgetLook, sample_data};
 use tiny_skia::Pixmap;
 
 fn dir() -> PathBuf {
@@ -78,6 +78,14 @@ fn widget_compact() {
 #[test]
 fn widget_three_columns() {
     check("widget-wide-100", View { width: 792.0, ..View::default() });
+}
+
+#[test]
+fn widget_cards_look() {
+    let cards = View { look: WidgetLook::Cards, ..View::default() };
+    check("widget-cards-100", cards.clone());
+    check("widget-cards-light-100", View { light: true, ..cards.clone() });
+    check("widget-cards-compact-100", View { compact: true, ..cards });
 }
 
 #[test]
