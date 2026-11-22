@@ -541,14 +541,28 @@ impl Dashboard {
     }
 
     /// A page's name over its content (Главная draws its own).
-    fn page_title(ui: &mut egui::Ui, tab: usize) {
+    /// A page's name and what it is about, as on the home page.
+    fn page_title(&self, ui: &mut egui::Ui, tab: usize) {
+        // a report has its own header
+        if tab == TAB_GAMES && self.sessions.report_open() {
+            return;
+        }
+        let sub = match tab {
+            TAB_HISTORY => "Нагрузка, температуры и сеть: точка каждые 10 секунд, хранится 30 дней",
+            TAB_GAMES => "Сессии записываются сами, пока ты играешь: FPS, нагрузка и температуры",
+            TAB_PROCS => "Программы, которые работают сейчас. «Закрыть» срабатывает со второго нажатия",
+            TAB_DEVICES => "Что стоит в этом компьютере и как оно себя чувствует",
+            _ => "Виджет, трей, игры, предупреждения и запуск",
+        };
         ui.label(RichText::new(tr(TABS[tab].0)).font(bold(22.0)).color(pal().text));
+        ui.add_space(2.0);
+        ui.label(RichText::new(tr(sub)).font(text_font(13.0)).color(pal().dim));
         ui.add_space(14.0);
     }
 
     fn page(&mut self, ui: &mut egui::Ui) {
         if self.tab != TAB_HOME {
-            Self::page_title(ui, self.tab);
+            self.page_title(ui, self.tab);
         }
         match self.tab {
             TAB_HOME => {

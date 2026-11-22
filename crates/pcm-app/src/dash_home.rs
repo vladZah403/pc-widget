@@ -1212,9 +1212,10 @@ impl Card {
                 break;
             }
         }
+        // inside the card's rounded corners (Vlad: the line stuck out at the edges)
         let spark = Rect::from_min_max(
-            pos2(r.left() + 1.0, r.bottom() - 40.0),
-            pos2(r.right() - 1.0, r.bottom() - 3.0),
+            pos2(r.left() + R + 2.0, r.bottom() - 42.0),
+            pos2(r.right() - R - 2.0, r.bottom() - 12.0),
         );
         area(p, spark, &self.spark, self.spark_max, self.color, 70, 1.6);
     }

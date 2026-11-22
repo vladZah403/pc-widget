@@ -424,3 +424,18 @@ FPS держится у частоты монитора: его ограничи
 Ни видеокарта, ни процессор не загружены полностью. FPS может ограничивать сама игра (лимит кадров), один поток процессора, память или диск.	Neither the graphics card nor the processor is fully busy. The game itself (a frame limit), one processor thread, memory or the disk may limit the FPS.	Ні відеокарта, ні процесор не завантажені повністю. FPS може обмежувати сама гра (ліміт кадрів), один потік процесора, пам'ять або диск.	Weder Grafikkarte noch Prozessor sind voll ausgelastet. Das Spiel selbst (Bildlimit), ein Prozessorthread, Speicher oder Festplatte können die FPS begrenzen.
 {n} подтормаживаний длиннее {v} мс	{n} stutters longer than {v} ms	{n} підгальмовувань довших за {v} мс	{n} Ruckler länger als {v} ms
 , {k} из них — в первые 2 минуты	, {k} of them in the first 2 minutes	, {k} з них — у перші 2 хвилини	, {k} davon in den ersten 2 Minuten
+Программ	Programs	Програм	Programme
+Их память	Their memory	Їхня пам'ять	Ihr Speicher
+Процессор сейчас	Processor now	Процесор зараз	Prozessor jetzt
+Найти программу	Find a program	Знайти програму	Programm suchen
+Ничего не найдено	Nothing found	Нічого не знайдено	Nichts gefunden
+Сессий	Sessions	Сесій	Sitzungen
+Время в играх	Time in games	Час в іграх	Zeit in Spielen
+Чаще всего	Most played	Найчастіше	Am häufigsten
+Последняя	Latest	Остання	Zuletzt
+Отчёт ›	Report ›	Звіт ›	Bericht ›
+Нагрузка, температуры и сеть: точка каждые 10 секунд, хранится 30 дней	Load, temperatures and network: a point every 10 seconds, kept for 30 days	Навантаження, температури й мережа: точка кожні 10 секунд, зберігається 30 днів	Last, Temperaturen und Netzwerk: ein Punkt alle 10 Sekunden, 30 Tage lang gespeichert
+Сессии записываются сами, пока ты играешь: FPS, нагрузка и температуры	Sessions record themselves while you play: FPS, load and temperatures	Сесії записуються самі, поки ти граєш: FPS, навантаження й температури	Sitzungen zeichnen sich beim Spielen selbst auf: FPS, Last und Temperaturen
+Программы, которые работают сейчас. «Закрыть» срабатывает со второго нажатия	Programs running now. "Close" works on the second click	Програми, які працюють зараз. «Закрити» спрацьовує з другого натискання	Laufende Programme. „Schließen" wirkt beim zweiten Klick
+Что стоит в этом компьютере и как оно себя чувствует	What is in this computer and how it is doing	Що стоїть у цьому комп'ютері і як воно почувається	Was in diesem Computer steckt und wie es ihm geht
+Виджет, трей, игры, предупреждения и запуск	Widget, tray, games, alerts and startup	Віджет, трей, ігри, попередження і запуск	Widget, Infobereich, Spiele, Warnungen und Start

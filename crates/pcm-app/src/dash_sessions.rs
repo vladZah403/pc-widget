@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::dash_home::pal;
+use crate::dash_home::{bold, fit, icon, icon_font, pal, panel, text_font};
+use crate::dash_kit::{GAP, Tile, sparkline, stat_tiles};
 use crate::dash_report::{ReportAction, ReportPage};
-use egui::RichText;
+use egui::{Align2, CursorIcon, Painter, Rect, RichText, Sense, Stroke, pos2, vec2};
 use pcm_core::session::{EXTENSION, Session, SessionInfo};
 use pcm_render::theme::Theme;
 
@@ -48,6 +49,11 @@ pub(crate) fn dir() -> PathBuf {
 }
 
 impl SessionsTab {
+    /// A report is open (it has its own header).
+    pub fn report_open(&self) -> bool {
+        self.page.is_some()
+    }
+
     /// Show this session's report (the home page's "Открыть отчёт сессии").
     pub fn open_path(&mut self, p: &std::path::Path, from_home: bool) {
         match ReportPage::open(p) {
@@ -120,37 +126,33 @@ impl SessionsTab {
         }
         let mut open: Option<PathBuf> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Grid::new("sessions").striped(true).spacing([24.0, 8.0]).show(ui, |ui| {
-                for h in [
-                    tr("Когда"),
-                    tr("Игра"),
-                    tr("Время игры"),
-                    tr("FPS в среднем"),
-                    "1% low".into(),
-                    String::new(),
-                ] {
-                    ui.label(RichText::new(h).size(12.0).color(pal().dim));
+            let w = ui.available_width();
+            stat_tiles(ui, w, &summary_tiles(&self.list));
+            ui.add_space(GAP);
+            // one card, a row per session: a click opens its report
+            let row_h = 64.0;
+            let (card, _) =
+                ui.allocate_exact_size(vec2(w, 12.0 + self.list.len() as f32 * row_h), Sense::hover());
+            let p = ui.painter().clone();
+            panel(&p, card);
+            for (i, (path, info)) in self.list.iter().enumerate() {
+                let r = Rect::from_min_size(
+                    pos2(card.left(), card.top() + 6.0 + i as f32 * row_h),
+                    vec2(w, row_h),
+                );
+                let resp = ui.interact(r, ui.scope_id().with(("session", i)), Sense::click());
+                if resp.hovered() {
+                    p.rect_filled(r.shrink2(vec2(6.0, 2.0)), 9.0, pal().card_hi);
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                 }
-                ui.end_row();
-                for (p, info) in &self.list {
-                    let s = &info.summary;
-                    ui.label(
-                        RichText::new(info.started.get(..16).unwrap_or(&info.started))
-                            .size(13.0)
-                            .color(pal().dim),
-                    );
-                    let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
-                    ui.label(RichText::new(name).size(13.0).color(pal().text));
-                    ui.label(RichText::new(play_time(s.active_s)).size(13.0).color(pal().text));
-                    ui.label(RichText::new(format!("{:.0}", s.avg_fps)).size(13.0).color(pal().text));
-                    ui.label(RichText::new(format!("{:.0}", s.low1)).size(13.0).color(pal().text));
-                    if ui.add(egui::Button::new(RichText::new(tr("Отчёт")).size(12.0)).small()).clicked()
-                    {
-                        open = Some(p.clone());
-                    }
-                    ui.end_row();
+                if resp.clicked() {
+                    open = Some(path.clone());
                 }
-            });
+                if i > 0 {
+                    p.hline((r.left() + 18.0)..=(r.right() - 18.0), r.top(), Stroke::new(1.0, pal().grid));
+                }
+                session_row(&p, r, info);
+            }
         });
         if let Some(p) = open {
             self.open_path(&p, false);
@@ -161,4 +163,91 @@ impl SessionsTab {
         ui.ctx().request_repaint_after(RELOAD);
         None
     }
+}
+
+/// Сессий, время в играх, чаще всего, последняя.
+fn summary_tiles(list: &[(PathBuf, SessionInfo)]) -> Vec<Tile> {
+    let total: f64 = list.iter().map(|(_, i)| i.summary.active_s).sum();
+    let mut by_game: Vec<(String, f64)> = Vec::new();
+    for (_, i) in list {
+        let name = if i.title.trim().is_empty() { i.game.clone() } else { i.title.clone() };
+        match by_game.iter_mut().find(|(n, _)| *n == name) {
+            Some(g) => g.1 += i.summary.active_s,
+            None => by_game.push((name, i.summary.active_s)),
+        }
+    }
+    let top = by_game.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|g| g.0).unwrap_or_default();
+    let last = list.first().map(|(_, i)| short_date(&i.started)).unwrap_or_default();
+    vec![
+        (tr("Сессий"), list.len().to_string(), String::new(), pal().text, None),
+        (tr("Время в играх"), play_time(total), String::new(), pal().text, None),
+        (tr("Чаще всего"), top, String::new(), pal().text, None),
+        (tr("Последняя"), last, String::new(), pal().text, None),
+    ]
+}
+
+/// "22.11 18:52" of "2026-11-22 18:52:34".
+fn short_date(started: &str) -> String {
+    match (started.get(5..7), started.get(8..10), started.get(11..16)) {
+        (Some(m), Some(d), Some(t)) => format!("{d}.{m} {t}"),
+        _ => started.to_string(),
+    }
+}
+
+/// A session's row: the icon, the game and when, its FPS line, the numbers, "Отчёт ›".
+fn session_row(p: &Painter, r: Rect, info: &SessionInfo) {
+    let s = &info.summary;
+    let left = r.left() + 18.0;
+    let ib = Rect::from_min_size(pos2(left, r.center().y - 17.0), vec2(34.0, 34.0));
+    p.rect_filled(ib, 9.0, pal().card_hi);
+    p.text(ib.center(), Align2::CENTER_CENTER, icon::GAME, icon_font(16.0), pal().dim);
+    let name = if info.title.trim().is_empty() { info.game.clone() } else { info.title.clone() };
+    let right = r.right() - 18.0;
+    let link_w = 74.0;
+    let nums_w = 190.0;
+    let spark_w = (r.width() * 0.22).clamp(80.0, 220.0);
+    let text_x = ib.right() + 14.0;
+    let text_room = right - link_w - nums_w - spark_w - 24.0 - text_x;
+    p.text(
+        pos2(text_x, r.top() + 14.0),
+        Align2::LEFT_TOP,
+        fit(p, &name, &bold(14.0), text_room),
+        bold(14.0),
+        pal().text,
+    );
+    let sub = format!("{} · {}", short_date(&info.started), play_time(s.active_s));
+    p.text(
+        pos2(text_x, r.top() + 35.0),
+        Align2::LEFT_TOP,
+        fit(p, &sub, &text_font(12.5), text_room),
+        text_font(12.5),
+        pal().dim,
+    );
+    // the whole session's FPS, second by second
+    let fps: Vec<f32> = info.samples.iter().filter_map(|x| x.fps).collect();
+    let spark = Rect::from_min_size(
+        pos2(right - link_w - nums_w - spark_w, r.center().y - 12.0),
+        vec2(spark_w, 24.0),
+    );
+    sparkline(p, spark, &fps, pal().cpu_line);
+    // "47 FPS" and "1% low 18"
+    let nx = right - link_w - nums_w + 24.0;
+    let v = p.text(
+        pos2(nx, r.center().y),
+        Align2::LEFT_CENTER,
+        format!("{:.0}", s.avg_fps),
+        bold(20.0),
+        pal().text,
+    );
+    p.text(pos2(v.right() + 5.0, r.center().y + 2.0), Align2::LEFT_CENTER, "FPS", text_font(12.0), pal().dim);
+    let lx = nx + 84.0;
+    p.text(pos2(lx, r.center().y - 9.0), Align2::LEFT_CENTER, "1% low", text_font(11.5), pal().dim);
+    p.text(
+        pos2(lx, r.center().y + 9.0),
+        Align2::LEFT_CENTER,
+        format!("{:.0}", s.low1),
+        bold(13.5),
+        pal().text,
+    );
+    p.text(pos2(right, r.center().y), Align2::RIGHT_CENTER, tr("Отчёт ›"), text_font(13.0), pal().accent);
 }
