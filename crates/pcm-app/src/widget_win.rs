@@ -36,6 +36,7 @@ const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
+use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
@@ -52,6 +53,10 @@ const TIMER_GAMES: usize = 2;
 const TIMER_TAB: usize = 3;
 const TIMER_SLIDE: usize = 4;
 const TIMER_TOAST: usize = 5;
+/// The FPS panel follows the game 4 times a second.
+const TIMER_FPS: usize = 6;
+const HOTKEY_WIDGET: i32 = 1;
+const HOTKEY_FPS: i32 = 2;
 /// An alert card stays this long (ms) unless clicked.
 const TOAST_MS: u32 = 9000;
 /// The widget slides behind the screen edge (and back) this long.
@@ -153,6 +158,10 @@ struct App {
     toast: HWND,
     toast_surface: Option<Surface>,
     panel: Panel,
+    game: GameWatch,
+    overlay: Overlay,
+    /// A game is in front (counted frames), whether the panel shows or not.
+    game_fps: bool,
 }
 
 thread_local! {
@@ -296,7 +305,7 @@ impl App {
     /// Hide or fade the widget while a game or a fullscreen video is in
     /// front; everything comes back when that window goes.
     fn check_games(&mut self) {
-        let busy = fullscreen_app_active(self.hwnd);
+        let busy = self.game_fps || fullscreen_app_active(self.hwnd);
         let hide = busy && self.cfg.in_games == "hide";
         let changed = busy != self.busy;
         self.busy = busy;
@@ -750,6 +759,56 @@ impl App {
         let _ = self.cfg.save(&self.cfg_path);
     }
 
+    // --- games ---
+
+    /// Is a game in front? The FPS panel goes over it (or away).
+    fn fps_tick(&mut self) {
+        let own = [self.hwnd, self.tab.hwnd, self.toast, self.overlay.hwnd, self.panel.hwnd];
+        let game = if self.cfg.fps { self.game.check(&own, fullscreen_app_active(self.hwnd)) } else { None };
+        let was = self.game_fps;
+        self.game_fps = game.is_some();
+        match &game {
+            Some(g) if self.cfg.fps_panel => {
+                let info = overlay_info(g, self.data.as_ref());
+                let sc = self.theme().scale();
+                self.overlay.show(&mut self.fonts, &sc, &info, g, &self.cfg.fps_corner, self.cfg.fps_size);
+            }
+            _ => self.overlay.hide(),
+        }
+        if was != self.game_fps {
+            self.check_games(); // hide or fade the widget now, not on the next check
+        }
+    }
+
+    /// Count frames or stop; Windows may refuse (an ETW session usually needs
+    /// admin rights): an alert card says so.
+    fn set_fps(&mut self, on: bool) {
+        self.cfg.fps = on;
+        self.save();
+        if on {
+            self.game.start();
+            if let Some(e) = &self.game.error {
+                let body = match e {
+                    pcm_win::frames::Error::AccessDenied => {
+                        "Windows отказала: нужны права администратора.".to_string()
+                    }
+                    other => format!("Windows отказала: {other}."),
+                };
+                let alert = Alert { title: "FPS недоступен".into(), body, hot: false };
+                self.show_toast(&alert);
+            }
+        } else {
+            self.game.stop();
+        }
+        self.fps_tick();
+    }
+
+    fn toggle_fps_panel(&mut self) {
+        self.cfg.fps_panel = !self.cfg.fps_panel;
+        self.save();
+        self.fps_tick();
+    }
+
     /// On the desktop (owned by the icon view, at the bottom) or a normal
     /// floating window (topmost if asked).
     fn apply_pin(&self) {
@@ -825,10 +884,16 @@ impl App {
         const ALPHA: usize = 30;
         const GAMES: usize = 40;
         const ROWS: usize = 50;
+        const FPS: usize = 7;
+        const FPS_PANEL: usize = 8;
+        const CORNER: usize = 70;
+        const FPS_SIZE: usize = 80;
         let themes = [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд")];
         let sizes = [80u32, 100, 125, 150, 200];
         let alphas = [100u32, 90, 80, 70, 60];
         let games = [("hide", "Прятать"), ("dim", "Делать прозрачным"), ("off", "Не трогать")];
+        let corners =
+            [("tl", "Слева сверху"), ("tr", "Справа сверху"), ("bl", "Слева снизу"), ("br", "Справа снизу")];
         unsafe {
             let m = CreatePopupMenu();
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
@@ -875,6 +940,22 @@ impl App {
                 AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, gm as usize, wide("В играх и видео на весь экран").as_ptr());
+            let fm = CreatePopupMenu();
+            AppendMenuW(fm, MF_STRING | check(self.cfg.fps), FPS, wide("Считать FPS").as_ptr());
+            let off = if self.cfg.fps { 0 } else { MF_GRAYED };
+            let panel_text = wide("Показывать FPS-панель (Ctrl+Alt+F)");
+            AppendMenuW(fm, MF_STRING | off | check(self.cfg.fps_panel), FPS_PANEL, panel_text.as_ptr());
+            AppendMenuW(fm, MF_SEPARATOR, 0, null());
+            for (i, (key, name)) in corners.iter().enumerate() {
+                let on = check(self.cfg.fps_corner == *key);
+                AppendMenuW(fm, MF_STRING | off | on, CORNER + i, wide(name).as_ptr());
+            }
+            AppendMenuW(fm, MF_SEPARATOR, 0, null());
+            for (i, sz) in config::FPS_SIZES.iter().enumerate() {
+                let on = check(self.cfg.fps_size == *sz);
+                AppendMenuW(fm, MF_STRING | off | on, FPS_SIZE + i, wide(&format!("Размер {sz}%")).as_ptr());
+            }
+            AppendMenuW(m, MF_POPUP, fm as usize, wide("FPS в играх").as_ptr());
             let trm = CreatePopupMenu();
             for (i, (key, name)) in tray::KINDS.iter().enumerate() {
                 let on = self.cfg.tray.iter().any(|k| k == key);
@@ -902,6 +983,27 @@ impl App {
             DestroyMenu(m);
             match cmd {
                 COMPACT => self.cfg.compact = !self.cfg.compact,
+                FPS => {
+                    let on = !self.cfg.fps;
+                    self.set_fps(on);
+                    return;
+                }
+                FPS_PANEL => {
+                    self.toggle_fps_panel();
+                    return;
+                }
+                c if (CORNER..CORNER + corners.len()).contains(&c) => {
+                    self.cfg.fps_corner = corners[c - CORNER].0.into();
+                    self.save();
+                    self.fps_tick();
+                    return;
+                }
+                c if (FPS_SIZE..FPS_SIZE + config::FPS_SIZES.len()).contains(&c) => {
+                    self.cfg.fps_size = config::FPS_SIZES[c - FPS_SIZE];
+                    self.save();
+                    self.fps_tick();
+                    return;
+                }
                 ALERTS => self.cfg.alerts = !self.cfg.alerts,
                 PANEL => {
                     self.cfg.taskbar = Some(!self.taskbar_on());
@@ -1196,11 +1298,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_HOTKEY => {
-            // Ctrl+Alt+W: show or hide the widget
             with_app(|a| {
-                let on = !a.cfg.widget;
-                a.set_widget(on);
+                if wp as i32 == HOTKEY_FPS {
+                    a.toggle_fps_panel(); // Ctrl+Alt+F: the FPS panel in a game
+                } else {
+                    let on = !a.cfg.widget; // Ctrl+Alt+W: the widget
+                    a.set_widget(on);
+                }
             });
+            0
+        }
+        WM_TIMER if wp == TIMER_FPS => {
+            with_app(|a| a.fps_tick());
             0
         }
         WM_TIMER if wp == TIMER_TOAST => {
@@ -1448,6 +1557,29 @@ pub fn run() -> i32 {
             hinst,
             null(),
         );
+        let overlay_class = wide("PCMonitor2Overlay");
+        let oc = WNDCLASSW {
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: hinst,
+            lpszClassName: overlay_class.as_ptr(),
+            ..Default::default()
+        };
+        RegisterClassW(&oc);
+        // clicks go through it to the game
+        let overlay_hwnd = CreateWindowExW(
+            tab_ex | WS_EX_TRANSPARENT,
+            overlay_class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            200,
+            60,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         APP.with(|a| {
             *a.borrow_mut() = Some(App {
                 hwnd,
@@ -1484,12 +1616,22 @@ pub fn run() -> i32 {
                 toast: toast_hwnd,
                 toast_surface: None,
                 panel: Panel::new(panel_hwnd),
+                game: GameWatch::default(),
+                overlay: Overlay::new(overlay_hwnd),
+                game_fps: false,
             })
         });
         collect::start(shared.clone());
         with_app(|a| a.apply_pin());
         SetTimer(hwnd, TIMER_GAMES, 1000, None);
-        RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'W' as u32);
+        RegisterHotKey(hwnd, HOTKEY_WIDGET, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'W' as u32);
+        RegisterHotKey(hwnd, HOTKEY_FPS, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'F' as u32);
+        with_app(|a| {
+            if a.cfg.fps {
+                a.game.start(); // quietly: an alert card only when switched on by hand
+            }
+        });
+        SetTimer(hwnd, TIMER_FPS, 250, None);
         let (tucked, visible) = with_app(|a| (a.cfg.tucked, a.cfg.widget)).unwrap_or((false, true));
         if visible && tucked {
             with_app(|a| a.dock_at_start());
@@ -1502,7 +1644,8 @@ pub fn run() -> i32 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        UnregisterHotKey(hwnd, 1);
+        UnregisterHotKey(hwnd, HOTKEY_WIDGET);
+        UnregisterHotKey(hwnd, HOTKEY_FPS);
         APP.with(|a| a.borrow_mut().take());
         CloseHandle(mutex);
         0

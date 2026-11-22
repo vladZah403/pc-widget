@@ -84,6 +84,10 @@ pub struct Data {
     pub temp_ssd: Option<f32>,
     pub gpu_load: Option<f32>,
     pub gpu_name: Option<String>,
+    /// That GPU's video memory (MB) and clock (MHz), for the FPS panel.
+    pub vram_used_mb: Option<f32>,
+    pub vram_total_mb: Option<f32>,
+    pub gpu_clock: Option<f32>,
     pub drives: Vec<Drive>,
     pub fans: Vec<f32>,
     /// A temperature source answers (1.8's lhm_online).
@@ -1354,6 +1358,7 @@ pub fn sample_data() -> Data {
         update: None,
         update_state: None,
         update_auto: false,
+        ..Data::default()
     }
 }
 

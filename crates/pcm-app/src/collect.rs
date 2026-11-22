@@ -211,6 +211,9 @@ fn run(shared: Arc<Shared>) {
             temp_ssd: ssd_temp,
             gpu_load: g.and_then(|g| g.load),
             gpu_name: g.map(|g| short_gpu_name(&g.name)),
+            vram_used_mb: g.and_then(|g| g.dedicated_used).map(|b| (b >> 20) as f32),
+            vram_total_mb: g.and_then(|g| g.dedicated_total).map(|b| (b >> 20) as f32),
+            gpu_clock: g.and_then(|g| g.clock_mhz),
             drives: s
                 .drives
                 .iter()

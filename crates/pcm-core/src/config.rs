@@ -12,6 +12,10 @@ pub const WIDTH_MAX: u32 = 900;
 pub const STRETCH_MAX: u32 = 600;
 pub const THEMES: &[&str] = &["heat", "neon", "ice", "custom"];
 pub const IN_GAMES: &[&str] = &["hide", "dim", "off"];
+/// Corners of the game window for the FPS panel: top-left, top-right, bottom-left, bottom-right.
+pub const FPS_CORNERS: &[&str] = &["tl", "tr", "bl", "br"];
+/// FPS panel sizes in %.
+pub const FPS_SIZES: &[u32] = &[100, 125, 150];
 /// Readings a tray icon can show, with their menu names.
 pub const TRAY_KINDS: &[(&str, &str)] = &[
     ("cpu", "Загрузка CPU"),
@@ -86,6 +90,14 @@ pub struct Config {
     pub quiet_games: bool,
     /// The mini panel on the taskbar (None = on, except on Windows 11).
     pub taskbar: Option<bool>,
+    /// Count frames (ETW): the FPS panel, game detection, sessions.
+    pub fps: bool,
+    /// The FPS panel over the game (Ctrl+Alt+F).
+    pub fps_panel: bool,
+    /// One of FPS_CORNERS.
+    pub fps_corner: String,
+    /// One of FPS_SIZES.
+    pub fps_size: u32,
 }
 
 impl Default for Config {
@@ -116,6 +128,10 @@ impl Default for Config {
             alert_disk: 10,
             quiet_games: true,
             taskbar: None,
+            fps: true,
+            fps_panel: true,
+            fps_corner: "tl".into(),
+            fps_size: 100,
         }
     }
 }
@@ -184,6 +200,12 @@ impl Config {
         self.alert_disk = self.alert_disk.clamp(1, 50);
         self.hidden.dedup();
         self.ping_host = clean_host(&self.ping_host).unwrap_or(d.ping_host);
+        if !FPS_CORNERS.contains(&self.fps_corner.as_str()) {
+            self.fps_corner = d.fps_corner.clone();
+        }
+        if !FPS_SIZES.contains(&self.fps_size) {
+            self.fps_size = d.fps_size;
+        }
     }
 
     /// Settings from TOML text; a broken file gives the defaults.
@@ -238,5 +260,11 @@ mod tests {
         assert_eq!(c.ping_host, "eu.battle.net");
         assert_eq!(Config::parse("size = 999").size, 200);
         assert_eq!(Config::parse("ping_host = \"bad host!\"").ping_host, "1.1.1.1");
+        let f = Config::parse(
+            "fps_corner = \"middle\"
+fps_size = 110",
+        );
+        assert_eq!((f.fps_corner.as_str(), f.fps_size), ("tl", 100));
+        assert_eq!(Config::parse("fps_corner = \"br\"").fps_corner, "br");
     }
 }

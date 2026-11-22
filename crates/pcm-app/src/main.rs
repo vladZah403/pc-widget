@@ -7,6 +7,7 @@
 mod alerts;
 mod collect;
 mod diag;
+mod game;
 mod layered;
 mod taskbar;
 mod tray;

@@ -8,7 +8,9 @@
 
 use std::path::PathBuf;
 
+use pcm_render::overlay::{fps_overlay, sample_overlay};
 use pcm_render::text::Fonts;
+use pcm_render::theme::Theme;
 use pcm_render::widget::{Edge, Renderer, View, sample_data};
 use tiny_skia::Pixmap;
 
@@ -33,23 +35,27 @@ fn check(name: &str, view: View) {
     let mut fonts = Fonts::system();
     let mut r = Renderer::new(&mut fonts);
     let frame = r.render(&sample_data(), &view).expect("render");
+    check_pm(name, &frame.pm);
+}
+
+fn check_pm(name: &str, pm: &Pixmap) {
     let path = dir().join(format!("{name}.png"));
     let update = std::env::var("PCM_UPDATE_SNAPSHOTS").is_ok_and(|v| v == "1");
     if update || !path.exists() {
         std::fs::create_dir_all(dir()).unwrap();
-        frame.pm.save_png(&path).unwrap();
+        pm.save_png(&path).unwrap();
         return;
     }
     let reference = Pixmap::load_png(&path).expect("reference png");
     assert_eq!(
-        (frame.pm.width(), frame.pm.height()),
+        (pm.width(), pm.height()),
         (reference.width(), reference.height()),
         "{name}: the size changed"
     );
-    let share = similar(&frame.pm, &reference, 32);
+    let share = similar(pm, &reference, 32);
     if share < 0.98 {
         let got = std::env::temp_dir().join(format!("pcm-snapshot-{name}.png"));
-        frame.pm.save_png(&got).unwrap();
+        pm.save_png(&got).unwrap();
         panic!("{name}: only {:.1}% of pixels match; this run: {}", share * 100.0, got.display());
     }
 }
@@ -89,4 +95,13 @@ fn widget_states() {
             ..View::default()
         },
     );
+}
+
+#[test]
+fn fps_overlay_panel() {
+    let mut fonts = Fonts::system();
+    let pm = fps_overlay(&mut fonts, 1.0, &Theme::Heat.scale(), &sample_overlay()).expect("render");
+    check_pm("overlay-100", &pm);
+    let pm = fps_overlay(&mut fonts, 1.5, &Theme::Heat.scale(), &sample_overlay()).expect("render");
+    check_pm("overlay-150", &pm);
 }

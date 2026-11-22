@@ -121,6 +121,31 @@ fn token_user(process: windows_sys::Win32::Foundation::HANDLE) -> Option<Vec<u8>
     }
 }
 
+/// The program file's name of a process, lower case without ".exe"
+/// ("civilizationvi_dx12"); None when it can't be opened.
+pub fn image_name(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
+        CloseHandle(h);
+        if !ok {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+        let file = path.rsplit('\\').next().unwrap_or("");
+        Some(file.strip_suffix(".exe").unwrap_or(file).to_string())
+    }
+}
+
 /// End every process of the program `name` (without ".exe", as the list
 /// shows it) that runs under this Windows user — never another user's or the
 /// system's, never one of `keep`, never what can't be closed. Each process
