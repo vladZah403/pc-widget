@@ -24,21 +24,70 @@ use pcm_render::widget::Data;
 
 use crate::session_rec::LiveGame;
 
-pub const BG: Color32 = Color32::from_rgb(20, 23, 30);
-pub const CARD: Color32 = Color32::from_rgb(26, 30, 39);
-pub const CARD_HI: Color32 = Color32::from_rgb(36, 42, 54);
-pub const BORDER: Color32 = Color32::from_rgb(40, 46, 58);
-pub const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
-pub const DIM: Color32 = Color32::from_rgb(139, 147, 163);
-pub const FAINT: Color32 = Color32::from_rgb(88, 96, 112);
-pub const GRID: Color32 = Color32::from_rgb(34, 39, 50);
-pub const ACCENT: Color32 = Color32::from_rgb(92, 156, 246);
-pub const GOOD: Color32 = Color32::from_rgb(72, 199, 142);
-pub const WARN: Color32 = Color32::from_rgb(240, 177, 64);
-pub const HOT: Color32 = Color32::from_rgb(232, 68, 90);
-/// The chart's two lines: the CPU solid, the GPU dashed.
-const CPU_LINE: Color32 = Color32::from_rgb(92, 156, 246);
-const GPU_LINE: Color32 = Color32::from_rgb(178, 148, 250);
+/// The window's colours; `p()` gives the dark or the light set.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pal {
+    /// The page behind the cards.
+    pub bg: Color32,
+    /// The top bar, the pages list and the status line.
+    pub chrome: Color32,
+    pub card: Color32,
+    /// A selected page, a pressed segment, an icon's box.
+    pub card_hi: Color32,
+    pub border: Color32,
+    pub text: Color32,
+    pub dim: Color32,
+    pub faint: Color32,
+    pub grid: Color32,
+    pub accent: Color32,
+    pub good: Color32,
+    pub warn: Color32,
+    pub hot: Color32,
+    /// The load chart's two lines: the CPU solid, the GPU dashed.
+    pub cpu_line: Color32,
+    pub gpu_line: Color32,
+}
+
+pub const DARK: Pal = Pal {
+    bg: Color32::from_rgb(20, 23, 30),
+    chrome: Color32::from_rgb(17, 19, 25),
+    card: Color32::from_rgb(26, 30, 39),
+    card_hi: Color32::from_rgb(36, 42, 54),
+    border: Color32::from_rgb(40, 46, 58),
+    text: Color32::from_rgb(232, 234, 239),
+    dim: Color32::from_rgb(139, 147, 163),
+    faint: Color32::from_rgb(88, 96, 112),
+    grid: Color32::from_rgb(34, 39, 50),
+    accent: Color32::from_rgb(92, 156, 246),
+    good: Color32::from_rgb(72, 199, 142),
+    warn: Color32::from_rgb(240, 177, 64),
+    hot: Color32::from_rgb(232, 68, 90),
+    cpu_line: Color32::from_rgb(92, 156, 246),
+    gpu_line: Color32::from_rgb(178, 148, 250),
+};
+
+pub const LIGHT: Pal = Pal {
+    bg: Color32::from_rgb(240, 242, 246),
+    chrome: Color32::from_rgb(250, 251, 253),
+    card: Color32::from_rgb(255, 255, 255),
+    card_hi: Color32::from_rgb(231, 235, 242),
+    border: Color32::from_rgb(220, 224, 232),
+    text: Color32::from_rgb(24, 28, 36),
+    dim: Color32::from_rgb(94, 102, 118),
+    faint: Color32::from_rgb(146, 153, 167),
+    grid: Color32::from_rgb(232, 235, 240),
+    accent: Color32::from_rgb(37, 110, 214),
+    good: Color32::from_rgb(22, 150, 96),
+    warn: Color32::from_rgb(190, 120, 16),
+    hot: Color32::from_rgb(214, 52, 74),
+    cpu_line: Color32::from_rgb(37, 110, 214),
+    gpu_line: Color32::from_rgb(132, 88, 222),
+};
+
+/// The colours in use: light when "Светлая тема" is on.
+pub fn pal() -> &'static Pal {
+    if pcm_render::theme::light() { &LIGHT } else { &DARK }
+}
 
 const GAP: f32 = 16.0;
 /// Heights of the page's rows ("Главная" and its line, the four cards, the bottom three).
@@ -66,6 +115,8 @@ pub mod icon {
     pub const RAM: &str = "\u{E964}";
     pub const DISK: &str = "\u{EDA2}";
     pub const CHEVRON: &str = "\u{E70D}";
+    pub const SUN: &str = "\u{E706}";
+    pub const MOON: &str = "\u{E708}";
 }
 
 pub fn text_font(size: f32) -> FontId {
@@ -90,8 +141,8 @@ fn alpha(c: Color32, a: u8) -> Color32 {
 
 /// A card: the rounded fill and its border.
 pub fn panel(p: &Painter, r: Rect) {
-    p.rect_filled(r, R, CARD);
-    p.rect_stroke(r, R, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    p.rect_filled(r, R, pal().card);
+    p.rect_stroke(r, R, Stroke::new(1.0, pal().border), StrokeKind::Inside);
 }
 
 /// Pieces of text in a row from `pos` (left, baseline-ish top); returns the end x.
@@ -110,7 +161,7 @@ fn run(p: &Painter, pos: Pos2, parts: &[(String, FontId, Color32)]) -> f32 {
 }
 
 fn text_w(p: &Painter, t: &str, f: FontId) -> f32 {
-    p.layout_no_wrap(t.to_string(), f, TEXT).size().x
+    p.layout_no_wrap(t.to_string(), f, pal().text).size().x
 }
 
 /// Text cut with "…" to `max` px.
@@ -164,19 +215,19 @@ fn segments(ui: &mut Ui, right_top: Pos2, items: &[String], selected: usize, id:
     let widths: Vec<f32> = items.iter().map(|t| text_w(&p, t, f.clone()) + 22.0).collect();
     let total: f32 = widths.iter().sum::<f32>() + 6.0;
     let outer = Rect::from_min_size(pos2(right_top.x - total, right_top.y), vec2(total, 30.0));
-    p.rect_filled(outer, 8.0, BG);
-    p.rect_stroke(outer, 8.0, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    p.rect_filled(outer, 8.0, pal().bg);
+    p.rect_stroke(outer, 8.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
     let mut x = outer.left() + 3.0;
     let mut clicked = None;
     for (i, (t, w)) in items.iter().zip(&widths).enumerate() {
         let r = Rect::from_min_size(pos2(x, outer.top() + 3.0), vec2(*w, 24.0));
         let resp = ui.interact(r, ui.scope_id().with((id, i)), Sense::click());
         if i == selected {
-            p.rect_filled(r, 6.0, CARD_HI);
+            p.rect_filled(r, 6.0, pal().card_hi);
         } else if resp.hovered() {
-            p.rect_filled(r, 6.0, alpha(CARD_HI, 120));
+            p.rect_filled(r, 6.0, alpha(pal().card_hi, 120));
         }
-        let col = if i == selected { TEXT } else { DIM };
+        let col = if i == selected { pal().text } else { pal().dim };
         let fnt = if i == selected { bold(12.5) } else { f.clone() };
         p.text(r.center(), Align2::CENTER_CENTER, t, fnt, col);
         if resp.clicked() {
@@ -193,11 +244,11 @@ fn segments(ui: &mut Ui, right_top: Pos2, items: &[String], selected: usize, id:
 /// A link-like piece of text; true when clicked.
 fn link(ui: &mut Ui, pos: Pos2, anchor: Align2, t: &str, id: &str) -> bool {
     let p = ui.painter().clone();
-    let r = p.text(pos, anchor, t, text_font(13.0), ACCENT);
+    let r = p.text(pos, anchor, t, text_font(13.0), pal().accent);
     let resp = ui.interact(r.expand(3.0), ui.scope_id().with(id), Sense::click());
     if resp.hovered() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-        p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, alpha(ACCENT, 160)));
+        p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, alpha(pal().accent, 160)));
     }
     resp.clicked()
 }
@@ -297,7 +348,7 @@ impl HomeTab {
 
     pub fn ui(&mut self, ui: &mut Ui, input: Option<HomeInput>) -> Option<HomeAction> {
         let Some(input) = input else {
-            ui.label(egui::RichText::new(tr("Жду данные от виджета…")).color(DIM));
+            ui.label(egui::RichText::new(tr("Жду данные от виджета…")).color(pal().dim));
             return None;
         };
         self.remember(input.data, input.seq);
@@ -367,13 +418,13 @@ impl HomeTab {
     fn header(&self, ui: &mut Ui, w: f32, sc: &Scale) {
         let (r, _) = ui.allocate_exact_size(vec2(w, HEADER_H), Sense::hover());
         let p = ui.painter();
-        p.text(r.left_top(), Align2::LEFT_TOP, tr("Главная"), bold(22.0), TEXT);
+        p.text(r.left_top(), Align2::LEFT_TOP, tr("Главная"), bold(22.0), pal().text);
         p.text(
             pos2(r.left(), r.top() + 32.0),
             Align2::LEFT_TOP,
             tr("Цвет значения показывает нагрузку: от спокойного до горячего"),
             text_font(13.0),
-            DIM,
+            pal().dim,
         );
         // the theme's scale as a bar
         let bar = Rect::from_min_size(pos2(r.right() - 190.0, r.top() + 12.0), vec2(160.0, 6.0));
@@ -392,8 +443,14 @@ impl HomeTab {
             }
         }
         p.add(Shape::mesh(mesh));
-        p.text(pos2(bar.left() - 8.0, bar.center().y), Align2::RIGHT_CENTER, "0", text_font(12.0), DIM);
-        p.text(pos2(bar.right() + 8.0, bar.center().y), Align2::LEFT_CENTER, "100", text_font(12.0), DIM);
+        p.text(pos2(bar.left() - 8.0, bar.center().y), Align2::RIGHT_CENTER, "0", text_font(12.0), pal().dim);
+        p.text(
+            pos2(bar.right() + 8.0, bar.center().y),
+            Align2::LEFT_CENTER,
+            "100",
+            text_font(12.0),
+            pal().dim,
+        );
     }
 
     fn summary_row(&self, ui: &mut Ui, w: f32, input: &HomeInput) {
@@ -417,7 +474,7 @@ impl HomeTab {
         }
         let mut line = Vec::new();
         if let Some(ghz) = d.cpu_clock_ghz {
-            line.push((trf("{v} ГГц", &[("v", dec(format!("{ghz:.2}")))]), DIM));
+            line.push((trf("{v} ГГц", &[("v", dec(format!("{ghz:.2}")))]), pal().dim));
         }
         if let Some(t) = d.temp_cpu {
             let approx = if d.temp_cpu_approx { "≈" } else { "" };
@@ -442,7 +499,10 @@ impl HomeTab {
         }
         let mut line = Vec::new();
         if let Some(u) = d.vram_used_mb {
-            line.push((format!("VRAM {}", trf("{v} ГБ", &[("v", dec(format!("{:.1}", u / 1024.0)))])), DIM));
+            line.push((
+                format!("VRAM {}", trf("{v} ГБ", &[("v", dec(format!("{:.1}", u / 1024.0)))])),
+                pal().dim,
+            ));
         }
         let (gt, approx) = match (d.temp_gpu, d.gpu_shared) {
             (Some(t), _) => (Some(t), false),
@@ -488,7 +548,7 @@ impl HomeTab {
             sub = trf("{v} ГБ", &[("v", gb(d.ram_total))]);
         }
         let line = vec![
-            (trf("{used} из {total} ГБ", &[("used", gb(d.ram_used)), ("total", gb(d.ram_total))]), DIM),
+            (trf("{used} из {total} ГБ", &[("used", gb(d.ram_used)), ("total", gb(d.ram_total))]), pal().dim),
             (trf("свободно {v} ГБ", &[("v", gb(d.ram_total.saturating_sub(d.ram_used)))]), rgb(sc.at(0.05))),
         ];
         cards.push(Card {
@@ -509,7 +569,7 @@ impl HomeTab {
             let drive = d.drives.iter().find(|x| x.letters.iter().any(|l| l == letter));
             let sub = drive.map(|x| x.model.clone()).filter(|m| !m.is_empty()).unwrap_or_default();
             let mut line =
-                vec![(trf("{used} из {total} ГБ", &[("used", gb(*used)), ("total", gb(*total))]), DIM)];
+                vec![(trf("{used} из {total} ГБ", &[("used", gb(*used)), ("total", gb(*total))]), pal().dim)];
             if let Some(x) = drive {
                 let health = 100u8.saturating_sub(x.wear);
                 let mut t = trf("здоровье {v}%", &[("v", health.to_string())]);
@@ -550,7 +610,7 @@ impl HomeTab {
     fn load_chart(&mut self, ui: &mut Ui, r: Rect, input: &HomeInput) {
         let p = ui.painter().clone();
         panel(&p, r);
-        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Нагрузка"), bold(15.0), TEXT);
+        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Нагрузка"), bold(15.0), pal().text);
         let names: Vec<String> = RANGES.iter().map(|(n, _)| tr(n)).collect();
         if let Some(i) = segments(ui, r.right_top() + vec2(-14.0, 12.0), &names, self.range, "range") {
             self.range = i;
@@ -581,8 +641,8 @@ impl HomeTab {
         let ly = r.top() + 58.0;
         let mut x = r.left() + 18.0;
         for (name, col, dashed, v) in [
-            (tr("Процессор"), CPU_LINE, false, last(&cpu).or(Some(input.data.cpu))),
-            (tr("Видеокарта"), GPU_LINE, true, last(&gpu).or(input.data.gpu_load)),
+            (tr("Процессор"), pal().cpu_line, false, last(&cpu).or(Some(input.data.cpu))),
+            (tr("Видеокарта"), pal().gpu_line, true, last(&gpu).or(input.data.gpu_load)),
         ] {
             let y = ly + 8.0;
             if dashed {
@@ -598,8 +658,8 @@ impl HomeTab {
                 &p,
                 pos2(x, ly),
                 &[
-                    (format!("{name}  "), text_font(13.0), DIM),
-                    (v.map_or("—".into(), |v| format!("{v:.0}%")), bold(13.0), TEXT),
+                    (format!("{name}  "), text_font(13.0), pal().dim),
+                    (v.map_or("—".into(), |v| format!("{v:.0}%")), bold(13.0), pal().text),
                 ],
             ) + 26.0;
         }
@@ -611,13 +671,13 @@ impl HomeTab {
         for k in 0..=4 {
             let v = k as f32 * 25.0;
             let y = plot.bottom() - plot.height() * v / 100.0;
-            p.hline(plot.x_range(), y, Stroke::new(1.0, GRID));
+            p.hline(plot.x_range(), y, Stroke::new(1.0, pal().grid));
             p.text(
                 pos2(plot.left() - 12.0, y),
                 Align2::RIGHT_CENTER,
                 format!("{v:.0}%"),
                 text_font(11.5),
-                FAINT,
+                pal().faint,
             );
         }
         let n = cpu.len().max(2);
@@ -627,7 +687,7 @@ impl HomeTab {
                 plot.bottom() - plot.height() * (v / 100.0).clamp(0.0, 1.0),
             )
         };
-        for (series, col, dashed) in [(&gpu, GPU_LINE, true), (&cpu, CPU_LINE, false)] {
+        for (series, col, dashed) in [(&gpu, pal().gpu_line, true), (&cpu, pal().cpu_line, false)] {
             // a line per stretch without gaps
             let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
             for (i, v) in series.iter().enumerate() {
@@ -665,7 +725,7 @@ impl HomeTab {
                 k if k == labels - 1 => Align2::RIGHT_TOP,
                 _ => Align2::CENTER_TOP,
             };
-            p.text(pos2(x, plot.bottom() + 10.0), anchor, label, text_font(11.5), FAINT);
+            p.text(pos2(x, plot.bottom() + 10.0), anchor, label, text_font(11.5), pal().faint);
         }
         // the mouse: a line, the dots and a box with the values
         let resp = ui.interact(plot, ui.scope_id().with("plot"), Sense::hover());
@@ -675,14 +735,14 @@ impl HomeTab {
             let i = (((m.x - plot.left()) / plot.width()) * (n - 1) as f32).round().clamp(0.0, (n - 1) as f32)
                 as usize;
             let x = xy(i, 0.0).x;
-            p.vline(x, plot.y_range(), Stroke::new(1.0, DIM));
+            p.vline(x, plot.y_range(), Stroke::new(1.0, pal().dim));
             let ago = ((n - 1 - i) as f32 / (n - 1) as f32 * span as f32).round() as i64;
             let when = clock(pcm_win::system::unix_now() - ago, span <= 300);
             let mut rows = vec![(when, None::<Color32>)];
-            for (name, series, col) in [("CPU", &cpu, CPU_LINE), ("GPU", &gpu, GPU_LINE)] {
+            for (name, series, col) in [("CPU", &cpu, pal().cpu_line), ("GPU", &gpu, pal().gpu_line)] {
                 if let Some(v) = series.get(i).copied().flatten() {
                     p.circle_filled(xy(i, v), 4.0, col);
-                    p.circle_stroke(xy(i, v), 4.0, Stroke::new(1.5, CARD));
+                    p.circle_stroke(xy(i, v), 4.0, Stroke::new(1.5, pal().card));
                     rows.push((format!("{name}  {v:.0}%"), Some(col)));
                 }
             }
@@ -690,8 +750,8 @@ impl HomeTab {
             let bh = 12.0 + rows.len() as f32 * 20.0;
             let bx = if x + 14.0 + bw > plot.right() { x - 14.0 - bw } else { x + 14.0 };
             let b = Rect::from_min_size(pos2(bx, plot.top() + 8.0), vec2(bw, bh));
-            p.rect_filled(b, 8.0, BG);
-            p.rect_stroke(b, 8.0, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+            p.rect_filled(b, 8.0, pal().bg);
+            p.rect_stroke(b, 8.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
             for (k, (t, dot)) in rows.iter().enumerate() {
                 let y = b.top() + 8.0 + k as f32 * 20.0;
                 let mut tx = b.left() + 12.0;
@@ -704,7 +764,7 @@ impl HomeTab {
                     Align2::LEFT_TOP,
                     t,
                     text_font(12.5),
-                    if dot.is_some() { TEXT } else { DIM },
+                    if dot.is_some() { pal().text } else { pal().dim },
                 );
             }
         }
@@ -714,7 +774,7 @@ impl HomeTab {
     fn temps(&mut self, ui: &mut Ui, r: Rect, d: &Data, sc: &Scale) {
         let p = ui.painter().clone();
         panel(&p, r);
-        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Температуры"), bold(15.0), TEXT);
+        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Температуры"), bold(15.0), pal().text);
         let units = ["°C".to_string(), "°F".to_string()];
         if let Some(i) =
             segments(ui, r.right_top() + vec2(-14.0, 12.0), &units, self.fahrenheit as usize, "unit")
@@ -746,8 +806,8 @@ impl HomeTab {
         let mut y = r.top() + 60.0;
         if rows.is_empty() {
             let hint = d.sensor_hint.clone().unwrap_or_else(|| tr("Датчики температуры не отвечают"));
-            let g = p.layout(hint, text_font(13.0), DIM, right - left);
-            p.galley(pos2(left, y), g, DIM);
+            let g = p.layout(hint, text_font(13.0), pal().dim, right - left);
+            p.galley(pos2(left, y), g, pal().dim);
         }
         let row_h = if rows.len() > 4 { 38.0 } else { 44.0 };
         for (name, t, approx) in rows.iter().take(6) {
@@ -757,7 +817,7 @@ impl HomeTab {
                 Align2::LEFT_TOP,
                 fit(&p, name, &text_font(13.0), right - left - 70.0),
                 text_font(13.0),
-                TEXT,
+                pal().text,
             );
             let v = if self.fahrenheit { t * 9.0 / 5.0 + 32.0 } else { *t };
             let unit = if self.fahrenheit { "°F" } else { "°C" };
@@ -769,7 +829,7 @@ impl HomeTab {
                 col,
             );
             let track = Rect::from_min_size(pos2(left, y + 22.0), vec2(right - left, 5.0));
-            p.rect_filled(track, 3.0, GRID);
+            p.rect_filled(track, 3.0, pal().grid);
             let frac = ((t - 20.0) / 80.0).clamp(0.04, 1.0);
             p.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * frac, 5.0)), 3.0, col);
             y += row_h;
@@ -791,7 +851,7 @@ impl HomeTab {
             .collect();
         if !fans.is_empty() {
             let fy = r.bottom() - 62.0;
-            p.hline(left..=right, fy, Stroke::new(1.0, BORDER));
+            p.hline(left..=right, fy, Stroke::new(1.0, pal().border));
             let cw = (right - left) / 2.0;
             for (i, (name, rpm)) in fans.iter().take(2).enumerate() {
                 let x = left + i as f32 * cw;
@@ -800,10 +860,10 @@ impl HomeTab {
                     Align2::LEFT_TOP,
                     fit(&p, name, &text_font(12.0), cw - 10.0),
                     text_font(12.0),
-                    DIM,
+                    pal().dim,
                 );
                 let v = trf("{v} об/мин", &[("v", format!("{rpm:.0}"))]);
-                p.text(pos2(x, fy + 30.0), Align2::LEFT_TOP, v, bold(13.5), TEXT);
+                p.text(pos2(x, fy + 30.0), Align2::LEFT_TOP, v, bold(13.5), pal().text);
             }
         }
     }
@@ -812,9 +872,9 @@ impl HomeTab {
     fn network(&self, ui: &mut Ui, r: Rect, d: &Data, sc: &Scale) {
         let p = ui.painter().clone();
         panel(&p, r);
-        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Сеть"), bold(15.0), TEXT);
+        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Сеть"), bold(15.0), pal().text);
         if let Some(ip) = &d.net_ip {
-            p.text(r.right_top() + vec2(-18.0, 18.0), Align2::RIGHT_TOP, ip, text_font(12.5), DIM);
+            p.text(r.right_top() + vec2(-18.0, 18.0), Align2::RIGHT_TOP, ip, text_font(12.5), pal().dim);
         }
         let left = r.left() + 18.0;
         let cw = (r.width() - 36.0) / 3.0;
@@ -831,8 +891,8 @@ impl HomeTab {
             (true, None) => ("—".to_string(), String::new()),
         };
         let cols = [
-            (tr("Загрузка ↓"), speed(d.net_down), TEXT),
-            (tr("Отдача ↑"), speed(d.net_up), TEXT),
+            (tr("Загрузка ↓"), speed(d.net_down), pal().text),
+            (tr("Отдача ↑"), speed(d.net_up), pal().text),
             (trf("Пинг {host}", &[("host", d.ping_host.clone())]), ping, rgb(sc.ping(d.ping))),
         ];
         for (i, (label, (v, unit), col)) in cols.iter().enumerate() {
@@ -842,12 +902,12 @@ impl HomeTab {
                 Align2::LEFT_TOP,
                 fit(&p, label, &text_font(12.0), cw - 6.0),
                 text_font(12.0),
-                DIM,
+                pal().dim,
             );
             run(
                 &p,
                 pos2(x, r.top() + 70.0),
-                &[(v.clone(), bold(21.0), *col), (unit.clone(), text_font(12.5), DIM)],
+                &[(v.clone(), bold(21.0), *col), (unit.clone(), text_font(12.5), pal().dim)],
             );
         }
         let g = Rect::from_min_max(pos2(left, r.top() + 116.0), pos2(r.right() - 18.0, r.bottom() - 18.0));
@@ -855,8 +915,8 @@ impl HomeTab {
         let down: Vec<f32> = d.net_hist.iter().map(|v| v.0 as f32).collect();
         let up: Vec<f32> = d.net_hist.iter().map(|v| v.1 as f32).collect();
         let max = down.iter().chain(&up).copied().fold(64.0 * 1024.0, f32::max);
-        p.hline(g.x_range(), mid, Stroke::new(1.0, GRID));
-        area(&p, Rect::from_min_max(g.min, pos2(g.right(), mid)), &down, max, CPU_LINE, 90, 1.5);
+        p.hline(g.x_range(), mid, Stroke::new(1.0, pal().grid));
+        area(&p, Rect::from_min_max(g.min, pos2(g.right(), mid)), &down, max, pal().cpu_line, 90, 1.5);
         // upload drawn downwards: mirror the values around the middle line
         if up.len() >= 2 {
             let lower = Rect::from_min_max(pos2(g.left(), mid), g.max);
@@ -873,7 +933,7 @@ impl HomeTab {
                 .collect();
             let mut mesh = Mesh::default();
             for (i, pt) in pts.iter().enumerate() {
-                mesh.colored_vertex(*pt, alpha(GPU_LINE, 90));
+                mesh.colored_vertex(*pt, alpha(pal().gpu_line, 90));
                 mesh.colored_vertex(pos2(pt.x, mid), Color32::TRANSPARENT);
                 if i > 0 {
                     let b = (i * 2) as u32;
@@ -882,7 +942,7 @@ impl HomeTab {
                 }
             }
             p.add(Shape::mesh(mesh));
-            p.add(Shape::line(pts, Stroke::new(1.5, GPU_LINE)));
+            p.add(Shape::line(pts, Stroke::new(1.5, pal().gpu_line)));
         }
     }
 
@@ -895,7 +955,7 @@ impl HomeTab {
             Align2::LEFT_TOP,
             tr("Больше всего нагружают"),
             bold(15.0),
-            TEXT,
+            pal().text,
         );
         let mut action = None;
         let all = match d.proc_count {
@@ -924,7 +984,7 @@ impl HomeTab {
                         Align2::LEFT_TOP,
                         fit(&p, &name, &text_font(13.5), cpu_x - left - 50.0),
                         text_font(13.5),
-                        TEXT,
+                        pal().text,
                     );
                     let pct = format!("{}%", dec(format!("{:.1}", row.cpu)));
                     p.text(
@@ -934,7 +994,13 @@ impl HomeTab {
                         bold(13.5),
                         rgb(sc.at(row.cpu / 100.0).max_soft()),
                     );
-                    p.text(pos2(right, y), Align2::RIGHT_TOP, fmt_mem(row.memory), text_font(13.5), DIM);
+                    p.text(
+                        pos2(right, y),
+                        Align2::RIGHT_TOP,
+                        fmt_mem(row.memory),
+                        text_font(13.5),
+                        pal().dim,
+                    );
                 }
             }
             _ => {
@@ -943,7 +1009,7 @@ impl HomeTab {
                     Align2::LEFT_TOP,
                     tr("Собираю список программ…"),
                     text_font(13.0),
-                    DIM,
+                    pal().dim,
                 );
             }
         }
@@ -953,7 +1019,7 @@ impl HomeTab {
             Align2::LEFT_BOTTOM,
             fit(&p, &foot, &text_font(12.0), right - left),
             text_font(12.0),
-            DIM,
+            pal().dim,
         );
         action
     }
@@ -962,7 +1028,13 @@ impl HomeTab {
     fn game(&self, ui: &mut Ui, r: Rect, live: Option<&LiveGame>, sc: &Scale) -> Option<HomeAction> {
         let p = ui.painter().clone();
         panel(&p, r);
-        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Игровая сессия"), bold(15.0), TEXT);
+        p.text(
+            r.left_top() + vec2(18.0, 16.0),
+            Align2::LEFT_TOP,
+            tr("Игровая сессия"),
+            bold(15.0),
+            pal().text,
+        );
         let left = r.left() + 18.0;
         let right = r.right() - 18.0;
         let mut action = None;
@@ -975,16 +1047,16 @@ impl HomeTab {
                 Align2::RIGHT_TOP,
                 trf("Запись · {t}", &[("t", t)]),
                 text_font(12.5),
-                DIM,
+                pal().dim,
             );
-            p.circle_filled(pos2(rx.left() - 9.0, rx.center().y), 4.0, HOT);
+            p.circle_filled(pos2(rx.left() - 9.0, rx.center().y), 4.0, pal().hot);
             let name = if g.title.is_empty() { g.game.clone() } else { g.title.clone() };
             p.text(
                 pos2(left, r.top() + 42.0),
                 Align2::LEFT_TOP,
                 fit(&p, &name, &text_font(12.5), right - left),
                 text_font(12.5),
-                DIM,
+                pal().dim,
             );
             (g.fps, g.low1, g.low01, g.fps_hist.clone(), false)
         } else if let Some((_, info)) = &self.last_session {
@@ -1006,7 +1078,7 @@ impl HomeTab {
                 Align2::LEFT_TOP,
                 fit(&p, &head, &text_font(12.5), right - left),
                 text_font(12.5),
-                DIM,
+                pal().dim,
             );
             let fps: Vec<f32> = info.samples.iter().filter_map(|x| x.fps).collect();
             // the whole session squeezed into LIVE_BARS bars (averages)
@@ -1027,21 +1099,21 @@ impl HomeTab {
         } else {
             let hint =
                 tr("Запусти игру — сессия запишется сама: FPS, 1% low, нагрузка и температуры по секундам.");
-            let g = p.layout(hint, text_font(13.0), DIM, right - left);
-            p.galley(pos2(left, r.top() + 56.0), g, DIM);
+            let g = p.layout(hint, text_font(13.0), pal().dim, right - left);
+            p.galley(pos2(left, r.top() + 56.0), g, pal().dim);
             return None;
         };
         let top = r.top() + 70.0;
         let label = |x: f32, t: &str| {
-            p.text(pos2(x, top), Align2::LEFT_TOP, t, text_font(12.0), DIM);
+            p.text(pos2(x, top), Align2::LEFT_TOP, t, text_font(12.0), pal().dim);
         };
         let fps_label = if live.is_some() { "FPS" } else { "FPS ⌀" };
         label(left, fps_label);
         label(left + 96.0, "1% low");
         label(left + 170.0, "0.1% low");
         let num = |v: Option<f64>| v.map_or("—".to_string(), |v| format!("{v:.0}"));
-        p.text(pos2(left, top + 16.0), Align2::LEFT_TOP, num(fps), bold(32.0), TEXT);
-        p.text(pos2(left + 96.0, top + 26.0), Align2::LEFT_TOP, num(low1), bold(20.0), TEXT);
+        p.text(pos2(left, top + 16.0), Align2::LEFT_TOP, num(fps), bold(32.0), pal().text);
+        p.text(pos2(left + 96.0, top + 26.0), Align2::LEFT_TOP, num(low1), bold(20.0), pal().text);
         let warm = rgb(sc.at(0.55));
         p.text(pos2(left + 170.0, top + 26.0), Align2::LEFT_TOP, num(low01), bold(20.0), warm);
         // a bar a second (or a slice of the session), dips in red
@@ -1057,7 +1129,7 @@ impl HomeTab {
             for (i, v) in bars.iter().enumerate() {
                 let h = (area_r.height() * v / max).max(2.0);
                 let x = x0 + i as f32 * step;
-                let col = if *v < med * 0.75 { HOT } else { CPU_LINE };
+                let col = if *v < med * 0.75 { pal().hot } else { pal().cpu_line };
                 p.rect_filled(
                     Rect::from_min_max(
                         pos2(x + 1.0, area_r.bottom() - h),
@@ -1105,8 +1177,8 @@ impl Card {
         panel(p, r);
         let left = r.left() + 18.0;
         let ib = Rect::from_min_size(pos2(left, r.top() + 16.0), vec2(34.0, 34.0));
-        p.rect_filled(ib, 9.0, CARD_HI);
-        p.text(ib.center(), Align2::CENTER_CENTER, self.icon, icon_font(16.0), DIM);
+        p.rect_filled(ib, 9.0, pal().card_hi);
+        p.text(ib.center(), Align2::CENTER_CENTER, self.icon, icon_font(16.0), pal().dim);
         let tx = ib.right() + 12.0;
         let max = r.right() - 16.0 - tx;
         p.text(
@@ -1114,18 +1186,18 @@ impl Card {
             Align2::LEFT_TOP,
             fit(p, &self.title, &bold(14.0), max),
             bold(14.0),
-            TEXT,
+            pal().text,
         );
         p.text(
             pos2(tx, r.top() + 35.0),
             Align2::LEFT_TOP,
             fit(p, &self.sub, &text_font(12.0), max),
             text_font(12.0),
-            DIM,
+            pal().dim,
         );
         let vy = r.top() + 62.0;
         let end = run(p, pos2(left, vy), &[(self.value.clone(), bold(38.0), self.color)]);
-        p.text(pos2(end + 4.0, vy + 22.0), Align2::LEFT_TOP, &self.unit, text_font(15.0), DIM);
+        p.text(pos2(end + 4.0, vy + 22.0), Align2::LEFT_TOP, &self.unit, text_font(15.0), pal().dim);
         let mut x = left;
         for (t, c) in &self.line {
             let rr = p.text(

@@ -23,10 +23,7 @@ use pcm_render::widget::Data;
 use serde::{Deserialize, Serialize};
 
 use crate::dash_history::HistoryTab;
-use crate::dash_home::{
-    ACCENT, BORDER, CARD, CARD_HI, DIM, FAINT, GOOD, HomeAction, HomeInput, HomeTab, TEXT, WARN, bold, icon,
-    icon_font, text_font,
-};
+use crate::dash_home::{HomeAction, HomeInput, HomeTab, bold, icon, icon_font, pal, text_font};
 use crate::dash_procs::ProcsTab;
 use crate::dash_sessions::SessionsTab;
 use crate::dash_settings::SettingsTab;
@@ -97,10 +94,6 @@ pub fn send(msg: &FromDashboard) {
     }
 }
 
-const BG: Color32 = crate::dash_home::BG;
-/// The top bar, the pages list and the status line: a shade darker than the page.
-const CHROME: Color32 = Color32::from_rgb(17, 19, 25);
-
 /// The pages, in the order of the list on the left (`--tab N`).
 pub const TAB_HOME: usize = 0;
 pub const TAB_HISTORY: usize = 1;
@@ -132,6 +125,8 @@ struct Feed {
     game: Option<LiveGame>,
     /// The theme's name and colours, to know when charts need drawing again.
     theme_key: String,
+    /// The theme, its colours and the language, without the light/dark look.
+    theme_name: String,
     /// Bumped with every new feed: the cards are drawn again.
     seq: u64,
     /// When the last feed came, "14:32:18".
@@ -193,8 +188,8 @@ struct Dashboard {
     /// The window's own CPU and memory, read with each feed.
     own: pcm_win::processes::OwnUsage,
     own_read: (u64, Option<f32>, Option<u64>),
-    /// The title bar was asked to be dark.
-    dark_title: bool,
+    /// The look in use: Some(light) once applied (the title bar too).
+    look: Option<bool>,
     /// Closing the window quits PC Monitor (not in the offscreen test runs).
     quit_on_close: bool,
     /// `--screenshot FILE`: save the window's own pixels once fed, then close.
@@ -204,23 +199,7 @@ struct Dashboard {
 impl Dashboard {
     fn new(cc: &eframe::CreationContext, feed: Arc<Mutex<Feed>>) -> Dashboard {
         cc.egui_ctx.set_fonts(fonts());
-        let mut v = egui::Visuals::dark();
-        v.panel_fill = BG;
-        v.window_fill = BG;
-        v.override_text_color = Some(TEXT);
-        v.selection.bg_fill = BORDER;
-        v.selection.stroke = Stroke::new(1.0, TEXT);
-        v.widgets.hovered.weak_bg_fill = CARD_HI;
-        v.widgets.inactive.weak_bg_fill = CARD;
-        v.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-        v.widgets.inactive.corner_radius = CornerRadius::same(8);
-        v.widgets.hovered.corner_radius = CornerRadius::same(8);
-        v.widgets.active.corner_radius = CornerRadius::same(8);
-        v.widgets.open.corner_radius = CornerRadius::same(8);
-        // always dark, whatever the Windows theme
-        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
-        cc.egui_ctx.set_visuals_of(egui::Theme::Dark, v);
+        apply_look(&cc.egui_ctx, false);
         Dashboard {
             feed,
             tab: TAB_HOME,
@@ -234,7 +213,7 @@ impl Dashboard {
             settings: SettingsTab::default(),
             own: Default::default(),
             own_read: (0, None, None),
-            dark_title: false,
+            look: None,
             quit_on_close: false,
             shot: None,
         }
@@ -270,7 +249,7 @@ impl Dashboard {
     /// "Оборудование": the seven cards of stage 5.
     fn devices(&mut self, ui: &mut egui::Ui) {
         if self.cards.iter().all(|c| c.is_none()) {
-            ui.label(RichText::new(tr("Жду данные от виджета…")).color(DIM));
+            ui.label(RichText::new(tr("Жду данные от виджета…")).color(pal().dim));
             return;
         }
         let cols = (((ui.available_width() + GAP) / (CARD_W + GAP)).floor() as usize).max(1);
@@ -285,6 +264,21 @@ impl Dashboard {
                 ui.add_space(GAP - ui.spacing().item_spacing.y);
             }
         });
+    }
+
+    /// Dark or light: the palette, egui's widgets, the title bar, and the
+    /// pictures drawn by pcm-render (they are drawn again).
+    fn set_look(&mut self, ctx: &egui::Context, light: bool) {
+        pcm_render::theme::set_light(light);
+        apply_look(ctx, light);
+        let system = if light { egui::SystemTheme::Light } else { egui::SystemTheme::Dark };
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(system));
+        self.look = Some(light);
+        self.drawn = (0, 0.0);
+        if let Ok(mut f) = self.feed.lock() {
+            f.theme_key = theme_key(&f.theme_name, light);
+        }
+        ctx.request_repaint();
     }
 
     /// The settings with one thing changed, sent to the widget and kept
@@ -303,10 +297,10 @@ impl Dashboard {
         let p = ui.painter().clone();
         let y = r.center().y;
         let x = r.left() + 22.0;
-        p.text(pos2(x, y), Align2::LEFT_CENTER, icon::LOGO, icon_font(20.0), ACCENT);
-        let name = p.text(pos2(x + 32.0, y), Align2::LEFT_CENTER, "PC Monitor", bold(16.0), TEXT);
+        p.text(pos2(x, y), Align2::LEFT_CENTER, icon::LOGO, icon_font(20.0), pal().accent);
+        let name = p.text(pos2(x + 32.0, y), Align2::LEFT_CENTER, "PC Monitor", bold(16.0), pal().text);
         let version = crate::APP_VERSION.split('.').take(2).collect::<Vec<_>>().join(".");
-        p.text(pos2(name.right() + 8.0, y + 1.0), Align2::LEFT_CENTER, version, text_font(12.5), DIM);
+        p.text(pos2(name.right() + 8.0, y + 1.0), Align2::LEFT_CENTER, version, text_font(12.5), pal().dim);
 
         let cfg = self.feed.lock().unwrap_or_else(|e| e.into_inner()).cfg.clone();
         let Some(cfg) = cfg else { return };
@@ -315,12 +309,12 @@ impl Dashboard {
         let pill_h = 36.0;
         // "Игровой режим" with a switch
         let label = tr("Игровой режим");
-        let lw = p.layout_no_wrap(label.clone(), bold(13.0), TEXT).size().x;
+        let lw = p.layout_no_wrap(label.clone(), bold(13.0), pal().text).size().x;
         let gw = 16.0 + lw + 12.0 + 38.0 + 12.0;
         let game = egui::Rect::from_min_size(pos2(right - gw, y - pill_h / 2.0), vec2(gw, pill_h));
         let resp = ui.interact(game, ui.scope_id().with("game-mode"), Sense::click());
         pill(&p, game, resp.hovered());
-        p.text(pos2(game.left() + 16.0, y), Align2::LEFT_CENTER, &label, bold(13.0), TEXT);
+        p.text(pos2(game.left() + 16.0, y), Align2::LEFT_CENTER, &label, bold(13.0), pal().text);
         let sw = egui::Rect::from_min_size(pos2(game.right() - 12.0 - 38.0, y - 11.0), vec2(38.0, 22.0));
         switch(ui, &p, sw, cfg.fps, "game-switch");
         if resp.hovered() {
@@ -337,15 +331,21 @@ impl Dashboard {
         let current =
             names.iter().find(|(k, _)| *k == cfg.profile).map_or(cfg.profile.clone(), |(_, n)| n.clone());
         let pre = tr("Профиль");
-        let w1 = p.layout_no_wrap(pre.clone(), text_font(13.0), DIM).size().x;
-        let w2 = p.layout_no_wrap(current.clone(), bold(13.0), TEXT).size().x;
+        let w1 = p.layout_no_wrap(pre.clone(), text_font(13.0), pal().dim).size().x;
+        let w2 = p.layout_no_wrap(current.clone(), bold(13.0), pal().text).size().x;
         let pw = 16.0 + w1 + 8.0 + w2 + 10.0 + 12.0 + 14.0;
         let prof = egui::Rect::from_min_size(pos2(right - pw, y - pill_h / 2.0), vec2(pw, pill_h));
         let resp = ui.interact(prof, ui.scope_id().with("profile"), Sense::click());
         pill(&p, prof, resp.hovered());
-        let t = p.text(pos2(prof.left() + 16.0, y), Align2::LEFT_CENTER, &pre, text_font(13.0), DIM);
-        p.text(pos2(t.right() + 8.0, y), Align2::LEFT_CENTER, &current, bold(13.0), TEXT);
-        p.text(pos2(prof.right() - 14.0, y + 1.0), Align2::RIGHT_CENTER, icon::CHEVRON, icon_font(10.0), DIM);
+        let t = p.text(pos2(prof.left() + 16.0, y), Align2::LEFT_CENTER, &pre, text_font(13.0), pal().dim);
+        p.text(pos2(t.right() + 8.0, y), Align2::LEFT_CENTER, &current, bold(13.0), pal().text);
+        p.text(
+            pos2(prof.right() - 14.0, y + 1.0),
+            Align2::RIGHT_CENTER,
+            icon::CHEVRON,
+            icon_font(10.0),
+            pal().dim,
+        );
         if resp.hovered() {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
         }
@@ -372,11 +372,11 @@ impl Dashboard {
             let resp = ui.interact(item, ui.scope_id().with(("nav", i)), Sense::click());
             let selected = self.tab == i;
             if selected {
-                p.rect_filled(item, 9.0, CARD_HI);
+                p.rect_filled(item, 9.0, pal().card_hi);
             } else if resp.hovered() {
-                p.rect_filled(item, 9.0, CARD);
+                p.rect_filled(item, 9.0, pal().card);
             }
-            let col = if selected { TEXT } else { DIM };
+            let col = if selected { pal().text } else { pal().dim };
             p.text(
                 pos2(item.left() + 14.0, item.center().y),
                 Align2::LEFT_CENTER,
@@ -412,25 +412,58 @@ impl Dashboard {
         }
         let text = if on.is_empty() { tr("Только это окно") } else { on.join(" · ") };
         let inner_w = r.width() - 24.0 - 26.0;
-        let g = p.layout(text, text_font(13.0), TEXT, inner_w);
+        let g = p.layout(text, text_font(13.0), pal().text, inner_w);
         let h = 14.0 + 18.0 + g.size().y + 8.0 + 18.0 + 14.0;
-        let b = egui::Rect::from_min_size(
-            pos2(r.left() + 12.0, r.bottom() - 16.0 - h),
-            vec2(r.width() - 24.0, h),
+        // "Светлая тема" / "Тёмная тема" at the very bottom
+        let light = c.window_light;
+        let row = egui::Rect::from_min_size(
+            pos2(r.left() + 12.0, r.bottom() - 12.0 - 40.0),
+            vec2(r.width() - 24.0, 40.0),
         );
-        p.rect_filled(b, 10.0, CARD);
-        p.rect_stroke(b, 10.0, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+        let look = ui.interact(row, ui.scope_id().with("look"), Sense::click());
+        if look.hovered() {
+            p.rect_filled(row, 9.0, pal().card);
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        let (glyph, name) = if light {
+            (icon::MOON, tr("Тёмная тема"))
+        } else {
+            (icon::SUN, tr("Светлая тема"))
+        };
+        p.text(
+            pos2(row.left() + 14.0, row.center().y),
+            Align2::LEFT_CENTER,
+            glyph,
+            icon_font(15.0),
+            pal().dim,
+        );
+        p.text(
+            pos2(row.left() + 42.0, row.center().y),
+            Align2::LEFT_CENTER,
+            name,
+            text_font(14.0),
+            pal().dim,
+        );
+        if look.clicked() {
+            self.change_config(|c| c.window_light = !light);
+            let ctx = ui.ctx().clone();
+            self.set_look(&ctx, !light);
+        }
+        let b =
+            egui::Rect::from_min_size(pos2(r.left() + 12.0, row.top() - 10.0 - h), vec2(r.width() - 24.0, h));
+        p.rect_filled(b, 10.0, pal().card);
+        p.rect_stroke(b, 10.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
         let lx = b.left() + 13.0;
-        p.text(pos2(lx, b.top() + 14.0), Align2::LEFT_TOP, tr("Режимы"), text_font(12.0), FAINT);
+        p.text(pos2(lx, b.top() + 14.0), Align2::LEFT_TOP, tr("Режимы"), text_font(12.0), pal().faint);
         let gy = b.top() + 32.0;
         let gh = g.size().y;
-        p.galley(pos2(lx, gy), g, TEXT);
+        p.galley(pos2(lx, gy), g, pal().text);
         let link =
-            p.text(pos2(lx, gy + gh + 8.0), Align2::LEFT_TOP, tr("Настроить"), text_font(13.0), ACCENT);
+            p.text(pos2(lx, gy + gh + 8.0), Align2::LEFT_TOP, tr("Настроить"), text_font(13.0), pal().accent);
         let resp = ui.interact(link.expand(3.0), ui.scope_id().with("modes-link"), Sense::click());
         if resp.hovered() {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-            p.hline(link.x_range(), link.bottom(), Stroke::new(1.0, ACCENT));
+            p.hline(link.x_range(), link.bottom(), Stroke::new(1.0, pal().accent));
         }
         if resp.clicked() {
             self.tab = TAB_SETTINGS;
@@ -453,7 +486,7 @@ impl Dashboard {
                 Align2::LEFT_CENTER,
                 tr("Жду данные от виджета…"),
                 text_font(12.0),
-                DIM,
+                pal().dim,
             );
             return;
         };
@@ -466,9 +499,9 @@ impl Dashboard {
         let all_good = parts.iter().all(|(ok, _, _)| *ok);
         let text =
             parts.iter().map(|(ok, yes, no)| if *ok { yes.clone() } else { no.clone() }).collect::<Vec<_>>();
-        let dot = if all_good { GOOD } else { WARN };
+        let dot = if all_good { pal().good } else { pal().warn };
         p.circle_filled(pos2(r.left() + 24.0, y), 4.0, dot);
-        p.text(pos2(r.left() + 36.0, y), Align2::LEFT_CENTER, text.join(" · "), text_font(12.0), DIM);
+        p.text(pos2(r.left() + 36.0, y), Align2::LEFT_CENTER, text.join(" · "), text_font(12.0), pal().dim);
 
         // the widget's own cost plus this window's
         if self.own_read.0 != seq {
@@ -490,7 +523,7 @@ impl Dashboard {
                 Align2::RIGHT_CENTER,
                 format!("{} {when}", tr("Обновлено")),
                 text_font(12.0),
-                DIM,
+                pal().dim,
             );
             right = t.left() - 18.0;
         }
@@ -503,13 +536,13 @@ impl Dashboard {
         }
         if !own.is_empty() {
             let t = format!("{}: {}", tr("PC Monitor сам"), own.join(" · "));
-            p.text(pos2(right, y), Align2::RIGHT_CENTER, t, text_font(12.0), DIM);
+            p.text(pos2(right, y), Align2::RIGHT_CENTER, t, text_font(12.0), pal().dim);
         }
     }
 
     /// A page's name over its content (Главная draws its own).
     fn page_title(ui: &mut egui::Ui, tab: usize) {
-        ui.label(RichText::new(tr(TABS[tab].0)).font(bold(22.0)).color(TEXT));
+        ui.label(RichText::new(tr(TABS[tab].0)).font(bold(22.0)).color(pal().text));
         ui.add_space(14.0);
     }
 
@@ -568,19 +601,56 @@ impl Dashboard {
     }
 }
 
+/// What pictures are drawn for: the theme, the language and the look.
+fn theme_key(name: &str, light: bool) -> String {
+    format!("{name}{}", if light { "/light" } else { "/dark" })
+}
+
+/// egui's own widgets (buttons, sliders, checkboxes) in the window's colours.
+fn apply_look(ctx: &egui::Context, light: bool) {
+    let c = if light { &crate::dash_home::LIGHT } else { &crate::dash_home::DARK };
+    let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
+    v.panel_fill = c.bg;
+    v.window_fill = c.card;
+    v.extreme_bg_color = if light { Color32::WHITE } else { c.chrome };
+    v.override_text_color = Some(c.text);
+    v.selection.bg_fill = if light { c.card_hi } else { c.border };
+    v.selection.stroke = Stroke::new(1.0, c.text);
+    v.widgets.hovered.weak_bg_fill = c.card_hi;
+    v.widgets.inactive.weak_bg_fill = c.card;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, c.border);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, c.border);
+    v.widgets.noninteractive.bg_fill = c.card;
+    if light {
+        // checkboxes and slider rails: white boxes with a border on the grey page
+        v.widgets.inactive.bg_fill = Color32::WHITE;
+    }
+    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.corner_radius = CornerRadius::same(8);
+    }
+    // ours, whatever the Windows theme
+    let (pref, which) = if light {
+        (egui::ThemePreference::Light, egui::Theme::Light)
+    } else {
+        (egui::ThemePreference::Dark, egui::Theme::Dark)
+    };
+    ctx.set_theme(pref);
+    ctx.set_visuals_of(which, v);
+}
+
 /// A rounded box with a border, lighter under the mouse.
 fn pill(p: &egui::Painter, r: egui::Rect, hovered: bool) {
-    p.rect_filled(r, 9.0, if hovered { CARD_HI } else { CARD });
-    p.rect_stroke(r, 9.0, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    p.rect_filled(r, 9.0, if hovered { pal().card_hi } else { pal().card });
+    p.rect_stroke(r, 9.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
 }
 
 /// An on/off switch that slides.
 fn switch(ui: &egui::Ui, p: &egui::Painter, r: egui::Rect, on: bool, id: &str) {
     let t = ui.ctx().animate_bool_with_time(ui.scope_id().with(id), on, 0.12);
     let track = Color32::from_rgb(
-        (BORDER.r() as f32 + (ACCENT.r() as f32 - BORDER.r() as f32) * t) as u8,
-        (BORDER.g() as f32 + (ACCENT.g() as f32 - BORDER.g() as f32) * t) as u8,
-        (BORDER.b() as f32 + (ACCENT.b() as f32 - BORDER.b() as f32) * t) as u8,
+        (pal().border.r() as f32 + (pal().accent.r() as f32 - pal().border.r() as f32) * t) as u8,
+        (pal().border.g() as f32 + (pal().accent.g() as f32 - pal().border.g() as f32) * t) as u8,
+        (pal().border.b() as f32 + (pal().accent.b() as f32 - pal().border.b() as f32) * t) as u8,
     );
     p.rect_filled(r, r.height() / 2.0, track);
     let rad = r.height() / 2.0 - 3.0;
@@ -628,10 +698,10 @@ impl eframe::App for Dashboard {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if !self.dark_title {
-            // a dark title bar like the rest of the window
-            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
-            self.dark_title = true;
+        // the look from the settings ("Светлая тема"), the title bar with it
+        let light = self.feed.lock().map(|f| f.cfg.as_ref().is_some_and(|c| c.window_light)).unwrap_or(false);
+        if self.look != Some(light) {
+            self.set_look(&ctx, light);
         }
         self.screenshot(&ctx);
         let focus = std::mem::take(&mut self.feed.lock().unwrap_or_else(|e| e.into_inner()).focus);
@@ -642,8 +712,8 @@ impl eframe::App for Dashboard {
         self.update_cards(&ctx);
         // the home page lists the busiest programs too
         self.procs.visible(self.tab == TAB_PROCS || self.tab == TAB_HOME);
-        ui.painter().rect_filled(ui.max_rect(), 0.0, BG);
-        let chrome = Frame::new().fill(CHROME);
+        ui.painter().rect_filled(ui.max_rect(), 0.0, pal().bg);
+        let chrome = Frame::new().fill(pal().chrome);
         egui::Panel::top("bar")
             .exact_size(BAR_H)
             .resizable(false)
@@ -656,12 +726,12 @@ impl eframe::App for Dashboard {
             .show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("nav").exact_size(NAV_W).resizable(false).frame(chrome).show(ui, |ui| self.nav(ui));
         egui::CentralPanel::no_frame().show(ui, |ui| {
-            Frame::new().fill(BG).inner_margin(Margin { left: 24, right: 24, top: 20, bottom: 8 }).show(
-                ui,
-                |ui| {
+            Frame::new()
+                .fill(pal().bg)
+                .inner_margin(Margin { left: 24, right: 24, top: 20, bottom: 8 })
+                .show(ui, |ui| {
                     ui.with_layout(Layout::top_down(Align::Min), |ui| self.page(ui));
-                },
-            );
+                });
         });
         // new data wakes it (request_repaint from the reader); nothing else moves
         ctx.request_repaint_after(Duration::from_secs(5));
@@ -715,7 +785,8 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                                 f.game = game.map(|g| *g);
                                 f.theme = Some(theme_of(&theme, &custom));
                                 // the language too: charts and reports have words
-                                f.theme_key = format!("{theme}{custom:?}{}", pcm_render::format::language());
+                                f.theme_name = format!("{theme}{custom:?}{}", pcm_render::format::language());
+                                f.theme_key = theme_key(&f.theme_name, pcm_render::theme::light());
                                 f.when = pcm_win::system::local_time().get(11..).unwrap_or("").to_string();
                                 f.seq += 1;
                             }

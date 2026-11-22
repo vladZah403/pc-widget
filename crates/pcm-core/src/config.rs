@@ -162,6 +162,8 @@ pub struct Config {
     /// The PC Monitor window's × quits the program; off: only the window
     /// closes, the widget, tray icons and taskbar panel keep running.
     pub close_quits: bool,
+    /// The PC Monitor window in light colours ("Светлая тема"); off: dark.
+    pub window_light: bool,
     /// Look for a new version every 6 hours.
     pub check_updates: bool,
     /// The newest version the user has been told about.
@@ -210,6 +212,7 @@ impl Default for Config {
             lang: "auto".into(),
             run_as_admin: false,
             close_quits: false,
+            window_light: false,
             check_updates: true,
             update_seen: String::new(),
             profiles: BTreeMap::new(),

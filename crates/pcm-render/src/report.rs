@@ -80,12 +80,12 @@ fn panel(
     hi: f32,
     unit: &str,
 ) -> Plot {
-    c.rrect(PAD, y0, GRAPH_X1, y1, 10.0, HIST_TRACK);
-    c.text(fonts, PAD + 12.0, y0 + 17.0, title, Style::SemiBold, 12.0, DIM);
+    c.rrect(PAD, y0, GRAPH_X1, y1, 10.0, ink().hist_track);
+    c.text(fonts, PAD + 12.0, y0 + 17.0, title, Style::SemiBold, 12.0, ink().dim);
     let mut x = GRAPH_X1 - 12.0;
     for (name, col) in legend.iter().rev() {
         let w = c.width(fonts, name, Style::Regular, 11.0);
-        c.text(fonts, x - w, y0 + 17.0, name, Style::Regular, 11.0, DIM);
+        c.text(fonts, x - w, y0 + 17.0, name, Style::Regular, 11.0, ink().dim);
         x -= w + 6.0;
         c.rrect(x - 8.0, y0 + 9.0, x, y0 + 15.0, 2.0, *col);
         x -= 18.0;
@@ -94,10 +94,10 @@ fn panel(
     // the top and the bottom of the scale
     for v in [hi, lo] {
         let y = plot.y(v);
-        c.rect(plot.x0, y - 0.5 / c.s, plot.x1, y + 0.5 / c.s, TRACK);
+        c.rect(plot.x0, y - 0.5 / c.s, plot.x1, y + 0.5 / c.s, ink().track);
         let label = format!("{v:.0}{unit}");
         let w = c.width(fonts, &label, Style::Regular, 10.0);
-        c.text(fonts, plot.x0 - 6.0 - w, y + 3.5, &label, Style::Regular, 10.0, FAINT);
+        c.text(fonts, plot.x0 - 6.0 - w, y + 3.5, &label, Style::Regular, 10.0, ink().faint);
     }
     plot
 }
@@ -134,16 +134,16 @@ pub fn session_report(
 ) -> Option<(Pixmap, ReportBoxes)> {
     let (w, h) = (REPORT_W, REPORT_H);
     let mut c = Canvas::new((w * scale).round() as u32, (h * scale).round() as u32, scale)?;
-    c.rrect(0.0, 0.0, w, h, 14.0, BORDER);
+    c.rrect(0.0, 0.0, w, h, 14.0, ink().border);
     let bw = 1.0 / scale * scale.round().max(1.0);
-    c.rrect(bw, bw, w - bw, h - bw, 14.0 - bw, CARD);
+    c.rrect(bw, bw, w - bw, h - bw, 14.0 - bw, ink().card);
     let info = &s.info;
     let sum = &info.summary;
 
     // header: the game, when, how long, the window
     let title = if info.title.trim().is_empty() { info.game.clone() } else { info.title.clone() };
     let title = c.ellipsize(fonts, &title, Style::SemiBold, 18.0, SIDE_X - PAD - 10.0);
-    c.text(fonts, PAD, 36.0, &title, Style::SemiBold, 18.0, TEXT);
+    c.text(fonts, PAD, 36.0, &title, Style::SemiBold, 18.0, ink().text);
     let mut sub = format!("{}  ·  {}", fmt_started(&info.started), fmt_clock(info.duration_s));
     if info.width > 0 {
         sub += &format!("  ·  {}×{}", info.width, info.height);
@@ -151,13 +151,13 @@ pub fn session_report(
             sub += &trf(" @ {v} Гц", &[("v", info.refresh_hz.to_string())]);
         }
     }
-    c.text(fonts, PAD, 56.0, &sub, Style::Regular, 12.0, DIM);
+    c.text(fonts, PAD, 56.0, &sub, Style::Regular, 12.0, ink().dim);
     let close = [w - 42.0, 14.0, w - 14.0, 42.0];
     if hover.close {
-        c.rrect(close[0], close[1], close[2], close[3], 8.0, CLOSE_HOVER);
+        c.rrect(close[0], close[1], close[2], close[3], 8.0, ink().close_hover);
     }
     let (cx, cy) = ((close[0] + close[2]) / 2.0, (close[1] + close[3]) / 2.0);
-    let xc = if hover.close { TEXT } else { DIM };
+    let xc = if hover.close { ink().text } else { ink().dim };
     c.line(&[(cx - 5.0, cy - 5.0), (cx + 5.0, cy + 5.0)], 1.6, xc);
     c.line(&[(cx - 5.0, cy + 5.0), (cx + 5.0, cy - 5.0)], 1.6, xc);
 
@@ -176,7 +176,7 @@ pub fn session_report(
     let fps_max = info.samples.iter().filter_map(|x| x.fps).fold(0.0f32, f32::max);
     let p = panel(&mut c, fonts, ys[0].0, ys[0].1, "FPS", &[], 0.0, nice_max(fps_max, 30.0), "");
     let avg_y = p.y(sum.avg_fps as f32);
-    c.rect(p.x0, avg_y - 0.5 / scale, p.x1, avg_y + 0.5 / scale, FAINT);
+    c.rect(p.x0, avg_y - 0.5 / scale, p.x1, avg_y + 0.5 / scale, ink().faint);
     let pts: Vec<(f32, Option<f32>)> =
         info.samples.iter().map(|x| (x.t, x.fps.filter(|f| *f > 0.0))).collect();
     series(&mut c, &p, span, &pts, good);
@@ -198,7 +198,7 @@ pub fn session_report(
     let bad_ms = med * BAD_FRAME;
     let bad_y = p.y(bad_ms);
     // the red zone: above twice the median
-    c.rect(p.x0, p.y0, p.x1, bad_y, lerp(HIST_TRACK, bad, 0.12));
+    c.rect(p.x0, p.y0, p.x1, bad_y, lerp(ink().hist_track, bad, 0.12));
     let cols = ((p.x1 - p.x0) * scale).max(1.0) as usize;
     let mut lo = vec![f32::INFINITY; cols];
     let mut hi = vec![0.0f32; cols];
@@ -266,15 +266,15 @@ pub fn session_report(
             fonts,
             (p.x0 + p.x1) / 2.0,
             (p.y0 + p.y1) / 2.0 + 4.0,
-            &[part(msg, Style::Regular, 11.0, FAINT)],
+            &[part(msg, Style::Regular, 11.0, ink().faint)],
             Align::Center,
         );
     }
     // the time axis under the last graph
-    c.text(fonts, PAD + 44.0, bottom + 16.0, "0:00", Style::Regular, 10.0, FAINT);
+    c.text(fonts, PAD + 44.0, bottom + 16.0, "0:00", Style::Regular, 10.0, ink().faint);
     let end = fmt_clock(info.duration_s);
     let ew = c.width(fonts, &end, Style::Regular, 10.0);
-    c.text(fonts, GRAPH_X1 - 12.0 - ew, bottom + 16.0, &end, Style::Regular, 10.0, FAINT);
+    c.text(fonts, GRAPH_X1 - 12.0 - ew, bottom + 16.0, &end, Style::Regular, 10.0, ink().faint);
 
     // summary
     let x = SIDE_X;
@@ -285,7 +285,7 @@ pub fn session_report(
         122.0,
         &[
             part(format!("{:.0}", sum.avg_fps), Style::SemiBoldCondensed, 46.0, fps_scale(sc, sum.avg_fps)),
-            part(tr("  FPS в среднем"), Style::Regular, 12.0, DIM),
+            part(tr("  FPS в среднем"), Style::Regular, 12.0, ink().dim),
         ],
         Align::Left,
     );
@@ -293,24 +293,24 @@ pub fn session_report(
     let rows: Vec<(String, String, Rgb)> = vec![
         ("1% low".into(), format!("{:.0} FPS", sum.low1), fps_scale(sc, sum.low1)),
         ("0.1% low".into(), format!("{:.0} FPS", sum.low01), fps_scale(sc, sum.low01)),
-        (tr("Мин / макс за секунду"), format!("{:.0} / {:.0}", sum.min_fps, sum.max_fps), TEXT),
-        (tr("Медиана кадра"), trf("{v} мс", &[("v", dec(format!("{:.1}", sum.median_ms)))]), TEXT),
+        (tr("Мин / макс за секунду"), format!("{:.0} / {:.0}", sum.min_fps, sum.max_fps), ink().text),
+        (tr("Медиана кадра"), trf("{v} мс", &[("v", dec(format!("{:.1}", sum.median_ms)))]), ink().text),
         (
             tr("Плохие кадры"),
             format!("{} ({}%)", sum.bad_frames, dec(format!("{pct_bad:.1}"))),
-            if pct_bad >= 1.0 { bad } else { TEXT },
+            if pct_bad >= 1.0 { bad } else { ink().text },
         ),
-        (tr("Кадров"), format_count(sum.frames), TEXT),
-        (tr("Игра без пауз"), fmt_clock(sum.active_s), TEXT),
+        (tr("Кадров"), format_count(sum.frames), ink().text),
+        (tr("Игра без пауз"), fmt_clock(sum.active_s), ink().text),
     ];
     let mut y = 156.0;
     for (label, value, col) in &rows {
-        c.text(fonts, x, y, label, Style::Regular, 12.0, DIM);
+        c.text(fonts, x, y, label, Style::Regular, 12.0, ink().dim);
         c.rich(fonts, r, y, &[part(value.clone(), Style::SemiBold, 12.0, *col)], Align::Right);
         y += 22.0;
     }
     y += 2.0;
-    c.rect(x, y - 0.5 / scale, r, y + 0.5 / scale, TRACK);
+    c.rect(x, y - 0.5 / scale, r, y + 0.5 / scale, ink().track);
     y += 20.0;
     let mut facts: Vec<String> = Vec::new();
     for v in [&info.cpu, &info.gpu] {
@@ -338,7 +338,7 @@ pub fn session_report(
     }
     for f in &facts {
         let t = c.ellipsize(fonts, f, Style::Regular, 11.0, r - x);
-        c.text(fonts, x, y, &t, Style::Regular, 11.0, DIM);
+        c.text(fonts, x, y, &t, Style::Regular, 11.0, ink().dim);
         y += 18.0;
     }
 
@@ -346,9 +346,25 @@ pub fn session_report(
     let label = tr("Сохранить CSV");
     let lw = c.width(fonts, &label, Style::SemiBold, 12.0);
     let csv = [r - lw - 28.0, h - 44.0, r, h - 16.0];
-    c.rrect(csv[0], csv[1], csv[2], csv[3], 8.0, if hover.csv { ROW_HOVER } else { HIST_TRACK });
-    c.rrect_stroke(csv[0], csv[1], csv[2], csv[3], 8.0, 1.0, if hover.csv { sc.at(0.05) } else { BORDER });
-    c.text(fonts, csv[0] + 14.0, h - 25.5, &label, Style::SemiBold, 12.0, if hover.csv { TEXT } else { DIM });
+    c.rrect(csv[0], csv[1], csv[2], csv[3], 8.0, if hover.csv { ink().row_hover } else { ink().hist_track });
+    c.rrect_stroke(
+        csv[0],
+        csv[1],
+        csv[2],
+        csv[3],
+        8.0,
+        1.0,
+        if hover.csv { sc.at(0.05) } else { ink().border },
+    );
+    c.text(
+        fonts,
+        csv[0] + 14.0,
+        h - 25.5,
+        &label,
+        Style::SemiBold,
+        12.0,
+        if hover.csv { ink().text } else { ink().dim },
+    );
 
     let px = |b: [f32; 4]| b.map(|v| v * scale);
     Some((c.pm, ReportBoxes { close: px(close), csv: px(csv) }))

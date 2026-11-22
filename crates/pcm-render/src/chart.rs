@@ -41,13 +41,13 @@ pub fn columns(w: f32, scale: f32) -> usize {
 
 pub fn chart(fonts: &mut Fonts, scale: f32, w: f32, h: f32, spec: &Chart) -> Option<Pixmap> {
     let mut c = Canvas::new((w * scale).round() as u32, (h * scale).round() as u32, scale)?;
-    c.rrect(0.0, 0.0, w, h, 12.0, HIST_TRACK);
-    c.text(fonts, 14.0, 20.0, &spec.title, Style::SemiBold, 12.0, DIM);
+    c.rrect(0.0, 0.0, w, h, 12.0, ink().hist_track);
+    c.text(fonts, 14.0, 20.0, &spec.title, Style::SemiBold, 12.0, ink().dim);
     // the legend, right to left
     let mut x = w - RIGHT;
     for s in spec.series.iter().rev() {
         let tw = c.width(fonts, &s.name, Style::Regular, 11.0);
-        c.text(fonts, x - tw, 20.0, &s.name, Style::Regular, 11.0, DIM);
+        c.text(fonts, x - tw, 20.0, &s.name, Style::Regular, 11.0, ink().dim);
         x -= tw + 6.0;
         c.rrect(x - 8.0, 12.0, x, 18.0, 2.0, s.color);
         x -= 18.0;
@@ -60,18 +60,24 @@ pub fn chart(fonts: &mut Fonts, scale: f32, w: f32, h: f32, spec: &Chart) -> Opt
     let y = |v: f64| y1 - (y1 - y0) * (((v - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0)) as f32;
     for v in [hi, lo] {
         let yy = y(v);
-        c.rect(x0, yy - 0.5 / scale, x1, yy + 0.5 / scale, TRACK);
-        c.rich(fonts, x0 - 8.0, yy + 3.5, &[part((spec.fmt)(v), Style::Regular, 10.0, FAINT)], Align::Right);
+        c.rect(x0, yy - 0.5 / scale, x1, yy + 0.5 / scale, ink().track);
+        c.rich(
+            fonts,
+            x0 - 8.0,
+            yy + 3.5,
+            &[part((spec.fmt)(v), Style::Regular, 10.0, ink().faint)],
+            Align::Right,
+        );
     }
     let has_data = spec.series.iter().any(|s| s.values.iter().any(|v| v.is_some()));
     if !has_data {
-        let msg = part(tr("нет данных за это время"), Style::Regular, 11.0, FAINT);
+        let msg = part(tr("нет данных за это время"), Style::Regular, 11.0, ink().faint);
         c.rich(fonts, (x0 + x1) / 2.0, (y0 + y1) / 2.0 + 4.0, &[msg], Align::Center);
     }
     for s in &spec.series {
         let n = s.values.len().max(1);
         let xc = |i: usize| x0 + (x1 - x0) * (i as f32 + 0.5) / n as f32;
-        let shade = lerp(HIST_TRACK, s.color, 0.28);
+        let shade = lerp(ink().hist_track, s.color, 0.28);
         // peaks: a shaded band from the average up to the peak
         let bw = ((x1 - x0) / n as f32).max(1.0 / scale);
         for (i, v) in s.values.iter().enumerate() {
@@ -95,15 +101,15 @@ pub fn chart(fonts: &mut Fonts, scale: f32, w: f32, h: f32, spec: &Chart) -> Opt
         flush(&mut c, &mut run, s.color);
     }
     let ty = h - 8.0;
-    c.rich(fonts, x0, ty, &[part(spec.times[0].clone(), Style::Regular, 10.0, FAINT)], Align::Left);
+    c.rich(fonts, x0, ty, &[part(spec.times[0].clone(), Style::Regular, 10.0, ink().faint)], Align::Left);
     c.rich(
         fonts,
         (x0 + x1) / 2.0,
         ty,
-        &[part(spec.times[1].clone(), Style::Regular, 10.0, FAINT)],
+        &[part(spec.times[1].clone(), Style::Regular, 10.0, ink().faint)],
         Align::Center,
     );
-    c.rich(fonts, x1, ty, &[part(spec.times[2].clone(), Style::Regular, 10.0, FAINT)], Align::Right);
+    c.rich(fonts, x1, ty, &[part(spec.times[2].clone(), Style::Regular, 10.0, ink().faint)], Align::Right);
     Some(c.pm)
 }
 

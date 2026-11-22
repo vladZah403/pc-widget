@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui::{Color32, RichText, Vec2};
+
+use crate::dash_home::pal;
+use egui::{RichText, Vec2};
 use pcm_core::session::{EXTENSION, Session, SessionInfo};
 use pcm_render::report::{REPORT_H, REPORT_W, ReportHover, session_report};
 use pcm_render::text::Fonts;
@@ -15,10 +17,6 @@ use pcm_render::theme::Theme;
 use crate::report_win::{save_dialog, session_csv_name, write_session_csv};
 use pcm_render::format::{tr, trf};
 
-const DIM: Color32 = Color32::from_rgb(139, 147, 163);
-const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
-const FAINT: Color32 = Color32::from_rgb(88, 96, 112);
-const HOT: Color32 = Color32::from_rgb(232, 68, 90);
 const RELOAD: Duration = Duration::from_secs(10);
 const ARMED: Duration = Duration::from_secs(3);
 
@@ -107,7 +105,7 @@ impl SessionsTab {
                     tr("Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню виджета) и \
                      игра идёт больше 30 секунд."),
                 )
-                .color(DIM),
+                .color(pal().dim),
             );
             return;
         }
@@ -122,19 +120,21 @@ impl SessionsTab {
                     "1% low".into(),
                     String::new(),
                 ] {
-                    ui.label(RichText::new(h).size(12.0).color(DIM));
+                    ui.label(RichText::new(h).size(12.0).color(pal().dim));
                 }
                 ui.end_row();
                 for (p, info) in &self.list {
                     let s = &info.summary;
                     ui.label(
-                        RichText::new(info.started.get(..16).unwrap_or(&info.started)).size(13.0).color(DIM),
+                        RichText::new(info.started.get(..16).unwrap_or(&info.started))
+                            .size(13.0)
+                            .color(pal().dim),
                     );
                     let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
-                    ui.label(RichText::new(name).size(13.0).color(TEXT));
-                    ui.label(RichText::new(play_time(s.active_s)).size(13.0).color(TEXT));
-                    ui.label(RichText::new(format!("{:.0}", s.avg_fps)).size(13.0).color(TEXT));
-                    ui.label(RichText::new(format!("{:.0}", s.low1)).size(13.0).color(TEXT));
+                    ui.label(RichText::new(name).size(13.0).color(pal().text));
+                    ui.label(RichText::new(play_time(s.active_s)).size(13.0).color(pal().text));
+                    ui.label(RichText::new(format!("{:.0}", s.avg_fps)).size(13.0).color(pal().text));
+                    ui.label(RichText::new(format!("{:.0}", s.low1)).size(13.0).color(pal().text));
                     if ui.add(egui::Button::new(RichText::new(tr("Отчёт")).size(12.0)).small()).clicked()
                     {
                         open = Some(p.clone());
@@ -155,7 +155,7 @@ impl SessionsTab {
             }
         }
         if let Some(n) = &self.note {
-            ui.label(RichText::new(n).color(HOT));
+            ui.label(RichText::new(n).color(pal().hot));
         }
         ui.ctx().request_repaint_after(RELOAD);
     }
@@ -174,9 +174,9 @@ impl SessionsTab {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let armed = self.delete_armed.is_some();
                 let del = if armed {
-                    RichText::new(tr("Точно удалить?")).color(HOT)
+                    RichText::new(tr("Точно удалить?")).color(pal().hot)
                 } else {
-                    RichText::new(tr("Удалить")).color(DIM)
+                    RichText::new(tr("Удалить")).color(pal().dim)
                 };
                 if ui.button(del).clicked() {
                     if armed {
@@ -217,7 +217,7 @@ impl SessionsTab {
                 });
             }
         } else {
-            ui.label(RichText::new(tr("Жду цвета от виджета…")).color(FAINT));
+            ui.label(RichText::new(tr("Жду цвета от виджета…")).color(pal().faint));
         }
         if self.delete_armed.is_some() {
             ui.ctx().request_repaint_after(ARMED);

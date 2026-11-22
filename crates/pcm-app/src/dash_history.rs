@@ -5,7 +5,9 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui::{Color32, RichText, Vec2};
+
+use crate::dash_home::pal;
+use egui::{RichText, Vec2};
 use pcm_core::history::{Column, FILE, History, Point, STEP_S, buckets, to_csv};
 use pcm_render::chart::{Chart, Series, chart, columns};
 use pcm_render::format::fmt_speed;
@@ -18,9 +20,6 @@ const RANGES: [(&str, i64); 4] =
 const CHART_H: f32 = 170.0;
 /// The open tab reads the database again this often.
 const RELOAD: Duration = Duration::from_secs(10);
-
-const DIM: Color32 = Color32::from_rgb(139, 147, 163);
-const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
 
 #[derive(Default)]
 pub struct HistoryTab {
@@ -160,7 +159,7 @@ impl HistoryTab {
         ui.horizontal(|ui| {
             for (i, (name, _)) in RANGES.iter().enumerate() {
                 let sel = self.range == i;
-                let text = RichText::new(tr(name)).size(13.0).color(if sel { TEXT } else { DIM });
+                let text = RichText::new(tr(name)).size(13.0).color(if sel { pal().text } else { pal().dim });
                 if ui.add(egui::Button::selectable(sel, text)).clicked() && !sel {
                     self.range = i;
                     self.load();
@@ -174,13 +173,13 @@ impl HistoryTab {
                 ui.label(
                     RichText::new(trf("точек: {n}", &[("n", self.points.len().to_string())]))
                         .size(12.0)
-                        .color(DIM),
+                        .color(pal().dim),
                 );
             });
         });
         ui.add_space(10.0);
         if let Some(n) = &self.note {
-            ui.label(RichText::new(n).color(DIM));
+            ui.label(RichText::new(n).color(pal().dim));
             return;
         }
         let Some(theme) = theme else { return };

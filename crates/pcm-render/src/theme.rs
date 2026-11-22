@@ -1,5 +1,7 @@
 //! Colours: the fixed palette of 1.8 and the "cold -> hot" scales of the themes.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 pub type Rgb = (u8, u8, u8);
 
 pub const CARD: Rgb = (28, 33, 43);
@@ -13,6 +15,62 @@ pub const CLOSE_HOVER: Rgb = (232, 68, 90);
 /// A row under the mouse that a click opens (between CARD and TRACK).
 pub const ROW_HOVER: Rgb = (35, 41, 53);
 pub const PROCS_BG: Rgb = (34, 40, 52);
+
+/// The PC Monitor window's light look ("Светлая тема"): the pictures it
+/// shows (hardware cards, history charts, session reports) are drawn in
+/// `ink()` colours and the theme scales darkened to read on white. Set only
+/// in the window's process; the widget and the overlay stay dark.
+static LIGHT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_light(on: bool) {
+    LIGHT.store(on, Ordering::Relaxed);
+}
+
+pub fn light() -> bool {
+    LIGHT.load(Ordering::Relaxed)
+}
+
+/// The fixed colours of the window's pictures.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ink {
+    pub card: Rgb,
+    pub border: Rgb,
+    pub track: Rgb,
+    pub hist_track: Rgb,
+    pub text: Rgb,
+    pub dim: Rgb,
+    pub faint: Rgb,
+    pub close_hover: Rgb,
+    pub row_hover: Rgb,
+}
+
+pub const DARK_INK: Ink = Ink {
+    card: CARD,
+    border: BORDER,
+    track: TRACK,
+    hist_track: HIST_TRACK,
+    text: TEXT,
+    dim: DIM,
+    faint: FAINT,
+    close_hover: CLOSE_HOVER,
+    row_hover: ROW_HOVER,
+};
+
+pub const LIGHT_INK: Ink = Ink {
+    card: (255, 255, 255),
+    border: (220, 224, 232),
+    track: (228, 232, 238),
+    hist_track: (248, 249, 251),
+    text: (24, 28, 36),
+    dim: (94, 102, 118),
+    faint: (146, 153, 167),
+    close_hover: (214, 52, 74),
+    row_hover: (242, 244, 248),
+};
+
+pub fn ink() -> Ink {
+    if light() { LIGHT_INK } else { DARK_INK }
+}
 
 pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
@@ -39,7 +97,14 @@ pub enum Theme {
 }
 
 impl Theme {
+    /// The scale; in the window's light look, darkened to read on white.
     pub fn scale(&self) -> Scale {
+        let s = self.scale_dark();
+        if light() { s.on_light() } else { s }
+    }
+
+    /// The scale as on the dark cards (the widget, the overlay).
+    pub fn scale_dark(&self) -> Scale {
         let stops = |list: &[&str]| list.iter().filter_map(|h| hex(h)).collect();
         Scale {
             stops: match self {
@@ -67,7 +132,33 @@ pub struct Scale {
     stops: Vec<Rgb>,
 }
 
+/// Relative brightness 0..1 (Rec. 601 weights).
+fn luma(c: Rgb) -> f32 {
+    (0.299 * c.0 as f32 + 0.587 * c.1 as f32 + 0.114 * c.2 as f32) / 255.0
+}
+
 impl Scale {
+    /// The same scale for a white background: every stop brighter than a
+    /// mid tone is darkened to it, the hue kept (ice's near-white top turns
+    /// slate, heat's amber turns ochre).
+    pub fn on_light(&self) -> Scale {
+        const MAX: f32 = 0.52;
+        let stops = self
+            .stops
+            .iter()
+            .map(|&c| {
+                let l = luma(c);
+                if l <= MAX {
+                    return c;
+                }
+                let k = MAX / l;
+                let f = |v: u8| (v as f32 * k).round() as u8;
+                (f(c.0), f(c.1), f(c.2))
+            })
+            .collect();
+        Scale { stops }
+    }
+
     pub fn at(&self, t: f32) -> Rgb {
         let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
         let n = self.stops.len() - 1;
@@ -93,6 +184,18 @@ impl Scale {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn light_scale_reads_on_white() {
+        // dark stops stay, bright ones come down to a mid tone with their hue
+        let ice = Theme::Ice.scale_dark().on_light();
+        assert_eq!(ice.at(0.0), (0x4f, 0x6a, 0x8f));
+        let top = ice.at(1.0);
+        assert!(luma(top) <= 0.53, "{top:?}");
+        assert!(top.2 > top.0, "still bluish: {top:?}");
+        let heat = Theme::Heat.scale_dark().on_light();
+        assert!(heat.stops.iter().all(|&c| luma(c) <= 0.53));
+    }
 
     #[test]
     fn scale_like_1_8() {

@@ -6,6 +6,8 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+
+use crate::dash_home::pal;
 use egui::{Color32, RichText};
 use pcm_core::config::{self, Config, FPS_ROWS, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
@@ -16,11 +18,7 @@ use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
 use pcm_render::widget::{Data, UpdateState};
 
-const DIM: Color32 = Color32::from_rgb(139, 147, 163);
-const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
-const FAINT: Color32 = Color32::from_rgb(88, 96, 112);
-const HOT: Color32 = Color32::from_rgb(232, 68, 90);
-const ACCENT: Color32 = Color32::from_rgb(38, 140, 130);
+const TEAL: Color32 = Color32::from_rgb(38, 140, 130);
 /// After a change here, the widget's copy (a feed behind) is not taken for this long.
 const SETTLE: Duration = Duration::from_secs(3);
 const PING_PRESETS: [(&str, &str); 3] =
@@ -41,12 +39,12 @@ pub struct SettingsTab {
 
 fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(14.0);
-    ui.label(RichText::new(text).size(15.0).color(TEXT).strong());
+    ui.label(RichText::new(text).size(15.0).color(pal().text).strong());
     ui.add_space(4.0);
 }
 
 fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.0).color(FAINT));
+    ui.label(RichText::new(text).size(12.0).color(pal().faint));
 }
 
 fn rgb_of(hex: &str) -> [u8; 3] {
@@ -79,7 +77,7 @@ impl SettingsTab {
             self.edit = Some(c.clone());
         }
         let Some(mut c) = self.edit.clone() else {
-            ui.label(RichText::new(tr("Жду настройки от виджета…")).color(DIM));
+            ui.label(RichText::new(tr("Жду настройки от виджета…")).color(pal().dim));
             return;
         };
         let before = c.clone();
@@ -180,7 +178,7 @@ impl SettingsTab {
             });
 
             heading(ui, &tr("Трей и панель задач"));
-            ui.label(RichText::new(trf("Значки в трее (1–{n}):", &[("n", TRAY_MAX.to_string())])).color(DIM));
+            ui.label(RichText::new(trf("Значки в трее (1–{n}):", &[("n", TRAY_MAX.to_string())])).color(pal().dim));
             ui.horizontal_wrapped(|ui| {
                 for (key, name) in TRAY_KINDS {
                     let mut on = c.tray.iter().any(|k| k == key);
@@ -201,7 +199,7 @@ impl SettingsTab {
             }
 
             heading(ui, &tr("Игры"));
-            ui.label(RichText::new(tr("В играх и видео на весь экран виджет:")).color(DIM));
+            ui.label(RichText::new(tr("В играх и видео на весь экран виджет:")).color(pal().dim));
             ui.horizontal(|ui| {
                 for (key, name) in [("hide", tr("прятать")), ("dim", tr("тускнеть")), ("off", tr("ничего"))]
                 {
@@ -220,7 +218,7 @@ impl SettingsTab {
                             ui.radio_value(&mut c.fps_style, key.to_string(), name);
                         }
                     });
-                    ui.label(RichText::new(tr("Кроме FPS показывать:")).color(DIM));
+                    ui.label(RichText::new(tr("Кроме FPS показывать:")).color(pal().dim));
                     ui.horizontal_wrapped(|ui| {
                         for (key, name) in FPS_ROWS {
                             let mut on = c.fps_rows.iter().any(|r| r == key);
@@ -325,7 +323,7 @@ impl SettingsTab {
             });
             if self.host_bad {
                 ui.label(
-                    RichText::new(tr("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).")).color(HOT),
+                    RichText::new(tr("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).")).color(pal().hot),
                 );
             }
 
@@ -366,7 +364,7 @@ impl SettingsTab {
             heading(ui, &tr("Обновления"));
             ui.checkbox(&mut c.check_updates, tr("Проверять обновления"));
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("PC Monitor {}", crate::APP_VERSION)).color(DIM));
+                ui.label(RichText::new(format!("PC Monitor {}", crate::APP_VERSION)).color(pal().dim));
                 if ui.button(tr("Проверить сейчас")).clicked() {
                     action = Some(FromDashboard::CheckUpdates);
                 }
@@ -375,11 +373,11 @@ impl SettingsTab {
                 && let Some(v) = &d.update
             {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(trf("Вышла версия {v}", &[("v", v.clone())])).color(TEXT).strong());
+                    ui.label(RichText::new(trf("Вышла версия {v}", &[("v", v.clone())])).color(pal().text).strong());
                     match &d.update_state {
                         Some(UpdateState::Download(f)) => {
                             let text = trf("скачиваю {p}%", &[("p", format!("{:.0}", f * 100.0))]);
-                            ui.add(egui::ProgressBar::new(*f).desired_width(220.0).fill(ACCENT).text(text));
+                            ui.add(egui::ProgressBar::new(*f).desired_width(220.0).fill(TEAL).text(text));
                         }
                         Some(UpdateState::Install) => {
                             ui.label(tr("устанавливаю…"));

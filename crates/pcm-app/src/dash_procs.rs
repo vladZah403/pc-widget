@@ -5,6 +5,8 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+
+use crate::dash_home::pal;
 use egui::{Color32, RichText};
 use pcm_core::processes::can_close;
 use pcm_render::format::fmt_mem;
@@ -14,10 +16,6 @@ use pcm_render::widget::ProcRow;
 use crate::dashboard::{FromDashboard, send};
 use pcm_render::format::{tr, trf};
 
-const DIM: Color32 = Color32::from_rgb(139, 147, 163);
-const TEXT: Color32 = Color32::from_rgb(232, 234, 239);
-const FAINT: Color32 = Color32::from_rgb(88, 96, 112);
-const HOT: Color32 = Color32::from_rgb(232, 68, 90);
 /// A first click on "Закрыть" waits this long for the second.
 const ARMED: Duration = Duration::from_secs(3);
 
@@ -52,7 +50,7 @@ impl ProcsTab {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, rows: Option<&Vec<ProcRow>>, sc: Option<&Scale>) {
         let Some(rows) = rows else {
-            ui.label(RichText::new(tr("Собираю список программ…")).color(DIM));
+            ui.label(RichText::new(tr("Собираю список программ…")).color(pal().dim));
             return;
         };
         if self.armed.as_ref().is_some_and(|(_, t)| t.elapsed() > ARMED) {
@@ -71,14 +69,14 @@ impl ProcsTab {
                 &[("n", rows.len().to_string()), ("mem", fmt_mem(total_mem))],
             ))
             .size(12.0)
-            .color(DIM),
+            .color(pal().dim),
         );
         ui.add_space(8.0);
         let header = |ui: &mut egui::Ui, text: &str, sort: Sort, me: &mut Sort| {
             let on = *me == sort;
             let t = RichText::new(if on { format!("{text} ▾") } else { text.to_string() })
                 .size(12.0)
-                .color(if on { TEXT } else { DIM });
+                .color(if on { pal().text } else { pal().dim });
             if ui.add(egui::Label::new(t).sense(egui::Sense::click())).clicked() {
                 *me = sort;
             }
@@ -89,22 +87,26 @@ impl ProcsTab {
                 header(ui, &tr("Программа"), Sort::Name, &mut self.sort);
                 header(ui, "CPU", Sort::Cpu, &mut self.sort);
                 header(ui, &tr("Память"), Sort::Memory, &mut self.sort);
-                ui.label(RichText::new(tr("Процессов")).size(12.0).color(DIM));
+                ui.label(RichText::new(tr("Процессов")).size(12.0).color(pal().dim));
                 ui.label("");
                 ui.end_row();
                 for r in &rows {
-                    ui.label(RichText::new(&r.name).size(13.0).color(TEXT));
-                    let cpu_col = sc.map_or(TEXT, |s| rgb(s.at((r.cpu / 50.0).min(1.0))));
+                    ui.label(RichText::new(&r.name).size(13.0).color(pal().text));
+                    let cpu_col = sc.map_or(pal().text, |s| rgb(s.at((r.cpu / 50.0).min(1.0))));
                     let cpu = format!("{:.1}%", r.cpu).replace('.', ",");
-                    ui.label(RichText::new(cpu).size(13.0).color(if r.cpu < 0.05 { FAINT } else { cpu_col }));
-                    ui.label(RichText::new(fmt_mem(r.memory)).size(13.0).color(TEXT));
-                    ui.label(RichText::new(r.count.to_string()).size(13.0).color(DIM));
+                    ui.label(RichText::new(cpu).size(13.0).color(if r.cpu < 0.05 {
+                        pal().faint
+                    } else {
+                        cpu_col
+                    }));
+                    ui.label(RichText::new(fmt_mem(r.memory)).size(13.0).color(pal().text));
+                    ui.label(RichText::new(r.count.to_string()).size(13.0).color(pal().dim));
                     if can_close(&r.name) {
                         let armed = self.armed.as_ref().is_some_and(|(n, _)| *n == r.name);
                         let text = if armed {
-                            RichText::new(tr("Точно закрыть?")).size(12.0).color(HOT)
+                            RichText::new(tr("Точно закрыть?")).size(12.0).color(pal().hot)
                         } else {
-                            RichText::new(tr("Закрыть")).size(12.0).color(DIM)
+                            RichText::new(tr("Закрыть")).size(12.0).color(pal().dim)
                         };
                         if ui.add(egui::Button::new(text).small()).clicked() {
                             if armed {
@@ -114,7 +116,7 @@ impl ProcsTab {
                             }
                         }
                     } else {
-                        ui.label(RichText::new(tr("системная")).size(11.0).color(FAINT));
+                        ui.label(RichText::new(tr("системная")).size(11.0).color(pal().faint));
                     }
                     ui.end_row();
                 }

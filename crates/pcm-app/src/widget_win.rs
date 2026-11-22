@@ -1114,6 +1114,7 @@ impl App {
         c.ping_host = new.ping_host;
         c.lang = new.lang;
         c.close_quits = new.close_quits;
+        c.window_light = new.window_light;
         c.check_updates = new.check_updates;
         c.sanitize();
         self.cfg = c;
