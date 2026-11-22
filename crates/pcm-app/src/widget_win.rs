@@ -31,6 +31,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// The mouse left the window (TrackMouseEvent); from CommCtrl.h.
 const WM_MOUSELEAVE: u32 = 0x02A3;
+/// Put the side tab beside the widget again (a move it missed).
+const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
@@ -280,7 +282,11 @@ impl App {
         let (w, h) = (frame.pm.width() as i32, frame.pm.height() as i32);
         let alpha = self.alpha();
         layered::show(self.hwnd, &mut self.surface, &frame.pm, alpha, None);
+        let resized = (w, h) != self.size_px;
         self.size_px = (w, h);
+        if resized {
+            self.tab_follow(); // the new height moves the tab's middle
+        }
     }
 
     fn alpha(&self) -> f32 {
@@ -409,6 +415,24 @@ impl App {
         self.tab.pos = self.tab_beside_pos(&r);
         self.tab_render();
         unsafe { SetTimer(self.hwnd, TIMER_TAB, 200, None) };
+    }
+
+    /// The widget moved or changed size: the tab beside it stays attached.
+    fn tab_follow(&mut self) {
+        if !self.tab.visible
+            || self.cfg.tucked
+            || self.tab.slide.is_some()
+            || unsafe { IsWindowVisible(self.hwnd) } == 0
+        {
+            return; // docked, sliding, or the widget is coming out from behind the edge
+        }
+        let edge_right = self.tab.edge_right;
+        let r = self.widget_rect();
+        let pos = self.tab_beside_pos(&r);
+        if pos != self.tab.pos || edge_right != self.tab.edge_right {
+            self.tab.pos = pos;
+            self.tab_render();
+        }
     }
 
     /// Hide the tab after the mouse has been off the widget and the tab for
@@ -1005,7 +1029,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEMOVE => {
             let (x, y) = lparam_xy(lp);
-            with_app(|a| {
+            let start_move = with_app(|a| {
                 if !a.mouse_in {
                     let mut t = TRACKMOUSEEVENT {
                         cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
@@ -1020,12 +1044,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.tab_beside();
                 match a.press {
                     Some(Press::Body { x: px, y: py }) if (x - px).abs() + (y - py).abs() > DRAG_START => {
-                        // the press becomes a move: Windows drags the window
                         a.press = None;
-                        unsafe {
-                            ReleaseCapture();
-                            SendMessageW(hwnd, WM_SYSCOMMAND, (SC_MOVE | 2) as usize, 0);
-                        }
+                        return true;
                     }
                     Some(Press::Shape { .. }) => {
                         let mut pt = POINT { x, y };
@@ -1034,7 +1054,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     }
                     _ => a.present(),
                 }
+                false
             });
+            if start_move == Some(true) {
+                // the press becomes a move: Windows drags the window. Outside
+                // with_app, so the messages of the move loop (snap, the tab
+                // following, saving the place) reach the app.
+                unsafe {
+                    ReleaseCapture();
+                    SendMessageW(hwnd, WM_SYSCOMMAND, (SC_MOVE | 2) as usize, 0);
+                }
+            }
             0
         }
         WM_MOUSELEAVE => {
@@ -1141,6 +1171,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_EXITSIZEMOVE => {
             with_app(|a| a.remember_position());
             0
+        }
+        WM_WINDOWPOSCHANGED | WM_APP_FOLLOW => {
+            if with_app(|a| a.tab_follow()).is_none() {
+                // sent while the app is busy (a Shell call waiting on explorer
+                // lets it in): try again right after
+                unsafe { PostMessageW(hwnd, WM_APP_FOLLOW, 0, 0) };
+            }
+            if msg == WM_APP_FOLLOW { 0 } else { unsafe { DefWindowProcW(hwnd, msg, wp, lp) } }
         }
         WM_APP_TRAY => {
             match lp as u32 {
