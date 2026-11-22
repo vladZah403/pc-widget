@@ -564,7 +564,7 @@ impl Dashboard {
                 match self.home.ui(ui, input) {
                     Some(HomeAction::Tab(t)) => self.tab = t,
                     Some(HomeAction::Session(path)) => {
-                        self.sessions.open_path(&path);
+                        self.sessions.open_path(&path, true);
                         self.tab = TAB_GAMES;
                     }
                     None => {}
@@ -579,7 +579,10 @@ impl Dashboard {
             }
             TAB_GAMES => {
                 let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
-                self.sessions.ui(ui, &mut self.fonts, theme.as_ref());
+                if let Some(crate::dash_sessions::SessionsAction::Home) = self.sessions.ui(ui, theme.as_ref())
+                {
+                    self.tab = TAB_HOME;
+                }
             }
             TAB_PROCS => {
                 let (rows, sc) = {
@@ -835,6 +838,11 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
             }
             let mut d = Dashboard::new(cc, feed);
             d.tab = tab.min(TABS.len() - 1);
+            // test runs: open a session's report (PCM_DASH_SESSION=FILE)
+            if let Ok(path) = std::env::var("PCM_DASH_SESSION") {
+                d.sessions.open_path(std::path::Path::new(&path), false);
+                d.tab = TAB_GAMES;
+            }
             d.settings.start_offset = scroll;
             d.quit_on_close = !offscreen && screenshot.is_none();
             d.shot = screenshot.map(|p| (p, None));

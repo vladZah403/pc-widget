@@ -391,3 +391,36 @@ PC Monitor сам	PC Monitor itself	PC Monitor сам	PC Monitor selbst
 Больше всего	Busiest	Найбільше	Am meisten
 Клик — показать или скрыть виджет	Click to show or hide the widget	Клік — показати або сховати віджет	Klick: Widget zeigen oder ausblenden
 Клик — открыть PC Monitor	Click to open PC Monitor	Клік — відкрити PC Monitor	Klick: PC Monitor öffnen
+{m} мин {s} с	{m} min {s} s	{m} хв {s} с	{m} Min. {s} s
+← Главная	← Home	← Головна	← Start
+Сессия: {name}	Session: {name}	Сесія: {name}	Sitzung: {name}
+{n} кадров	{n} frames	{n} кадрів	{n} Frames
+кадры от ядра	frames from the kernel	кадри від ядра	Frames vom Kernel
+Экспорт CSV	Export CSV	Експорт CSV	CSV exportieren
+Сравнение: {when} ✕	Compared with {when} ✕	Порівняння: {when} ✕	Vergleich: {when} ✕
+Сравнить с другой сессией	Compare with another session	Порівняти з іншою сесією	Mit anderer Sitzung vergleichen
+Других сессий пока нет	No other sessions yet	Інших сесій поки немає	Noch keine anderen Sitzungen
+Средний FPS	Average FPS	Середній FPS	Durchschnittliche FPS
+Мин / макс	Min / max	Мін / макс	Min. / max.
+Время кадра	Frame time	Час кадру	Frametime
+Подтормаживания	Stutters	Підгальмовування	Ruckler
+Пик температуры	Peak temperature	Пік температури	Höchsttemperatur
+пунктир — частота монитора {hz} Гц	dashed: the monitor's {hz} Hz	пунктир — частота монітора {hz} Гц	gestrichelt: Monitor mit {hz} Hz
+Кадры в секунду	Frames per second	Кадри за секунду	Bilder pro Sekunde
+красные отметки — кадры дольше {v} мс	red marks: frames longer than {v} ms	червоні позначки — кадри довші за {v} мс	rote Striche: Frames über {v} ms
+сплошная — видеокарта, пунктир — процессор	solid: graphics card, dashed: processor	суцільна — відеокарта, пунктир — процесор	durchgezogen: Grafikkarte, gestrichelt: Prozessor
+0 мин	0 min	0 хв	0 Min.
+Что ограничивает	What limits the FPS	Що обмежує	Was die FPS begrenzt
+Монитор	Monitor	Монітор	Monitor
+{v} Гц	{v} Hz	{v} Гц	{v} Hz
+Окно игры	Game window	Вікно гри	Spielfenster
+Заметка к сессии	Session note	Нотатка до сесії	Notiz zur Sitzung
+Настройки графики знает только сама игра — запиши их здесь, чтобы потом сравнивать сессии.	Only the game knows its graphics settings: write them here to compare sessions later.	Налаштування графіки знає тільки сама гра — запиши їх тут, щоб потім порівнювати сесії.	Die Grafikeinstellungen kennt nur das Spiel: notiere sie hier, um Sitzungen später zu vergleichen.
+Например: 1440p, ультра, DLSS «Качество»	For example: 1440p, ultra, DLSS Quality	Наприклад: 1440p, ультра, DLSS «Якість»	Zum Beispiel: 1440p, Ultra, DLSS Qualität
+FPS держится у частоты монитора: его ограничивает вертикальная синхронизация или лимит кадров, а не железо.	The FPS stays at the monitor's refresh rate: V-Sync or a frame limit holds it, not the hardware.	FPS тримається біля частоти монітора: його обмежує вертикальна синхронізація або ліміт кадрів, а не залізо.	Die FPS bleiben bei der Bildwiederholrate: V-Sync oder ein Bildlimit begrenzt sie, nicht die Hardware.
+Видеокарта загружена почти всё время, процессор — меньше. FPS упирается в видеокарту: снизить разрешение или качество графики даст больше, чем что-то с процессором.	The graphics card is busy almost all the time, the processor less. The FPS is limited by the graphics card: a lower resolution or graphics quality helps more than anything about the processor.	Відеокарта завантажена майже весь час, процесор — менше. FPS упирається у відеокарту: знизити роздільність або якість графіки дасть більше, ніж щось із процесором.	Die Grafikkarte ist fast immer ausgelastet, der Prozessor weniger. Die Grafikkarte begrenzt die FPS: eine niedrigere Auflösung oder Grafikqualität bringt mehr als alles am Prozessor.
+Процессор загружен сильнее видеокарты. FPS упирается в процессор: помогут настройки, которые его разгружают (дальность прорисовки, толпы, физика).	The processor is busier than the graphics card. The FPS is limited by the processor: settings that ease it help (view distance, crowds, physics).	Процесор завантажений сильніше за відеокарту. FPS упирається в процесор: допоможуть налаштування, які його розвантажують (дальність промальовування, натовпи, фізика).	Der Prozessor ist stärker ausgelastet als die Grafikkarte. Er begrenzt die FPS: Einstellungen, die ihn entlasten, helfen (Sichtweite, Menschenmengen, Physik).
+Нагрузку во время этой сессии записать не удалось.	The load could not be recorded during this session.	Навантаження під час цієї сесії записати не вдалося.	Die Last konnte in dieser Sitzung nicht aufgezeichnet werden.
+Ни видеокарта, ни процессор не загружены полностью. FPS может ограничивать сама игра (лимит кадров), один поток процессора, память или диск.	Neither the graphics card nor the processor is fully busy. The game itself (a frame limit), one processor thread, memory or the disk may limit the FPS.	Ні відеокарта, ні процесор не завантажені повністю. FPS може обмежувати сама гра (ліміт кадрів), один потік процесора, пам'ять або диск.	Weder Grafikkarte noch Prozessor sind voll ausgelastet. Das Spiel selbst (Bildlimit), ein Prozessorthread, Speicher oder Festplatte können die FPS begrenzen.
+{n} подтормаживаний длиннее {v} мс	{n} stutters longer than {v} ms	{n} підгальмовувань довших за {v} мс	{n} Ruckler länger als {v} ms
+, {k} из них — в первые 2 минуты	, {k} of them in the first 2 minutes	, {k} з них — у перші 2 хвилини	, {k} davon in den ersten 2 Minuten

@@ -135,7 +135,7 @@ pub fn rgb(c: (u8, u8, u8)) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
 }
 
-fn alpha(c: Color32, a: u8) -> Color32 {
+pub(crate) fn alpha(c: Color32, a: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
@@ -146,7 +146,7 @@ pub fn panel(p: &Painter, r: Rect) {
 }
 
 /// Pieces of text in a row from `pos` (left, baseline-ish top); returns the end x.
-fn run(p: &Painter, pos: Pos2, parts: &[(String, FontId, Color32)]) -> f32 {
+pub(crate) fn run(p: &Painter, pos: Pos2, parts: &[(String, FontId, Color32)]) -> f32 {
     let mut x = pos.x;
     // align the bottoms: the largest piece decides the line
     let tallest = parts.iter().map(|(_, f, _)| f.size).fold(0.0, f32::max);
@@ -160,12 +160,12 @@ fn run(p: &Painter, pos: Pos2, parts: &[(String, FontId, Color32)]) -> f32 {
     x
 }
 
-fn text_w(p: &Painter, t: &str, f: FontId) -> f32 {
+pub(crate) fn text_w(p: &Painter, t: &str, f: FontId) -> f32 {
     p.layout_no_wrap(t.to_string(), f, pal().text).size().x
 }
 
 /// Text cut with "…" to `max` px.
-fn fit(p: &Painter, t: &str, f: &FontId, max: f32) -> String {
+pub(crate) fn fit(p: &Painter, t: &str, f: &FontId, max: f32) -> String {
     if text_w(p, t, f.clone()) <= max {
         return t.to_string();
     }
@@ -242,7 +242,7 @@ fn segments(ui: &mut Ui, right_top: Pos2, items: &[String], selected: usize, id:
 }
 
 /// A link-like piece of text; true when clicked.
-fn link(ui: &mut Ui, pos: Pos2, anchor: Align2, t: &str, id: &str) -> bool {
+pub(crate) fn link(ui: &mut Ui, pos: Pos2, anchor: Align2, t: &str, id: &str) -> bool {
     let p = ui.painter().clone();
     let r = p.text(pos, anchor, t, text_font(13.0), pal().accent);
     let resp = ui.interact(r.expand(3.0), ui.scope_id().with(id), Sense::click());
