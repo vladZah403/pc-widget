@@ -110,6 +110,19 @@ fn fmt_play_time(s: f64) -> String {
     }
 }
 
+/// The settings; the first time 2.0 runs, 1.8's widget_config.json is taken
+/// over (and left where it is).
+fn load_or_migrate(path: &std::path::Path) -> Config {
+    if !path.exists()
+        && let Ok(text) = std::fs::read_to_string(data_dir().join("widget_config.json"))
+        && let Some(c) = Config::from_1_8_json(&text)
+    {
+        let _ = c.save(path);
+        return c;
+    }
+    Config::load(path)
+}
+
 /// The history database, with 1.8's history.csv taken in the first time.
 fn open_history() -> Option<pcm_core::history::History> {
     use pcm_core::history::{CSV_1_8, FILE, History};
@@ -2019,7 +2032,7 @@ pub fn run(report: Option<String>) -> i32 {
         }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let cfg_path = data_dir().join("config-2.toml");
-        let cfg = Config::load(&cfg_path);
+        let cfg = load_or_migrate(&cfg_path);
         crate::apply_language(&cfg.lang);
         let shared = Shared::new(cfg.ping_host.clone());
 

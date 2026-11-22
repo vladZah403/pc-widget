@@ -132,6 +132,12 @@ pub struct Config {
     pub auto_game: bool,
     /// One of LANGS.
     pub lang: String,
+    /// Temperatures need the sensor helper with admin rights (1.8's run_as_admin).
+    pub run_as_admin: bool,
+    /// Look for a new version every 6 hours.
+    pub check_updates: bool,
+    /// The newest version the user has been told about.
+    pub update_seen: String,
     /// The saved look of each profile (last: TOML puts tables after values).
     pub profiles: BTreeMap<String, ProfileView>,
 }
@@ -171,6 +177,9 @@ impl Default for Config {
             profile: "work".into(),
             auto_game: true,
             lang: "auto".into(),
+            run_as_admin: false,
+            check_updates: true,
+            update_seen: String::new(),
             profiles: BTreeMap::new(),
         }
     }
@@ -319,6 +328,56 @@ impl Config {
         true
     }
 
+    /// 1.8's widget_config.json as 2.0 settings (None if it isn't JSON). The
+    /// same names mean the same things; 1.8's single tray icon becomes the CPU
+    /// one, its taskbar on/off a definite choice. Then checked like any file.
+    pub fn from_1_8_json(text: &str) -> Option<Config> {
+        let v: serde_json::Value = serde_json::from_str(text).ok()?;
+        let o = v.as_object()?;
+        let mut c = Config::default();
+        let b = |k: &str| o.get(k).and_then(|x| x.as_bool());
+        let n = |k: &str| o.get(k).and_then(|x| x.as_f64());
+        let s = |k: &str| o.get(k).and_then(|x| x.as_str()).map(str::to_string);
+        let u = |k: &str| n(k).filter(|v| *v >= 0.0).map(|v| v.round() as u32);
+        if let (Some(x), Some(y)) = (n("x"), n("y")) {
+            (c.x, c.y) = (Some(x.round() as i32), Some(y.round() as i32));
+        }
+        macro_rules! take {
+            ($($field:ident: $get:ident),* $(,)?) => {
+                $(if let Some(v) = $get(stringify!($field)) { c.$field = v.into(); })*
+            };
+        }
+        take!(
+            topmost: b, pinned: b, alerts: b, compact: b, run_as_admin: b, check_updates: b, fps: b,
+            fps_panel: b, auto_game: b, quiet_games: b, tucked: b,
+            theme: s, ping_host: s, lang: s, in_games: s, fps_corner: s, profile: s, update_seen: s,
+            alert_temp: u, alert_ram: u, alert_battery: u, alert_disk: u, size: u, width: u, stretch: u,
+            fps_size: u,
+        );
+        if let Some(a) = n("alpha") {
+            c.alpha = a as f32;
+        }
+        c.taskbar = b("taskbar").or(c.taskbar);
+        if let Some(list) = o.get("custom_colors").and_then(|x| x.as_array())
+            && let [lo, hi] = list.as_slice()
+            && let (Some(lo), Some(hi)) = (lo.as_str(), hi.as_str())
+        {
+            c.custom_colors = [lo.to_string(), hi.to_string()];
+        }
+        if let Some(list) = o.get("hidden").and_then(|x| x.as_array()) {
+            c.hidden = list.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+        }
+        if let Some(map) = o.get("profiles").and_then(|x| x.as_object()) {
+            for (name, view) in map {
+                if let Ok(v) = serde_json::from_value::<ProfileView>(view.clone()) {
+                    c.profiles.insert(name.clone(), v);
+                }
+            }
+        }
+        c.sanitize();
+        Some(c)
+    }
+
     /// Settings from TOML text; a broken file gives the defaults.
     pub fn parse(text: &str) -> Config {
         let mut c: Config = toml::from_str(text).unwrap_or_default();
@@ -375,6 +434,37 @@ mod tests {
         assert_eq!((f.fps_corner.as_str(), f.fps_size), ("tl", 100));
         assert_eq!(Config::parse("fps_corner = \"br\"").fps_corner, "br");
         assert_eq!(Config::parse("profile = \"party\"").profile, "work");
+    }
+
+    #[test]
+    fn settings_of_1_8() {
+        let json = r##"{"x": 1326, "y": 282, "topmost": true, "alpha": 0.97, "theme": "heat",
+            "custom_colors": ["#00ffff", "#0000ff"], "pinned": false, "taskbar": true, "alerts": true,
+            "compact": true, "run_as_admin": true, "hidden": ["uptime", "nonsense"], "alert_temp": 85,
+            "alert_ram": 90, "alert_battery": 15, "check_updates": true, "update_seen": "1.8.1",
+            "tray": true, "ping_host": "8.8.8.8", "fps": true, "lang": "auto", "in_games": "dim",
+            "size": 125, "width": 528, "stretch": 40, "alert_disk": 10, "fps_panel": false,
+            "fps_corner": "br", "fps_size": 150, "profile": "game",
+            "profiles": {"game": {"compact": false, "hidden": ["uptime"], "size": 100, "width": 264,
+                "stretch": 0, "theme": "neon", "alpha": 0.9, "taskbar": true, "pinned": false,
+                "topmost": true}},
+            "auto_game": false, "quiet_games": true, "tucked": false, "something_new": 1}"##;
+        let c = Config::from_1_8_json(json).unwrap();
+        assert_eq!((c.x, c.y), (Some(1326), Some(282)));
+        assert_eq!((c.pinned, c.compact, c.run_as_admin, c.auto_game), (false, true, true, false));
+        assert!((c.alpha - 0.97).abs() < 1e-6);
+        assert_eq!(c.custom_colors, ["#00ffff".to_string(), "#0000ff".to_string()]);
+        assert_eq!(c.hidden, vec!["uptime".to_string()], "unknown rows dropped");
+        assert_eq!((c.alert_temp, c.size, c.width, c.stretch), (85, 125, 528, 40));
+        assert_eq!((c.ping_host.as_str(), c.in_games.as_str()), ("8.8.8.8", "dim"));
+        assert_eq!((c.fps_panel, c.fps_corner.as_str(), c.fps_size), (false, "br", 150));
+        assert_eq!((c.profile.as_str(), c.update_seen.as_str()), ("game", "1.8.1"));
+        assert_eq!(c.taskbar, Some(true));
+        assert_eq!(c.profiles["game"].theme, "neon");
+        assert_eq!(c.tray, vec!["cpu".to_string()]);
+        assert!(Config::from_1_8_json("not json").is_none());
+        let odd = Config::from_1_8_json(r#"{"size": 999, "theme": "pink", "x": 5}"#).unwrap();
+        assert_eq!((odd.size, odd.theme.as_str(), odd.x), (200, "heat", None), "checked like a file");
     }
 
     #[test]
