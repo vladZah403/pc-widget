@@ -118,3 +118,22 @@ pub fn local_time() -> String {
     unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t) };
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
 }
+
+/// Unix seconds as local time, "2026-11-22 13:05:41".
+pub fn local_time_of(unix: i64) -> String {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    let ft100 = (unix.max(0) + 11_644_473_600) as u64 * 10_000_000;
+    let ft = FILETIME { dwLowDateTime: ft100 as u32, dwHighDateTime: (ft100 >> 32) as u32 };
+    let (mut utc, mut t) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+    unsafe {
+        FileTimeToSystemTime(&ft, &mut utc);
+        SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut t);
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+/// Unix seconds now.
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}

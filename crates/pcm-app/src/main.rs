@@ -9,6 +9,7 @@
 
 mod alerts;
 mod collect;
+mod dash_history;
 mod dashboard;
 mod diag;
 mod game;
@@ -22,7 +23,8 @@ mod widget_win;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--dashboard") {
-        std::process::exit(dashboard::run());
+        let tab = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)?.parse().ok());
+        std::process::exit(dashboard::run(tab.unwrap_or(0)));
     }
     if args.iter().any(|a| a == "--diag") {
         std::process::exit(diag::run(&args));

@@ -15,6 +15,8 @@ use pcm_render::theme::{Theme, hex};
 use pcm_render::widget::Data;
 use serde::{Deserialize, Serialize};
 
+use crate::dash_history::HistoryTab;
+
 /// What the widget sends, one per line.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ToDashboard {
@@ -37,6 +39,8 @@ const GAP: f32 = 12.0;
 struct Feed {
     data: Option<Data>,
     theme: Option<Theme>,
+    /// The theme's name and colours, to know when charts need drawing again.
+    theme_key: String,
     /// Bumped with every new feed: the cards are drawn again.
     seq: u64,
     focus: bool,
@@ -76,6 +80,7 @@ struct Dashboard {
     cards: Vec<Option<egui::TextureHandle>>,
     /// The feed and the scale the textures were drawn for.
     drawn: (u64, f32),
+    history: HistoryTab,
 }
 
 impl Dashboard {
@@ -91,7 +96,14 @@ impl Dashboard {
         // always dark, whatever the Windows theme
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx.set_visuals_of(egui::Theme::Dark, v);
-        Dashboard { feed, tab: 0, fonts: Fonts::system(), cards: vec![None; CARDS.len()], drawn: (0, 0.0) }
+        Dashboard {
+            feed,
+            tab: 0,
+            fonts: Fonts::system(),
+            cards: vec![None; CARDS.len()],
+            drawn: (0, 0.0),
+            history: HistoryTab::default(),
+        }
     }
 
     /// Draw the cards again for a new feed or a new DPI.
@@ -165,6 +177,13 @@ impl eframe::App for Dashboard {
             ui.add_space(16.0);
             match self.tab {
                 0 => self.overview(ui),
+                2 => {
+                    let (theme, key) = {
+                        let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+                        (f.theme.clone(), f.theme_key.clone())
+                    };
+                    self.history.ui(ui, &mut self.fonts, theme.as_ref(), &key);
+                }
                 n => {
                     ui.label(
                         RichText::new(format!("«{}» появится в следующих частях этапа 5.", TABS[n]))
@@ -178,8 +197,9 @@ impl eframe::App for Dashboard {
     }
 }
 
-/// Run the window until it is closed or the widget goes away. Returns the exit code.
-pub fn run() -> i32 {
+/// Run the window (on tab `tab`) until it is closed or the widget goes
+/// away. Returns the exit code.
+pub fn run(tab: usize) -> i32 {
     let feed = Arc::new(Mutex::new(Feed::default()));
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     {
@@ -196,6 +216,7 @@ pub fn run() -> i32 {
                             ToDashboard::Feed { data, theme, custom } => {
                                 f.data = Some(*data);
                                 f.theme = Some(theme_of(&theme, &custom));
+                                f.theme_key = format!("{theme}{custom:?}");
                                 f.seq += 1;
                             }
                             ToDashboard::Focus => f.focus = true,
@@ -228,7 +249,9 @@ pub fn run() -> i32 {
             if let Ok(mut c) = ctx_slot.lock() {
                 *c = Some(cc.egui_ctx.clone());
             }
-            Ok(Box::new(Dashboard::new(cc, feed)))
+            let mut d = Dashboard::new(cc, feed);
+            d.tab = tab.min(TABS.len() - 1);
+            Ok(Box::new(d))
         }),
     );
     if result.is_err() { 1 } else { 0 }

@@ -5,6 +5,7 @@
 pub mod config;
 pub mod frames;
 pub mod gpu_engines;
+pub mod history;
 pub mod merge;
 pub mod model;
 pub mod nvme;

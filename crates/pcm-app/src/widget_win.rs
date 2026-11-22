@@ -109,6 +109,20 @@ fn fmt_play_time(s: f64) -> String {
     }
 }
 
+/// The history database, with 1.8's history.csv taken in the first time.
+fn open_history() -> Option<pcm_core::history::History> {
+    use pcm_core::history::{CSV_1_8, FILE, History};
+    let dir = data_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let mut h = History::open(&dir.join(FILE)).ok()?;
+    if h.count().ok()? == 0
+        && let Ok(text) = std::fs::read_to_string(dir.join(CSV_1_8))
+    {
+        let _ = h.import_csv_1_8(&text);
+    }
+    Some(h)
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -238,6 +252,11 @@ struct App {
     auto_switched: bool,
     back_to: String,
     dashboard: Option<DashboardProc>,
+    /// The history database (None if it can't be opened) and when it got
+    /// its last point / was last trimmed (unix s).
+    history: Option<pcm_core::history::History>,
+    history_last: i64,
+    history_trimmed: i64,
 }
 
 thread_local! {
@@ -248,7 +267,7 @@ fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
     APP.with(|a| a.try_borrow_mut().ok()?.as_mut().map(f))
 }
 
-fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("PC-Monitor")
 }
 
@@ -877,6 +896,41 @@ impl App {
         let _ = self.cfg.save(&self.cfg_path);
     }
 
+    // --- the history ---
+
+    /// A point every STEP_S seconds: the averages of the last ones (like 1.8).
+    fn record_history(&mut self) {
+        use pcm_core::history::{Point, STEP_S};
+        let now = pcm_win::system::unix_now();
+        if now - self.history_last < STEP_S {
+            return;
+        }
+        let (Some(h), Some(d)) = (&self.history, &self.data) else { return };
+        self.history_last = now;
+        let cpu_recent = &d.cpu_hist[d.cpu_hist.len().saturating_sub(STEP_S as usize)..];
+        let cpu = if cpu_recent.is_empty() {
+            d.cpu
+        } else {
+            cpu_recent.iter().sum::<f32>() / cpu_recent.len() as f32
+        };
+        let net = &d.net_hist[d.net_hist.len().saturating_sub(STEP_S as usize)..];
+        let n = net.len().max(1) as f64;
+        let (down, up) = if net.is_empty() {
+            (None, None)
+        } else {
+            (Some(net.iter().map(|x| x.0).sum::<f64>() / n), Some(net.iter().map(|x| x.1).sum::<f64>() / n))
+        };
+        // an integrated GPU without its own sensor runs at the CPU's temperature
+        let gpu_t = d.temp_gpu.or(if d.gpu_shared { d.temp_cpu } else { None });
+        let p =
+            Point { t: now, cpu, cpu_t: d.temp_cpu, gpu_t, gpu: d.gpu_load, ram: Some(d.ram_pct), down, up };
+        let _ = h.add(&p);
+        if now - self.history_trimmed >= 3600 {
+            self.history_trimmed = now;
+            let _ = h.trim(now);
+        }
+    }
+
     // --- the PC Monitor window ---
 
     /// Open the window, or bring it to the front if it is open.
@@ -1396,6 +1450,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.update_panel();
                 a.check_alerts();
                 a.feed_dashboard();
+                a.record_history();
             });
             0
         }
@@ -1994,6 +2049,9 @@ pub fn run(report: Option<String>) -> i32 {
                 auto_switched: false,
                 back_to: "work".into(),
                 dashboard: None,
+                history: open_history(),
+                history_last: 0,
+                history_trimmed: 0,
             })
         });
         collect::start(shared.clone());
