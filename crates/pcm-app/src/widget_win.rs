@@ -980,8 +980,105 @@ impl App {
                     }
                     pcm_win::processes::end_program(&name, &keep);
                 }
+                FromDashboard::SetConfig(c) => self.apply_settings(*c),
+                FromDashboard::ResetShape => {
+                    (self.cfg.width, self.cfg.stretch) = (config::WIDTH_STD, 0);
+                    self.save();
+                    self.present();
+                }
+                FromDashboard::ResetPosition => self.reset_position(),
+                FromDashboard::SaveProfile => {
+                    let name = self.cfg.profile.clone();
+                    let view = self.cfg.view();
+                    self.cfg.profiles.insert(name, view);
+                    self.save();
+                }
             }
         }
+        self.feed_dashboard(); // the window sees the result at once
+    }
+
+    /// Settings from the window: only what can be set there is taken (not
+    /// the position, the tab, the saved profiles), then each change is applied.
+    fn apply_settings(&mut self, new: Config) {
+        let old = self.cfg.clone();
+        let mut c = old.clone();
+        c.widget = new.widget;
+        c.pinned = new.pinned;
+        c.topmost = new.topmost;
+        c.compact = new.compact;
+        c.size = new.size;
+        c.alpha = new.alpha;
+        c.theme = new.theme;
+        c.custom_colors = new.custom_colors;
+        c.hidden = new.hidden;
+        c.tray = new.tray;
+        c.taskbar = new.taskbar;
+        c.in_games = new.in_games;
+        c.fps_panel = new.fps_panel;
+        c.fps_corner = new.fps_corner;
+        c.fps_size = new.fps_size;
+        c.auto_game = new.auto_game;
+        c.alerts = new.alerts;
+        c.quiet_games = new.quiet_games;
+        c.alert_temp = new.alert_temp;
+        c.alert_ram = new.alert_ram;
+        c.alert_battery = new.alert_battery;
+        c.alert_disk = new.alert_disk;
+        c.ping_host = new.ping_host;
+        c.sanitize();
+        self.cfg = c;
+        self.save();
+        if self.cfg.pinned != old.pinned || self.cfg.topmost != old.topmost {
+            self.apply_pin();
+        }
+        if self.cfg.tray != old.tray {
+            self.update_tray();
+        }
+        if self.cfg.taskbar != old.taskbar {
+            self.update_panel();
+        }
+        if self.cfg.ping_host != old.ping_host
+            && let Ok(mut h) = self.shared.ping_host.lock()
+        {
+            *h = self.cfg.ping_host.clone();
+        }
+        if self.cfg.in_games != old.in_games {
+            self.check_games();
+        }
+        if new.fps != old.fps {
+            self.set_fps(new.fps);
+        } else if (&self.cfg.fps_corner, self.cfg.fps_size, self.cfg.fps_panel)
+            != (&old.fps_corner, old.fps_size, old.fps_panel)
+        {
+            self.fps_tick();
+        }
+        if new.profile != old.profile {
+            self.switch_profile(&new.profile, false);
+        }
+        if self.cfg.widget != old.widget {
+            let on = self.cfg.widget;
+            self.set_widget(on);
+        } else {
+            self.present();
+        }
+    }
+
+    /// The widget back to the top-right corner of the screen (1.8's _reset_position).
+    fn reset_position(&mut self) {
+        let mut wa = RECT::default();
+        unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut _ as *mut _, 0) };
+        let (x, y) = (wa.right - self.size_px.0 - SNAP_GAP, wa.top + SNAP_GAP);
+        if self.cfg.tucked {
+            self.cfg.x = Some(x);
+            self.cfg.y = Some(y);
+        } else {
+            unsafe {
+                SetWindowPos(self.hwnd, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+            };
+            self.remember_position();
+        }
+        self.save();
     }
 
     /// The latest readings to the window, if it is open.
@@ -997,6 +1094,7 @@ impl App {
             data: Box::new(data.clone()),
             theme: self.cfg.theme.clone(),
             custom: self.cfg.custom_colors.clone(),
+            cfg: Box::new(self.cfg.clone()),
         };
         if !d.send(&msg) {
             self.dashboard = None;

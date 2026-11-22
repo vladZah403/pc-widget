@@ -12,6 +12,7 @@ mod collect;
 mod dash_history;
 mod dash_procs;
 mod dash_sessions;
+mod dash_settings;
 mod dashboard;
 mod diag;
 mod game;
@@ -26,7 +27,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--dashboard") {
         let tab = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)?.parse().ok());
-        std::process::exit(dashboard::run(tab.unwrap_or(0)));
+        let offscreen = args.iter().any(|a| a == "--offscreen");
+        let shot = args.iter().position(|a| a == "--screenshot").and_then(|i| args.get(i + 1)).cloned();
+        std::process::exit(dashboard::run(tab.unwrap_or(0), offscreen, shot));
     }
     if args.iter().any(|a| a == "--diag") {
         std::process::exit(diag::run(&args));

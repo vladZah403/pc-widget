@@ -18,12 +18,13 @@ use serde::{Deserialize, Serialize};
 use crate::dash_history::HistoryTab;
 use crate::dash_procs::ProcsTab;
 use crate::dash_sessions::SessionsTab;
+use crate::dash_settings::SettingsTab;
 
 /// What the widget sends, one per line.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ToDashboard {
     /// The latest readings and the colours to draw them in.
-    Feed { data: Box<Data>, theme: String, custom: [String; 2] },
+    Feed { data: Box<Data>, theme: String, custom: [String; 2], cfg: Box<pcm_core::config::Config> },
     /// "Открыть PC Monitor" again: come to the front.
     Focus,
 }
@@ -35,6 +36,12 @@ pub enum FromDashboard {
     WantProcs(bool),
     /// End this program (all its processes), as the widget's × does.
     EndProgram(String),
+    /// The settings as the window left them (the widget takes what can be set there).
+    SetConfig(Box<pcm_core::config::Config>),
+    /// The widget's standard shape / back to the top-right corner / remember the look.
+    ResetShape,
+    ResetPosition,
+    SaveProfile,
 }
 
 /// Ask the widget something.
@@ -59,6 +66,7 @@ const GAP: f32 = 12.0;
 struct Feed {
     data: Option<Data>,
     theme: Option<Theme>,
+    cfg: Option<pcm_core::config::Config>,
     /// The theme's name and colours, to know when charts need drawing again.
     theme_key: String,
     /// Bumped with every new feed: the cards are drawn again.
@@ -103,6 +111,9 @@ struct Dashboard {
     history: HistoryTab,
     procs: ProcsTab,
     sessions: SessionsTab,
+    settings: SettingsTab,
+    /// `--screenshot FILE`: save the window's own pixels once fed, then close.
+    shot: Option<(String, Option<std::time::Instant>)>,
 }
 
 impl Dashboard {
@@ -127,6 +138,8 @@ impl Dashboard {
             history: HistoryTab::default(),
             procs: ProcsTab::default(),
             sessions: SessionsTab::default(),
+            settings: SettingsTab::default(),
+            shot: None,
         }
     }
 
@@ -177,9 +190,39 @@ impl Dashboard {
     }
 }
 
+impl Dashboard {
+    /// Two seconds after the first feed (the tab has drawn), take the
+    /// window's own pixels: works off screen too, unlike PrintWindow.
+    fn screenshot(&mut self, ctx: &egui::Context) {
+        let fed = self.feed.lock().map(|f| f.seq > 0).unwrap_or(false);
+        let Some((path, since)) = &mut self.shot else { return };
+        if !fed {
+            return;
+        }
+        let since = *since.get_or_insert_with(std::time::Instant::now);
+        if since.elapsed() < Duration::from_secs(2) {
+            ctx.request_repaint_after(Duration::from_millis(200));
+            return;
+        }
+        let path = path.clone();
+        self.shot = None;
+        let c = ctx.clone();
+        ctx.request_screenshot(move |img| {
+            let bytes: Vec<u8> = img.pixels.iter().flat_map(|p| p.to_array()).collect();
+            let size = tiny_skia::IntSize::from_wh(img.size[0] as u32, img.size[1] as u32);
+            if let Some(pm) = size.and_then(|s| tiny_skia::Pixmap::from_vec(bytes, s)) {
+                let _ = pm.save_png(&path);
+            }
+            c.send_viewport_cmd(egui::ViewportCommand::Close);
+            c.request_repaint();
+        });
+    }
+}
+
 impl eframe::App for Dashboard {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.screenshot(&ctx);
         let focus = std::mem::take(&mut self.feed.lock().unwrap_or_else(|e| e.into_inner()).focus);
         if focus {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -212,6 +255,10 @@ impl eframe::App for Dashboard {
                     };
                     self.procs.ui(ui, rows.as_ref(), sc.as_ref());
                 }
+                4 => {
+                    let cfg = self.feed.lock().unwrap_or_else(|e| e.into_inner()).cfg.clone();
+                    self.settings.ui(ui, cfg.as_ref());
+                }
                 3 => {
                     let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
                     self.sessions.ui(ui, &mut self.fonts, theme.as_ref());
@@ -238,7 +285,9 @@ impl eframe::App for Dashboard {
 
 /// Run the window (on tab `tab`) until it is closed or the widget goes
 /// away. Returns the exit code.
-pub fn run(tab: usize) -> i32 {
+/// `offscreen`: far off the screen and not focused; `screenshot`: save the
+/// window as PNG and close (both for tests).
+pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>) -> i32 {
     let feed = Arc::new(Mutex::new(Feed::default()));
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     {
@@ -252,8 +301,9 @@ pub fn run(tab: usize) -> i32 {
                     let Ok(msg) = serde_json::from_str::<ToDashboard>(&line) else { continue };
                     if let Ok(mut f) = feed.lock() {
                         match msg {
-                            ToDashboard::Feed { data, theme, custom } => {
+                            ToDashboard::Feed { data, theme, custom, cfg } => {
                                 f.data = Some(*data);
+                                f.cfg = Some(*cfg);
                                 f.theme = Some(theme_of(&theme, &custom));
                                 f.theme_key = format!("{theme}{custom:?}");
                                 f.seq += 1;
@@ -273,14 +323,14 @@ pub fn run(tab: usize) -> i32 {
             })
             .ok();
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([4.0 * CARD_W + 3.0 * GAP + 40.0, 2.0 * CARD_H + GAP + 120.0])
-            .with_min_inner_size([CARD_W + 40.0, 360.0])
-            .with_title("PC Monitor"),
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([4.0 * CARD_W + 3.0 * GAP + 40.0, 2.0 * CARD_H + GAP + 120.0])
+        .with_min_inner_size([CARD_W + 40.0, 360.0])
+        .with_title("PC Monitor");
+    if offscreen {
+        viewport = viewport.with_position([-6000.0, -6000.0]).with_active(false);
+    }
+    let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Glow, ..Default::default() };
     let result = eframe::run_native(
         "PC Monitor",
         options,
@@ -290,6 +340,7 @@ pub fn run(tab: usize) -> i32 {
             }
             let mut d = Dashboard::new(cc, feed);
             d.tab = tab.min(TABS.len() - 1);
+            d.shot = screenshot.map(|p| (p, None));
             Ok(Box::new(d))
         }),
     );
@@ -303,8 +354,12 @@ mod tests {
     #[test]
     fn lines_both_ways() {
         // the widget's lines for the window and back, as they go through the pipes
-        let feed =
-            ToDashboard::Feed { data: Box::default(), theme: "ice".into(), custom: Default::default() };
+        let feed = ToDashboard::Feed {
+            data: Box::default(),
+            theme: "ice".into(),
+            custom: Default::default(),
+            cfg: Box::default(),
+        };
         let line = serde_json::to_string(&feed).unwrap();
         assert!(!line.contains('\n'));
         assert!(matches!(serde_json::from_str(&line), Ok(ToDashboard::Feed { theme, .. }) if theme == "ice"));
@@ -313,7 +368,8 @@ mod tests {
         assert_eq!(ask, r#"{"EndProgram":"chrome"}"#);
         assert!(matches!(serde_json::from_str(r#"{"WantProcs":true}"#), Ok(FromDashboard::WantProcs(true))));
         // a partial feed still reads (missing readings = defaults)
-        let partial = r##"{"Feed":{"data":{"cpu":12.5},"theme":"heat","custom":["#000000","#ffffff"]}}"##;
+        let partial =
+            r##"{"Feed":{"data":{"cpu":12.5},"theme":"heat","custom":["#000000","#ffffff"],"cfg":{}}}"##;
         assert!(
             matches!(serde_json::from_str(partial), Ok(ToDashboard::Feed { data, .. }) if data.cpu == 12.5)
         );
