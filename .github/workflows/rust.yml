@@ -1,12 +1,20 @@
 # PC Monitor 2.0 (Rust): checks every push to the v2 branch and pull requests.
 # fmt, clippy and the tests, then a release build of PC-Monitor.exe and the
 # sensor helper, and `PC-Monitor.exe --diag` on GitHub's Windows machine.
+# A pushed tag v2.* does the same, then publishes a PRE-release with the zip
+# and the setup (notes: docs/releases/<tag>.md). It is unsigned: 2.0 never
+# installs it and 1.8 never sees pre-releases. The signature, made on Vlad's
+# PC, comes with signatures/<tag>.minisig (release-signature.yml).
 name: Rust
 
 on:
   push:
     branches: [v2]
+    tags: ["v2.*"]
   pull_request:
+
+permissions:
+  contents: write  # only to create the release
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +27,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check that the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v2.')
+        shell: bash
+        run: |
+          have=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          [ "v$have" = "$GITHUB_REF_NAME" ] || { echo "Cargo.toml says $have, the tag is $GITHUB_REF_NAME"; exit 1; }
+          [ -f "docs/releases/$GITHUB_REF_NAME.md" ] || { echo "no docs/releases/$GITHUB_REF_NAME.md"; exit 1; }
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -180,3 +196,13 @@ jobs:
             dist2/PC-Monitor.zip
             dist2/PC-Monitor-Setup.exe
           retention-days: 14
+
+      - name: Publish the pre-release (unsigned until signatures/<tag>.minisig comes)
+        if: startsWith(github.ref, 'refs/tags/v2.')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          gh release create "$tag" dist2/PC-Monitor.zip dist2/PC-Monitor-Setup.exe --prerelease \
+            --title "PC Monitor ${tag#v}" --notes-file "docs/releases/$tag.md"

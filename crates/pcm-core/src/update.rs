@@ -105,8 +105,11 @@ pub fn newer_release(info: &Value, current: &str) -> Option<Release> {
         return None;
     }
     let got = parse_version(info.get("tag_name")?.as_str()?)?;
-    let have = parse_version(current)?;
-    if !newer(&got, &have) {
+    // a beta ("2.0.0-beta.1") is older than its release ("2.0.0")
+    let (have, beta) = current.split_once('-').map_or((current, false), |(n, _)| (n, true));
+    let have = parse_version(have)?;
+    let same = !newer(&got, &have) && !newer(&have, &got);
+    if !(newer(&got, &have) || (beta && same)) {
         return None;
     }
     let page = info
@@ -220,6 +223,8 @@ mod tests {
         assert!(r.installable());
         assert_eq!(r.zip.unwrap().size, 7_000_000);
         assert!(newer_release(&info, "2.0.1").is_none(), "the same version is not newer");
+        assert!(newer_release(&info, "2.0.1-beta.2").is_some(), "a beta gets its release");
+        assert!(newer_release(&info, "2.0.2-beta.1").is_none());
     }
 
     #[test]

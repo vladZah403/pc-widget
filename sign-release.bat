@@ -5,7 +5,12 @@ rem   %USERPROFILE%\.pcm-release-key\pc-monitor.key  (+ pc-monitor.pub)
 rem Its public half is pcm_core::update::PUBLIC_KEY; the program installs an
 rem update only with a valid signature. Needs rsign2 (cargo install rsign2).
 rem   sign-release.bat path\to\PC-Monitor.zip 2.0.1
-rem writes PC-Monitor.zip.minisig next to the zip: upload both to the release.
+rem writes PC-Monitor.zip.minisig next to the zip.
+rem The release flow: push a tag v2.x (Cargo version + docs/releases/TAG.md), then
+rem CI publishes a pre-release with the zip and the setup; download that zip
+rem (https://github.com/vladZah403/pc-widget/releases/download/TAG/PC-Monitor.zip),
+rem sign it here, commit the signature as signatures\TAG.minisig and push; then
+rem release-signature.yml checks it and attaches it (a final tag becomes latest).
 setlocal
 set KEY=%USERPROFILE%\.pcm-release-key
 set RSIGN=%USERPROFILE%\.cargo\bin\rsign.exe

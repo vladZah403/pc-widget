@@ -1,0 +1,46 @@
+# PC Monitor 2.0: the release signature. Vlad's PC signs a release's
+# PC-Monitor.zip with the release key (sign-release.bat) and pushes it as
+# signatures/<tag>.minisig to v2. This checks it against the zip in that
+# release and the public key in the code (update::PUBLIC_KEY), and attaches it
+# as PC-Monitor.zip.minisig: only then 2.0 installs the update. A tag without
+# "-" (2.0.0, not 2.0.0-beta.1) then becomes the latest release, the one 1.8
+# and 2.0 update to.
+name: Release signature
+
+on:
+  push:
+    branches: [v2]
+    paths: ["signatures/*.minisig"]
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check and attach the signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo install rsign2 --version 0.6.7 --locked --quiet
+          key=$(sed -n 's/^pub const PUBLIC_KEY: &str = "\(RW[^"]*\)".*/\1/p' crates/pcm-core/src/update.rs)
+          [ -n "$key" ] || { echo "no PUBLIC_KEY in update.rs"; exit 1; }
+          for sig in $(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'signatures/*.minisig'); do
+            tag=$(basename "$sig" .minisig)
+            dir="dl/$tag"
+            gh release download "$tag" --pattern PC-Monitor.zip --dir "$dir"
+            rsign verify -P "$key" -x "$sig" "$dir/PC-Monitor.zip"
+            cp "$sig" "$dir/PC-Monitor.zip.minisig"
+            gh release upload "$tag" "$dir/PC-Monitor.zip.minisig" --clobber
+            case "$tag" in
+              *-*) echo "$tag stays a pre-release" ;;
+              *) gh release edit "$tag" --prerelease=false --latest ;;
+            esac
+          done
