@@ -11,3 +11,5 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 serde_json = "1"
 zstd = "0.13"
 toml = "1"
+minisign-verify = "0.3"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
