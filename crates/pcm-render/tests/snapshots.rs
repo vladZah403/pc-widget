@@ -115,3 +115,15 @@ fn session_report_card() {
             .expect("render");
     check_pm("report-100", &pm);
 }
+
+#[test]
+fn dashboard_cards() {
+    use pcm_render::cards::{CARDS, card};
+    let mut fonts = Fonts::system();
+    let mut d = sample_data();
+    (d.vram_used_mb, d.vram_total_mb, d.gpu_clock) = (Some(1300.0), Some(2048.0), Some(1800.0));
+    for kind in CARDS {
+        let pm = card(&mut fonts, 1.0, kind, &d, &Theme::Heat).expect("render");
+        check_pm(&format!("card-{}", format!("{kind:?}").to_lowercase()), &pm);
+    }
+}

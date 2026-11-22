@@ -132,6 +132,37 @@ impl Canvas {
         }
     }
 
+    /// An arc around (cx, cy) of radius r from `from_deg` sweeping `sweep_deg`
+    /// (clockwise on screen, 0° = right), `width` logical px, round or flat ends.
+    pub fn arc(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r: f32,
+        from_deg: f32,
+        sweep_deg: f32,
+        width: f32,
+        round: bool,
+        c: Rgb,
+    ) {
+        let steps = ((sweep_deg.abs() / 2.0).ceil() as usize).max(1);
+        let mut pb = PathBuilder::new();
+        for i in 0..=steps {
+            let a = (from_deg + sweep_deg * i as f32 / steps as f32).to_radians();
+            let (x, y) = (self.x(cx + r * a.cos()), self.y(cy + r * a.sin()));
+            if i == 0 {
+                pb.move_to(x, y);
+            } else {
+                pb.line_to(x, y);
+            }
+        }
+        if let Some(p) = pb.finish() {
+            let cap = if round { LineCap::Round } else { LineCap::Butt };
+            let st = Stroke { width: width * self.s, line_cap: cap, ..Stroke::default() };
+            self.pm.stroke_path(&p, &paint(c), &st, Transform::identity(), None);
+        }
+    }
+
     pub fn polygon(&mut self, pts: &[(f32, f32)], c: Rgb) {
         let mut pb = PathBuilder::new();
         for (i, &(x, y)) in pts.iter().enumerate() {

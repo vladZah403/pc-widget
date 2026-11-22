@@ -1595,9 +1595,11 @@ dependencies = [
 name = "pcm-app"
 version = "0.0.0"
 dependencies = [
+ "eframe",
  "pcm-core",
  "pcm-render",
  "pcm-win",
+ "serde",
  "serde_json",
  "tiny-skia",
  "windows-sys 0.61.2",
@@ -1644,6 +1646,7 @@ name = "pcm-render"
 version = "0.0.0"
 dependencies = [
  "pcm-core",
+ "serde",
  "swash",
  "tiny-skia",
 ]

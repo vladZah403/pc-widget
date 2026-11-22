@@ -8,6 +8,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod canvas;
+pub mod cards;
 pub mod format;
 pub mod overlay;
 pub mod report;

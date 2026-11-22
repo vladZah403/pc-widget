@@ -4,10 +4,12 @@
 //! [--helper PATH] [--ping HOST]` reads every source once and prints it;
 //! `--png FILE` draws the widget with live data into a PNG (no window);
 //! `--session FILE` prints a game session's summary; `--report FILE` starts
-//! the widget with that session's report open.
+//! the widget with that session's report open; `--dashboard` is the PC
+//! Monitor window (the widget starts it and feeds it on stdin).
 
 mod alerts;
 mod collect;
+mod dashboard;
 mod diag;
 mod game;
 mod layered;
@@ -19,6 +21,9 @@ mod widget_win;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--dashboard") {
+        std::process::exit(dashboard::run());
+    }
     if args.iter().any(|a| a == "--diag") {
         std::process::exit(diag::run(&args));
     }

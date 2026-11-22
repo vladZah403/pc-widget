@@ -36,6 +36,7 @@ const WM_APP_FOLLOW: u32 = 0x8000 + 4;
 
 use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
+use crate::dashboard::ToDashboard;
 use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
 use crate::report_win::{self, Action, ReportWin};
@@ -116,6 +117,51 @@ fn inside(b: &BoxPx, x: f32, y: f32) -> bool {
     x >= b[0] && x < b[2] && y >= b[1] && y < b[3]
 }
 
+/// The PC Monitor window: a child process fed through its stdin by a
+/// writer thread (a slow window never blocks the widget).
+struct DashboardProc {
+    child: std::process::Child,
+    tx: std::sync::mpsc::Sender<String>,
+}
+
+impl DashboardProc {
+    fn start() -> Option<DashboardProc> {
+        use std::io::Write;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let exe = std::env::current_exe().ok()?;
+        let mut child = std::process::Command::new(exe)
+            .arg("--dashboard")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .ok()?;
+        let mut stdin = child.stdin.take()?;
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::Builder::new()
+            .name("dashboard-feed".into())
+            .spawn(move || {
+                for line in rx {
+                    if writeln!(stdin, "{line}").and_then(|_| stdin.flush()).is_err() {
+                        break; // the window was closed
+                    }
+                }
+            })
+            .ok()?;
+        Some(DashboardProc { child, tx })
+    }
+
+    fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn send(&self, msg: &ToDashboard) -> bool {
+        serde_json::to_string(msg).is_ok_and(|line| self.tx.send(line).is_ok())
+    }
+}
+
 /// A slide of the widget and its tab between two positions (screen px).
 #[derive(Clone, Copy)]
 struct Slide {
@@ -191,6 +237,7 @@ struct App {
     /// "game" was switched on by a game, not by hand: it goes when the game does.
     auto_switched: bool,
     back_to: String,
+    dashboard: Option<DashboardProc>,
 }
 
 thread_local! {
@@ -830,6 +877,39 @@ impl App {
         let _ = self.cfg.save(&self.cfg_path);
     }
 
+    // --- the PC Monitor window ---
+
+    /// Open the window, or bring it to the front if it is open.
+    fn open_dashboard(&mut self) {
+        if let Some(d) = &mut self.dashboard
+            && d.alive()
+        {
+            unsafe { AllowSetForegroundWindow(d.child.id()) };
+            d.send(&ToDashboard::Focus);
+            return;
+        }
+        self.dashboard = DashboardProc::start();
+        self.feed_dashboard();
+    }
+
+    /// The latest readings to the window, if it is open.
+    fn feed_dashboard(&mut self) {
+        let Some(d) = &mut self.dashboard else { return };
+        if !d.alive() {
+            self.dashboard = None; // closed: its memory is Windows' again
+            return;
+        }
+        let Some(data) = &self.data else { return };
+        let msg = ToDashboard::Feed {
+            data: Box::new(data.clone()),
+            theme: self.cfg.theme.clone(),
+            custom: self.cfg.custom_colors.clone(),
+        };
+        if !d.send(&msg) {
+            self.dashboard = None;
+        }
+    }
+
     // --- games ---
 
     /// Is a game in front? The FPS panel goes over it (or away).
@@ -1028,6 +1108,7 @@ impl App {
         const FPS_PANEL: usize = 8;
         const LAST_SESSION: usize = 9;
         const AUTO_GAME: usize = 11;
+        const DASHBOARD: usize = 12;
         const PROFILE: usize = 90;
         const CORNER: usize = 70;
         const FPS_SIZE: usize = 80;
@@ -1045,6 +1126,7 @@ impl App {
             } else {
                 "Показать виджет (Ctrl+Alt+W)"
             };
+            AppendMenuW(m, MF_STRING | MF_DEFAULT, DASHBOARD, wide("Открыть PC Monitor").as_ptr());
             AppendMenuW(m, MF_STRING, WIDGET, wide(widget_text).as_ptr());
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING | check(self.cfg.compact), COMPACT, wide("Компактный режим").as_ptr());
@@ -1165,6 +1247,10 @@ impl App {
                 }
                 c if (PROFILE..PROFILE + config::PROFILES.len()).contains(&c) => {
                     self.switch_profile(config::PROFILES[c - PROFILE], false);
+                    return;
+                }
+                DASHBOARD => {
+                    self.open_dashboard();
                     return;
                 }
                 AUTO_GAME => {
@@ -1309,6 +1395,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.update_tray();
                 a.update_panel();
                 a.check_alerts();
+                a.feed_dashboard();
             });
             0
         }
@@ -1906,6 +1993,7 @@ pub fn run(report: Option<String>) -> i32 {
                 game_gone: None,
                 auto_switched: false,
                 back_to: "work".into(),
+                dashboard: None,
             })
         });
         collect::start(shared.clone());

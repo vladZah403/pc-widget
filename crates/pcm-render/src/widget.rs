@@ -3,6 +3,7 @@
 //! narrow widget stacks the groups; a wide one puts them side by side in 2
 //! or 3 columns. All sizes are logical px; `View::scale` makes them physical.
 
+use serde::{Deserialize, Serialize};
 use tiny_skia::Pixmap;
 
 use crate::canvas::{Align, Canvas, Part, part};
@@ -31,7 +32,7 @@ pub const SUBJECT_GPU: usize = 1;
 pub const SUBJECT_RAM: usize = 2;
 pub const SUBJECT_NET: usize = 3;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Drive {
     pub letters: Vec<String>,
     pub critical: u8,
@@ -42,14 +43,15 @@ pub struct Drive {
     pub written: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum UpdateState {
     Download(f32),
     Install,
 }
 
 /// Everything the widget shows (1.8's `_collect()` dict).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Data {
     pub cpu: f32,
     /// The last minute, oldest first (up to 60).
