@@ -61,7 +61,11 @@ pub fn parse_line(line: &str) -> Option<Message> {
 const CPU_PREFS: &[&str] = &["cpu package", "core (tctl/tdie)", "core average", "cpu die", "cpu"];
 const GPU_PREFS: &[&str] = &["gpu core", "gpu hot spot", "gpu"];
 const POWER_PREFS: &[&str] = &["package", "cpu package"];
-const VOLTAGE_PREFS: &[&str] = &["core (svi2 tfn)", "cpu core", "vcore", "core"];
+const VOLTAGE_PREFS: &[&str] = &["core (svi2 tfn)", "cpu core", "vcore"];
+/// AMD's SVI2 lines and VIDs read exactly 1.55 V (code 0) where the library
+/// can't read them: on a Ryzen 5 5500U the SVI2 lines stay at 1.55 even with
+/// admin rights while the per-core VIDs are real (1.2 V).
+const AMD_EMPTY_V: f64 = 1.549;
 const STORAGE_PREFS: &[&str] = &["composite temperature", "temperature", "drive temperature"];
 /// Thresholds, not readings.
 const TEMP_SKIP: &[&str] = &["distance", "warning", "critical", "limit"];
@@ -240,8 +244,24 @@ pub fn summarize(hw: &[Hardware]) -> Summary {
         }
         s.cpu_power_w =
             pick(&by_kind(cpu, "Power"), POWER_PREFS).filter(|p| *p > 0.0 && *p < 1000.0).map(|p| p as f32);
-        s.cpu_voltage_v =
-            pick(&by_kind(cpu, "Voltage"), VOLTAGE_PREFS).filter(|v| *v > 0.2 && *v < 3.0).map(|v| v as f32);
+        let volts: Vec<(String, f64)> = by_kind(cpu, "Voltage")
+            .into_iter()
+            .filter(|(n, v)| {
+                *v > 0.2 && *v < 3.0 && !((n.contains("svi2") || n.ends_with(" vid")) && *v >= AMD_EMPTY_V)
+            })
+            .collect();
+        // the cores share one rail: the highest per-core VID is what it gets
+        let vid = volts
+            .iter()
+            .filter(|(n, _)| n.starts_with("core #") && n.ends_with(" vid"))
+            .map(|(_, v)| *v)
+            .reduce(f64::max);
+        s.cpu_voltage_v = VOLTAGE_PREFS
+            .iter()
+            .find_map(|p| volts.iter().find(|(n, _)| n.starts_with(p)).map(|(_, v)| *v))
+            .or(vid)
+            .or_else(|| pick(&volts, &["core"]))
+            .map(|v| v as f32);
     }
 
     // the GPU with its own temperature, else the first one
@@ -331,12 +351,26 @@ mod tests {
         let s = summarize(hw);
         assert_eq!(s.cpu_temp, None, "Tctl reads 0 without admin rights");
         assert_eq!(s.cpu_power_w, None, "0 W = not read");
-        assert_eq!(s.cpu_voltage_v, Some(1.55));
+        assert_eq!(s.cpu_voltage_v, None, "1.55 V on every line = not read");
         let g = s.gpu.unwrap();
         assert!(g.integrated && g.temp.is_none() && !s.gpu_shared);
         assert_eq!((g.load, g.clock_mhz), (Some(2.113), Some(400.0)));
         assert_eq!((g.vram_used_mb, g.vram_total_mb), (Some(363.0), Some(2048.0)));
         assert!(s.fans.is_empty() && s.drives.is_empty());
+    }
+
+    #[test]
+    fn real_helper_output_with_admin() {
+        // the same laptop as admin: SVI2 still 1.55 V, the per-core VIDs real
+        let text = include_str!("../tests/fixtures/lhm-ryzen5500u-admin.json");
+        let msgs: Vec<Message> = text.lines().filter_map(parse_line).collect();
+        assert!(matches!(&msgs[0], Message::Hello { protocol: 1, admin: true, .. }));
+        let Message::Sensors { hw, .. } = &msgs[1] else { panic!("no sensors line") };
+        let s = summarize(hw);
+        assert_eq!(s.cpu_voltage_v, Some(1.231), "the highest core VID, not SVI2's empty 1.55");
+        assert_eq!(s.cpu_temp.map(|t| t.celsius), Some(49.75));
+        assert_eq!(s.cpu_power_w, Some(6.301));
+        assert_eq!(s.drives.len(), 1);
     }
 
     #[test]
