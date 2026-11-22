@@ -446,3 +446,18 @@ FPS держится у частоты монитора: его ограничи
 Скачано	Downloaded	Завантажено	Heruntergeladen
 Отдано	Uploaded	Віддано	Hochgeladen
 Процессор и видеокарта	Processor and graphics card	Процесор і відеокарта	Prozessor und Grafikkarte
+ядер: {n}	cores: {n}	ядер: {n}	Kerne: {n}
+потоков: {n}	threads: {n}	потоків: {n}	Threads: {n}
+макс {v}%	max {v}%	макс {v}%	max. {v}%
+встроенная	integrated	вбудована	integriert
+отдельная	dedicated	окрема	dediziert
+Последняя минута	The last minute	Остання хвилина	Die letzte Minute
+есть предупреждения	has warnings	є попередження	hat Warnungen
+Батареи нет: это настольный компьютер или батарея не видна Windows.	No battery: a desktop PC, or Windows can't see the battery.	Батареї немає: це настільний комп'ютер або батарею не видно Windows.	Kein Akku: ein Desktop-PC, oder Windows sieht den Akku nicht.
+Заряжается от сети	Charging	Заряджається від мережі	Wird geladen
+{a} из {b} Вт·ч	{a} of {b} Wh	{a} з {b} Вт·год	{a} von {b} Wh
+отвечают	answer	відповідають	antworten
+не отвечают	don't answer	не відповідають	antworten nicht
+Датчики	Sensors	Датчики	Sensoren
+установлен	installed	встановлено	installiert
+не установлен	not installed	не встановлено	nicht installiert

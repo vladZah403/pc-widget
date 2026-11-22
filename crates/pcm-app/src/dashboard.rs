@@ -14,9 +14,8 @@ use std::time::Duration;
 use eframe::egui;
 use egui::{
     Align, Align2, Color32, CornerRadius, CursorIcon, FontData, FontDefinitions, FontFamily, Frame, Layout,
-    Margin, RichText, Sense, Stroke, StrokeKind, Vec2, pos2, vec2,
+    Margin, RichText, Sense, Stroke, StrokeKind, pos2, vec2,
 };
-use pcm_render::cards::{CARD_H, CARD_W, CARDS, card};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Theme, hex};
 use pcm_render::widget::Data;
@@ -111,7 +110,6 @@ const TABS: [(&str, &str); 6] = [
     ("Оборудование", icon::DEVICES),
     ("Настройки", icon::SETTINGS),
 ];
-const GAP: f32 = 12.0;
 const NAV_W: f32 = 200.0;
 const BAR_H: f32 = 56.0;
 const STATUS_H: f32 = 30.0;
@@ -177,9 +175,6 @@ struct Dashboard {
     feed: Arc<Mutex<Feed>>,
     tab: usize,
     fonts: Fonts,
-    cards: Vec<Option<egui::TextureHandle>>,
-    /// The feed and the scale the textures were drawn for.
-    drawn: (u64, f32),
     home: HomeTab,
     history: HistoryTab,
     procs: ProcsTab,
@@ -204,8 +199,6 @@ impl Dashboard {
             feed,
             tab: TAB_HOME,
             fonts: Fonts::system(),
-            cards: vec![None; CARDS.len()],
-            drawn: (0, 0.0),
             home: HomeTab::default(),
             history: HistoryTab::default(),
             procs: ProcsTab::default(),
@@ -219,53 +212,6 @@ impl Dashboard {
         }
     }
 
-    /// Draw the cards again for a new feed or a new DPI.
-    fn update_cards(&mut self, ctx: &egui::Context) {
-        let ppp = ctx.pixels_per_point();
-        let (data, theme, seq) = {
-            let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-            (f.data.clone(), f.theme.clone(), f.seq)
-        };
-        if self.drawn == (seq, ppp) {
-            return;
-        }
-        let (Some(d), Some(theme)) = (data, theme) else { return };
-        for (i, kind) in CARDS.iter().enumerate() {
-            let Some(pm) = card(&mut self.fonts, ppp, *kind, &d, &theme) else { continue };
-            let img = egui::ColorImage::from_rgba_premultiplied(
-                [pm.width() as usize, pm.height() as usize],
-                pm.data(),
-            );
-            match &mut self.cards[i] {
-                Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-                slot => {
-                    *slot = Some(ctx.load_texture(format!("card-{i}"), img, egui::TextureOptions::LINEAR))
-                }
-            }
-        }
-        self.drawn = (seq, ppp);
-    }
-
-    /// "Оборудование": the seven cards of stage 5.
-    fn devices(&mut self, ui: &mut egui::Ui) {
-        if self.cards.iter().all(|c| c.is_none()) {
-            ui.label(RichText::new(tr("Жду данные от виджета…")).color(pal().dim));
-            return;
-        }
-        let cols = (((ui.available_width() + GAP) / (CARD_W + GAP)).floor() as usize).max(1);
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for row in self.cards.chunks(cols) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = GAP;
-                    for t in row.iter().flatten() {
-                        ui.add(egui::Image::new((t.id(), Vec2::new(CARD_W, CARD_H))));
-                    }
-                });
-                ui.add_space(GAP - ui.spacing().item_spacing.y);
-            }
-        });
-    }
-
     /// Dark or light: the palette, egui's widgets, the title bar, and the
     /// pictures drawn by pcm-render (they are drawn again).
     fn set_look(&mut self, ctx: &egui::Context, light: bool) {
@@ -274,7 +220,6 @@ impl Dashboard {
         let system = if light { egui::SystemTheme::Light } else { egui::SystemTheme::Dark };
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(system));
         self.look = Some(light);
-        self.drawn = (0, 0.0);
         if let Ok(mut f) = self.feed.lock() {
             f.theme_key = theme_key(&f.theme_name, light);
         }
@@ -602,7 +547,14 @@ impl Dashboard {
                 };
                 self.procs.ui(ui, rows.as_ref(), sc.as_ref());
             }
-            TAB_DEVICES => self.devices(ui),
+            TAB_DEVICES => {
+                let (data, theme) = {
+                    let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+                    (f.data.clone(), f.theme.clone())
+                };
+                let sc = theme.map(|t| t.scale());
+                crate::dash_devices::ui(ui, data.as_ref(), sc.as_ref());
+            }
             _ => {
                 let (cfg, start, data, theme, key) = {
                     let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
@@ -723,7 +675,6 @@ impl eframe::App for Dashboard {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
-        self.update_cards(&ctx);
         // the home page lists the busiest programs too
         self.procs.visible(self.tab == TAB_PROCS || self.tab == TAB_HOME);
         ui.painter().rect_filled(ui.max_rect(), 0.0, pal().bg);
@@ -831,7 +782,7 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
     let size = asked.or(place.map(|(s, _)| s)).unwrap_or([1440.0, 900.0]);
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size(size)
-        .with_min_inner_size([NAV_W + CARD_W + 80.0, 480.0])
+        .with_min_inner_size([NAV_W + 380.0, 480.0])
         .with_title("PC Monitor");
     if let Some((_, pos)) = place {
         viewport = viewport.with_position(pos);

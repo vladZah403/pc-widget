@@ -117,6 +117,8 @@ pub mod icon {
     pub const CHEVRON: &str = "\u{E70D}";
     pub const SUN: &str = "\u{E706}";
     pub const MOON: &str = "\u{E708}";
+    pub const NET: &str = "\u{E839}";
+    pub const POWER: &str = "\u{E945}";
 }
 
 pub fn text_font(size: f32) -> FontId {

@@ -18,6 +18,7 @@
 
 mod alerts;
 mod collect;
+mod dash_devices;
 mod dash_history;
 mod dash_home;
 mod dash_kit;
