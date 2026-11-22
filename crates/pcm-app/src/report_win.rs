@@ -123,20 +123,29 @@ impl ReportWin {
 
     /// "civilizationvi 2026-11-22 13-05.csv"
     pub fn csv_name(&self) -> String {
-        let Some(s) = &self.session else { return "session.csv".into() };
-        let stamp: String = s.info.started.chars().take(16).map(|c| if c == ':' { '-' } else { c }).collect();
-        format!("{} {stamp}.csv", s.info.game)
+        self.session.as_ref().map_or("session.csv".into(), |s| session_csv_name(&s.info))
     }
 
     /// The seconds to `path`, the frames beside it ("… frames.csv").
     pub fn write_csv(&self, path: &Path) -> std::io::Result<PathBuf> {
         let Some(s) = &self.session else { return Err(std::io::ErrorKind::NotFound.into()) };
-        std::fs::write(path, s.csv_seconds(false))?;
-        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let frames = path.with_file_name(format!("{stem} frames.csv"));
-        std::fs::write(&frames, s.csv_frames(false))?;
-        Ok(frames)
+        write_session_csv(s, path)
     }
+}
+
+/// A session's seconds to `path` and its frames beside it ("… frames.csv").
+pub fn write_session_csv(s: &Session, path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::write(path, s.csv_seconds(false))?;
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let frames = path.with_file_name(format!("{stem} frames.csv"));
+    std::fs::write(&frames, s.csv_frames(false))?;
+    Ok(frames)
+}
+
+/// "civilizationvi 2026-11-22 13-05.csv"
+pub fn session_csv_name(info: &pcm_core::session::SessionInfo) -> String {
+    let stamp: String = info.started.chars().take(16).map(|c| if c == ':' { '-' } else { c }).collect();
+    format!("{} {stamp}.csv", info.game)
 }
 
 /// Windows' "Save as" dialog for a CSV file.

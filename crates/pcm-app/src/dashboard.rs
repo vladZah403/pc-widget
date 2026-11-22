@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dash_history::HistoryTab;
 use crate::dash_procs::ProcsTab;
+use crate::dash_sessions::SessionsTab;
 
 /// What the widget sends, one per line.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,6 +102,7 @@ struct Dashboard {
     drawn: (u64, f32),
     history: HistoryTab,
     procs: ProcsTab,
+    sessions: SessionsTab,
 }
 
 impl Dashboard {
@@ -124,6 +126,7 @@ impl Dashboard {
             drawn: (0, 0.0),
             history: HistoryTab::default(),
             procs: ProcsTab::default(),
+            sessions: SessionsTab::default(),
         }
     }
 
@@ -208,6 +211,10 @@ impl eframe::App for Dashboard {
                         )
                     };
                     self.procs.ui(ui, rows.as_ref(), sc.as_ref());
+                }
+                3 => {
+                    let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
+                    self.sessions.ui(ui, &mut self.fonts, theme.as_ref());
                 }
                 2 => {
                     let (theme, key) = {

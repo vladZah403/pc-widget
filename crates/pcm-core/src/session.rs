@@ -163,6 +163,16 @@ impl Session {
         std::fs::rename(&tmp, path)
     }
 
+    /// Only the header (the summary and the readings), not the frames.
+    pub fn load_info(path: &std::path::Path) -> std::io::Result<SessionInfo> {
+        use std::io::BufRead;
+        let file = std::fs::File::open(path)?;
+        let mut r = std::io::BufReader::new(zstd::Decoder::new(file)?);
+        let mut line = Vec::new();
+        r.read_until(b'\n', &mut line)?;
+        serde_json::from_slice(line.strip_suffix(b"\n").unwrap_or(&line)).map_err(std::io::Error::other)
+    }
+
     pub fn load(path: &std::path::Path) -> std::io::Result<Session> {
         Session::decode(&std::fs::read(path)?)
     }
@@ -316,6 +326,10 @@ mod tests {
         assert_eq!(back.frame_ms.len(), session.frame_ms.len());
         assert!(back.frame_ms.iter().zip(&session.frame_ms).all(|(a, b)| (a - b).abs() < 0.001));
         assert!(Session::decode(b"not zstd").is_err());
+        let path = std::env::temp_dir().join(format!("pcm-test-{}.pcms", std::process::id()));
+        session.save(&path).unwrap();
+        assert_eq!(Session::load_info(&path).unwrap(), session.info, "the header alone");
+        let _ = std::fs::remove_file(&path);
         assert_eq!(file_name("2026-11-22 13:05:41", "Civ VI/dx12"), "2026-11-22_13-05-41_Civ_VI_dx12.pcms");
     }
 
