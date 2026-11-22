@@ -25,6 +25,8 @@ pub struct Shared {
     pub want_procs: AtomicBool,
     /// The PC Monitor window shows its process tab: every program.
     pub want_procs_all: AtomicBool,
+    /// The hover card is up: the process list for its "больше всего".
+    pub want_top: AtomicBool,
     pub stop: AtomicBool,
     pub ping_host: Mutex<String>,
     /// The program's own PIDs (it and its helper), never offered for closing.
@@ -40,6 +42,7 @@ impl Shared {
             hwnd: AtomicIsize::new(0),
             want_procs: AtomicBool::new(false),
             want_procs_all: AtomicBool::new(false),
+            want_top: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             ping_host: Mutex::new(ping_host),
             pids: Mutex::new(vec![std::process::id()]),
@@ -174,7 +177,8 @@ fn run(shared: Arc<Shared>) {
             }
         }
         let want_procs = shared.want_procs.load(Ordering::Relaxed);
-        let want_all = shared.want_procs_all.load(Ordering::Relaxed);
+        let want_all =
+            shared.want_procs_all.load(Ordering::Relaxed) || shared.want_top.load(Ordering::Relaxed);
         let mut proc_count = None;
         let (procs_list, procs_all) = if want_procs || want_all {
             let own = shared.pids.lock().map(|p| p.clone()).unwrap_or_default();

@@ -13,10 +13,10 @@ use std::sync::{Arc, Mutex};
 use pcm_core::config::{self, Config};
 use pcm_render::overlay::Look;
 use pcm_render::text::Fonts;
-use pcm_render::theme::{Theme, hex};
+use pcm_render::theme::{DARK_INK, LIGHT_INK, Rgb, Theme, hex};
 use pcm_render::widget::{
     BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, WidgetLook, alert_card,
-    side_tab,
+    hover_card, side_tab,
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -28,6 +28,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE,
     TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey, VK_CONTROL, VK_ESCAPE, VK_SHIFT,
 };
+use windows_sys::Win32::UI::Shell::{NIN_POPUPCLOSE, NIN_POPUPOPEN};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// The mouse left the window (TrackMouseEvent); from CommCtrl.h.
@@ -44,7 +45,7 @@ use crate::session_rec::{self, Recorder, Recording, WM_APP_SESSION};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
 use crate::updater::{self, Checker, Stage, Updater, WM_APP_UPDATE};
-use pcm_render::format::{tr, trf};
+use pcm_render::format::{dec, fmt_mem, fmt_speed, tr, trf};
 
 /// The right and bottom edges are this wide for dragging the shape (logical px).
 const EDGE: f32 = 6.0;
@@ -62,6 +63,18 @@ const TIMER_TOAST: usize = 5;
 const TIMER_FPS: usize = 6;
 /// Put the side tab beside the widget again (a move it missed while busy).
 const TIMER_FOLLOW: usize = 7;
+/// The mouse rests on the taskbar panel: its card comes up.
+const TIMER_HOVER: usize = 8;
+const HOVER_DELAY_MS: u32 = 400;
+
+/// What the hover card is about.
+#[derive(Clone, Debug, PartialEq)]
+enum HoverOf {
+    /// A tray icon's reading ("cpu", "ram"…), the icon at this screen point.
+    Tray(String, (i32, i32)),
+    /// The taskbar panel.
+    Panel,
+}
 const HOTKEY_WIDGET: i32 = 1;
 const HOTKEY_FPS: i32 = 2;
 /// An alert card stays this long (ms) unless clicked.
@@ -274,6 +287,12 @@ struct App {
     started: std::time::Instant,
     toast: HWND,
     toast_surface: Option<Surface>,
+    /// The card over a tray icon or the taskbar panel (cards look).
+    hover_hwnd: HWND,
+    hover_surface: Option<Surface>,
+    hover_of: Option<HoverOf>,
+    /// The mouse is on the taskbar panel (its leave is being tracked).
+    panel_mouse: bool,
     panel: Panel,
     game: GameWatch,
     overlay: Overlay,
@@ -962,9 +981,155 @@ impl App {
 
     fn update_tray(&mut self) {
         let scale = self.theme().scale();
+        let cards = self.cards_look();
         if let (Some(t), Some(d)) = (&mut self.tray, &self.data) {
             t.set_kinds(&self.cfg.tray);
-            t.update(d, &mut self.fonts, &scale);
+            t.update(d, &mut self.fonts, &scale, cards);
+        }
+    }
+
+    // --- the hover card (cards look): over a tray icon or the taskbar panel ---
+
+    /// Show (or draw again) the card about `of`.
+    fn hover_show(&mut self, of: HoverOf) {
+        if !self.cards_look() {
+            return;
+        }
+        let first = self.hover_of.as_ref() != Some(&of);
+        self.hover_of = Some(of);
+        // "больше всего": the process list while the card is up
+        self.shared.want_top.store(true, Ordering::Relaxed);
+        self.hover_draw(first);
+    }
+
+    fn hover_hide(&mut self) {
+        unsafe {
+            KillTimer(self.hwnd, TIMER_HOVER);
+            ShowWindow(self.hover_hwnd, SW_HIDE);
+        }
+        self.hover_of = None;
+        self.shared.want_top.store(false, Ordering::Relaxed);
+    }
+
+    /// The card's lines for what it is about.
+    fn hover_lines(&self, of: &HoverOf) -> (String, Vec<(String, String, Rgb)>, String) {
+        let sc = self.theme().scale_dark();
+        let sc = if self.cfg.window_light { sc.on_light() } else { sc };
+        let text = if self.cfg.window_light { LIGHT_INK.text } else { DARK_INK.text };
+        let Some(d) = &self.data else { return (String::new(), Vec::new(), String::new()) };
+        let pct = |v: f32| (format!("{v:.0}%"), sc.at(v / 100.0));
+        let deg = |t: f32, approx: bool| (format!("{}{t:.0}°C", if approx { "≈" } else { "" }), sc.heat(t));
+        let top = |by_mem: bool| -> Option<String> {
+            let list = d.procs_all.as_ref()?;
+            let best = if by_mem {
+                list.iter().max_by_key(|p| p.memory)?
+            } else {
+                list.iter().max_by(|a, b| a.cpu.total_cmp(&b.cpu))?
+            };
+            let v =
+                if by_mem { fmt_mem(best.memory) } else { format!("{}%", dec(format!("{:.1}", best.cpu))) };
+            Some(format!("{} · {v}", best.name))
+        };
+        let mut rows: Vec<(String, String, Rgb)> = Vec::new();
+        let mut push = |label: &str, (v, c): (String, Rgb)| rows.push((tr(label), v, c));
+        let kind = match of {
+            HoverOf::Tray(k, _) => k.as_str(),
+            HoverOf::Panel => "panel",
+        };
+        let title = match kind {
+            "cpu" | "cpu_temp" => {
+                push("Нагрузка", pct(d.cpu));
+                if let Some(t) = d.temp_cpu {
+                    push("Температура", deg(t, d.temp_cpu_approx));
+                }
+                if let Some(g) = d.cpu_clock_ghz {
+                    push("Частота", (trf("{v} ГГц", &[("v", dec(format!("{g:.2}")))]), text));
+                }
+                push("Больше всего", (top(false).unwrap_or_else(|| "…".into()), text));
+                tr("Процессор")
+            }
+            "gpu" | "gpu_temp" => {
+                push("Нагрузка", d.gpu_load.map_or(("—".into(), text), pct));
+                match (d.temp_gpu, d.gpu_shared, d.temp_cpu) {
+                    (Some(t), _, _) => push("Температура", deg(t, false)),
+                    (None, true, Some(t)) => push("Температура", deg(t, true)),
+                    _ => {}
+                }
+                if let (Some(u), Some(t)) = (d.vram_used_mb, d.vram_total_mb) {
+                    let mb = |v: f32| fmt_mem((v as f64 * 1048576.0) as u64);
+                    push("VRAM", (format!("{} / {}", mb(u), mb(t)), text));
+                }
+                d.gpu_name.clone().unwrap_or_else(|| tr("Видеокарта"))
+            }
+            "ram" => {
+                push("Занято", pct(d.ram_pct));
+                push("Свободно", (fmt_mem(d.ram_total.saturating_sub(d.ram_used)), text));
+                push("Больше всего", (top(true).unwrap_or_else(|| "…".into()), text));
+                tr("Память")
+            }
+            _ => {
+                let mut cpu = pct(d.cpu);
+                if let Some(t) = d.temp_cpu {
+                    cpu.0 = format!("{} · {}", cpu.0, deg(t, d.temp_cpu_approx).0);
+                }
+                push("Процессор", cpu);
+                push("Память", pct(d.ram_pct));
+                if let Some(g) = d.gpu_load {
+                    push("Видеокарта", pct(g));
+                }
+                push("Сеть", (format!("↓ {}  ↑ {}", fmt_speed(d.net_down), fmt_speed(d.net_up)), text));
+                if let (true, Some(ms)) = (d.ping_ready, d.ping) {
+                    push("Пинг", (trf("{v} мс", &[("v", ms.to_string())]), sc.ping(Some(ms))));
+                }
+                "PC Monitor".into()
+            }
+        };
+        let hint = if kind == "panel" {
+            tr("Клик — показать или скрыть виджет")
+        } else {
+            tr("Клик — открыть PC Monitor")
+        };
+        (title, rows, hint)
+    }
+
+    /// Draw the card and put it beside the icon / above the panel, inside
+    /// the work area of that monitor (any taskbar side).
+    fn hover_draw(&mut self, place: bool) {
+        let Some(of) = self.hover_of.clone() else { return };
+        let (title, rows, hint) = self.hover_lines(&of);
+        if title.is_empty() {
+            return;
+        }
+        let scale = self.tab_scale();
+        let light = self.cfg.window_light;
+        let Some(pm) = hover_card(&mut self.fonts, scale, &title, &rows, &hint, light) else { return };
+        let pos = if place {
+            let anchor = match &of {
+                HoverOf::Tray(_, p) => *p,
+                HoverOf::Panel => {
+                    let mut r = RECT::default();
+                    unsafe { GetWindowRect(self.panel.hwnd, &mut r) };
+                    ((r.left + r.right) / 2, (r.top + r.bottom) / 2)
+                }
+            };
+            Some(hover_place(anchor, (pm.width() as i32, pm.height() as i32), scale))
+        } else {
+            None
+        };
+        layered::show(self.hover_hwnd, &mut self.hover_surface, &pm, 1.0, pos);
+        if place {
+            unsafe {
+                ShowWindow(self.hover_hwnd, SW_SHOWNOACTIVATE);
+                SetWindowPos(
+                    self.hover_hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
         }
     }
 
@@ -1865,6 +2030,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.tab_cpu();
                 a.update_tray();
                 a.update_panel();
+                if a.hover_of.is_some() {
+                    a.hover_draw(false);
+                }
                 a.check_alerts();
                 a.feed_dashboard();
                 a.record_history();
@@ -2032,16 +2200,50 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_APP_TRAY => {
-            match lp as u32 {
+            // NOTIFYICON_VERSION_4: LOWORD(lParam) the event, HIWORD the icon,
+            // wParam the icon's point on the screen
+            let event = (lp & 0xFFFF) as u32;
+            let id = ((lp >> 16) & 0xFFFF) as u32;
+            let at = ((wp & 0xFFFF) as i16 as i32, ((wp >> 16) & 0xFFFF) as i16 as i32);
+            match event {
                 // the PC Monitor window comes first; the widget: the menu or Ctrl+Alt+W
                 WM_LBUTTONUP => {
-                    with_app(|a| a.open_dashboard(None));
+                    with_app(|a| {
+                        a.hover_hide();
+                        a.open_dashboard(None);
+                    });
                 }
                 WM_RBUTTONUP => {
-                    with_app(|a| a.menu());
+                    with_app(|a| {
+                        a.hover_hide();
+                        a.menu();
+                    });
+                }
+                NIN_POPUPOPEN => {
+                    with_app(|a| {
+                        if let Some(kind) = a.tray.as_ref().and_then(|t| t.kind_of(id)) {
+                            a.hover_show(HoverOf::Tray(kind, at));
+                        }
+                    });
+                }
+                NIN_POPUPCLOSE => {
+                    with_app(|a| {
+                        if matches!(a.hover_of, Some(HoverOf::Tray(..))) {
+                            a.hover_hide();
+                        }
+                    });
                 }
                 _ => {}
             }
+            0
+        }
+        WM_TIMER if wp == TIMER_HOVER => {
+            with_app(|a| {
+                unsafe { KillTimer(hwnd, TIMER_HOVER) };
+                if a.panel_mouse {
+                    a.hover_show(HoverOf::Panel);
+                }
+            });
             0
         }
         WM_HOTKEY => {
@@ -2161,8 +2363,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 
 unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        WM_MOUSEMOVE => {
+            with_app(|a| {
+                if !a.panel_mouse {
+                    a.panel_mouse = true;
+                    let mut t = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    unsafe {
+                        TrackMouseEvent(&mut t);
+                        SetTimer(a.hwnd, TIMER_HOVER, HOVER_DELAY_MS, None);
+                    }
+                }
+            });
+            0
+        }
+        WM_MOUSELEAVE => {
+            with_app(|a| {
+                a.panel_mouse = false;
+                if a.hover_of == Some(HoverOf::Panel) || a.hover_of.is_none() {
+                    a.hover_hide();
+                }
+            });
+            0
+        }
         WM_LBUTTONUP => {
             with_app(|a| {
+                a.hover_hide();
                 let on = !a.cfg.widget;
                 a.set_widget(on);
             });
@@ -2177,6 +2407,35 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             1
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
+}
+
+/// Where a card of `size` goes for an icon or panel at `anchor`: beside the
+/// taskbar the anchor is on (outside the work area), inside the work area.
+fn hover_place(anchor: (i32, i32), size: (i32, i32), scale: f32) -> (i32, i32) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    };
+    let gap = (8.0 * scale).round() as i32;
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..unsafe { std::mem::zeroed() } };
+    let mon = unsafe { MonitorFromPoint(POINT { x: anchor.0, y: anchor.1 }, MONITOR_DEFAULTTONEAREST) };
+    if unsafe { GetMonitorInfoW(mon, &mut mi) } == 0 {
+        return (anchor.0 - size.0 / 2, anchor.1 - size.1 - gap);
+    }
+    let wa = mi.rcWork;
+    let clamp_x = |x: i32| x.clamp(wa.left + gap, (wa.right - size.0 - gap).max(wa.left + gap));
+    let clamp_y = |y: i32| y.clamp(wa.top + gap, (wa.bottom - size.1 - gap).max(wa.top + gap));
+    if anchor.1 >= wa.bottom {
+        (clamp_x(anchor.0 - size.0 / 2), wa.bottom - size.1 - gap) // taskbar at the bottom
+    } else if anchor.1 < wa.top {
+        (clamp_x(anchor.0 - size.0 / 2), wa.top + gap)
+    } else if anchor.0 >= wa.right {
+        (wa.right - size.0 - gap, clamp_y(anchor.1 - size.1 / 2))
+    } else if anchor.0 < wa.left {
+        (wa.left + gap, clamp_y(anchor.1 - size.1 / 2))
+    } else {
+        // inside (the Windows 11 overflow menu): above the point
+        (clamp_x(anchor.0 - size.0 / 2), clamp_y(anchor.1 - size.1 - gap))
     }
 }
 
@@ -2428,6 +2687,20 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
         };
         RegisterClassW(&oc);
         // clicks go through it to the game
+        let hover_hwnd = CreateWindowExW(
+            tab_ex | WS_EX_TRANSPARENT,
+            overlay_class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            250,
+            120,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         let overlay_hwnd = CreateWindowExW(
             tab_ex | WS_EX_TRANSPARENT,
             overlay_class.as_ptr(),
@@ -2501,6 +2774,10 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
                 started: std::time::Instant::now(),
                 toast: toast_hwnd,
                 toast_surface: None,
+                hover_hwnd,
+                hover_surface: None,
+                hover_of: None,
+                panel_mouse: false,
                 panel: Panel::new(panel_hwnd),
                 game: GameWatch::default(),
                 overlay: Overlay::new(overlay_hwnd),

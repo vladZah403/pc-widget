@@ -10,6 +10,7 @@ use crate::canvas::{Align, Canvas, part};
 use crate::format::{dec, fmt_disk, fmt_mem, fmt_speed, tr, trf};
 use crate::text::{Fonts, Style};
 use crate::theme::{DARK_INK, Ink, LIGHT_INK, Rgb, lerp};
+use tiny_skia::Pixmap;
 
 /// Logical width of the card look (fixed: Ctrl + wheel scales it).
 pub const CARDS_W: f32 = 280.0;
@@ -302,4 +303,56 @@ impl Ctx<'_> {
             y += LINE_H;
         }
     }
+}
+
+/// Logical width of the card shown over a tray icon or the taskbar panel.
+pub const HOVER_W: f32 = 250.0;
+
+/// The card over a tray icon or the taskbar panel (cards look): a title,
+/// "label ...... value" lines and a hint at the bottom.
+pub fn hover_card(
+    fonts: &mut Fonts,
+    scale: f32,
+    title: &str,
+    rows: &[(String, String, Rgb)],
+    hint: &str,
+    light: bool,
+) -> Option<Pixmap> {
+    let ink = if light { LIGHT_INK } else { DARK_INK };
+    let row_h = 24.0;
+    let h = 46.0 + rows.len() as f32 * row_h + if hint.is_empty() { 6.0 } else { 30.0 };
+    let w = HOVER_W;
+    let mut c = Canvas::new((w * scale).round() as u32, (h * scale).round() as u32, scale)?;
+    c.rrect(0.0, 0.0, w, h, 12.0, ink.border);
+    c.rrect(1.0 / scale, 1.0 / scale, w - 1.0 / scale, h - 1.0 / scale, 12.0 - 1.0 / scale, ink.card);
+    c.text(fonts, PAD, 30.0, title, Style::SemiBold, 13.5, ink.text);
+    let mut y = 56.0;
+    for (label, value, color) in rows {
+        let vw = c.width(fonts, value, Style::SemiBold, 12.5);
+        let label = c.ellipsize(fonts, label, Style::Regular, 12.5, w - 2.0 * PAD - vw - 10.0);
+        c.text(fonts, PAD, y, &label, Style::Regular, 12.5, ink.dim);
+        c.rich(fonts, w - PAD, y, &[part(value.clone(), Style::SemiBold, 12.5, *color)], Align::Right);
+        y += row_h;
+    }
+    if !hint.is_empty() {
+        c.text(fonts, PAD, y + 6.0, hint, Style::Regular, 11.5, ink.faint);
+    }
+    Some(c.pm)
+}
+
+/// A tray icon of the cards look: the number on a square of its colour.
+pub fn tray_icon_filled(fonts: &mut Fonts, size: u32, text: &str, color: Rgb) -> Option<Pixmap> {
+    let s = size as f32;
+    let mut c = Canvas::new(size, size, 1.0)?;
+    c.rrect(0.0, 0.0, s, s, s * 0.22, color);
+    let luma = 0.299 * color.0 as f32 + 0.587 * color.1 as f32 + 0.114 * color.2 as f32;
+    let ink = if luma > 150.0 { (18, 21, 28) } else { (255, 255, 255) };
+    let mut px = (s * 0.8).round();
+    while px > 6.0 && c.width(fonts, text, Style::SemiBoldCondensed, px) > s * 0.88 {
+        px -= 1.0;
+    }
+    let tw = c.width(fonts, text, Style::SemiBoldCondensed, px);
+    let baseline = (s + px * 0.70) / 2.0;
+    c.text(fonts, (s - tw) / 2.0, baseline, text, Style::SemiBoldCondensed, px, ink);
+    Some(c.pm)
 }

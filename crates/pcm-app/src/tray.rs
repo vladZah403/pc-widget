@@ -7,7 +7,7 @@ use std::ptr::null_mut;
 
 use pcm_render::text::Fonts;
 use pcm_render::theme::{Rgb, Scale};
-use pcm_render::widget::{Data, tray_icon};
+use pcm_render::widget::{Data, tray_icon, tray_icon_filled};
 use tiny_skia::Pixmap;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -103,7 +103,8 @@ struct Icon {
     id: u32,
     kind: String,
     handle: HICON,
-    shown: Option<(String, Rgb)>,
+    /// The text, colour and look drawn last.
+    shown: Option<(String, Rgb, bool)>,
     added: bool,
 }
 
@@ -161,13 +162,28 @@ impl Tray {
             .collect();
     }
 
-    /// Draw what changed and hand it to the shell.
-    pub fn update(&mut self, d: &Data, fonts: &mut Fonts, scale: &Scale) {
+    /// The reading an icon shows (its id in the tray messages).
+    pub fn kind_of(&self, id: u32) -> Option<String> {
+        self.icons.iter().find(|i| i.id == id).map(|i| i.kind.clone())
+    }
+
+    /// Draw what changed and hand it to the shell. `cards`: the concept's
+    /// look, numbers on coloured squares, and the hover card instead of the
+    /// tooltip (the shell sends NIN_POPUPOPEN / NIN_POPUPCLOSE).
+    pub fn update(&mut self, d: &Data, fonts: &mut Fonts, scale: &Scale, cards: bool) {
         self.tip = tooltip(d);
         for i in 0..self.icons.len() {
-            let now = reading(&self.icons[i].kind, d, scale);
+            let (text, color) = reading(&self.icons[i].kind, d, scale);
+            let now = (text, color, cards);
             let changed = self.icons[i].shown.as_ref() != Some(&now);
-            if changed && let Some(pm) = tray_icon(fonts, self.size, &now.0, now.1) {
+            let pm = if !changed {
+                None
+            } else if cards {
+                tray_icon_filled(fonts, self.size, &now.0, now.1)
+            } else {
+                tray_icon(fonts, self.size, &now.0, now.1)
+            };
+            if let Some(pm) = pm {
                 let new = hicon(&pm);
                 if !new.is_null() {
                     let old = std::mem::replace(&mut self.icons[i].handle, new);
@@ -180,9 +196,16 @@ impl Tray {
             if self.icons[i].handle.is_null() {
                 continue;
             }
-            let data = self.data(&self.icons[i], NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP);
+            let tip = if cards { 0 } else { NIF_SHOWTIP };
+            let data = self.data(&self.icons[i], NIF_ICON | NIF_TIP | NIF_MESSAGE | tip);
             let msg = if self.icons[i].added { NIM_MODIFY } else { NIM_ADD };
             if unsafe { Shell_NotifyIconW(msg, &data) } != 0 {
+                if msg == NIM_ADD {
+                    // version 4: LOWORD(lParam) = the event, HIWORD = the icon, wParam = where
+                    let mut v = self.data(&self.icons[i], 0);
+                    v.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                    unsafe { Shell_NotifyIconW(NIM_SETVERSION, &v) };
+                }
                 self.icons[i].added = true;
             } else if msg == NIM_MODIFY {
                 self.icons[i].added = false; // the shell lost it: add it next time
