@@ -94,12 +94,9 @@ fn readings(d: &Data, view: &View) -> Vec<Reading> {
             d.disks.iter().find(|x| x.0.eq_ignore_ascii_case("C:")).or(d.disks.first())
     {
         let drive = d.drives.iter().find(|x| x.letters.iter().any(|l| l == letter));
+        // the ring says how full it is; the line: the SSD's health (it must fit)
         let sub = match drive {
-            Some(x) => format!(
-                "{} · {}",
-                tr("занято"),
-                trf("здоровье {v}%", &[("v", 100u8.saturating_sub(x.wear).to_string())])
-            ),
+            Some(x) => trf("здоровье {v}%", &[("v", 100u8.saturating_sub(x.wear).to_string())]),
             None => fmt_disk(*used, *total),
         };
         out.push(Reading {

@@ -591,9 +591,16 @@ impl App {
     fn tab_render(&mut self) {
         let cpu = self.data.as_ref().map(|d| d.cpu);
         let docked = self.cfg.tucked;
-        let Some(pm) =
-            side_tab(self.tab_scale(), self.tab.edge_right, docked, self.tab.hover, cpu, &self.theme())
-        else {
+        let light = self.cards_look() && self.cfg.window_light;
+        let Some(pm) = side_tab(
+            self.tab_scale(),
+            self.tab.edge_right,
+            docked,
+            self.tab.hover,
+            cpu,
+            &self.theme(),
+            light,
+        ) else {
             return;
         };
         let pos = self.tab.pos;
@@ -1294,6 +1301,13 @@ impl App {
         c.sanitize();
         self.cfg = c;
         self.save();
+        if (self.cfg.window_light, &self.cfg.widget_style) != (old.window_light, &old.widget_style) {
+            // the look: tray icons and the side tab follow the widget
+            self.update_tray();
+            if self.tab.visible {
+                self.tab_render();
+            }
+        }
         if self.cfg.lang != old.lang {
             // everything with words is drawn again: the widget below, the tray, the panel
             crate::apply_language(&self.cfg.lang);

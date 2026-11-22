@@ -1458,24 +1458,33 @@ pub fn side_tab(
     hover: bool,
     cpu: Option<f32>,
     theme: &Theme,
+    light: bool,
 ) -> Option<Pixmap> {
+    // light with the cards look's light theme, like the widget it belongs to
+    let ink = if light { LIGHT_INK } else { DARK_INK };
     let (pw, ph) = ((TAB_W * scale).round() as u32, (TAB_H * scale).round() as u32);
     let mut c = Canvas::new(pw, ph, scale)?;
     let r = 7.0;
     // the flat side reaches past the image, so only the other side is rounded
     let (x0, x1) = if edge_right { (0.0, TAB_W + r) } else { (-r, TAB_W) };
-    c.rrect(x0, 0.0, x1, TAB_H, r, BORDER);
+    c.rrect(x0, 0.0, x1, TAB_H, r, ink.border);
     let bw = 1.0 / scale * scale.round().max(1.0);
-    c.rrect(x0 + bw, bw, x1 - bw, TAB_H - bw, r - bw, if hover { lerp(CARD, TEXT, 0.08) } else { CARD });
+    let fill = if hover { lerp(ink.card, ink.text, 0.08) } else { ink.card };
+    c.rrect(x0 + bw, bw, x1 - bw, TAB_H - bw, r - bw, fill);
     let to_right = edge_right != docked;
     let dx = if to_right { 1.8 } else { -1.8 };
     let (cx, cy) = (TAB_W / 2.0, if docked { 13.0 } else { TAB_H / 2.0 });
-    c.line(&[(cx - dx, cy - 4.0), (cx + dx, cy), (cx - dx, cy + 4.0)], 1.6, if hover { TEXT } else { DIM });
+    c.line(
+        &[(cx - dx, cy - 4.0), (cx + dx, cy), (cx - dx, cy + 4.0)],
+        1.6,
+        if hover { ink.text } else { ink.dim },
+    );
     if docked && let Some(cpu) = cpu {
         let (top, bottom) = (24.0, TAB_H - 10.0);
-        c.rrect(cx - 2.0, top, cx + 2.0, bottom, 2.0, TRACK);
+        c.rrect(cx - 2.0, top, cx + 2.0, bottom, 2.0, ink.track);
         let fill = 4.0f32.max((bottom - top) * cpu.clamp(0.0, 100.0) / 100.0);
-        c.rrect(cx - 2.0, bottom - fill, cx + 2.0, bottom, 2.0, theme.scale().at(cpu / 100.0));
+        let sc = if light { theme.scale_dark().on_light() } else { theme.scale_dark() };
+        c.rrect(cx - 2.0, bottom - fill, cx + 2.0, bottom, 2.0, sc.at(cpu / 100.0));
     }
     Some(c.pm)
 }
