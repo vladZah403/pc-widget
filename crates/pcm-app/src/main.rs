@@ -3,13 +3,15 @@
 //! Without arguments it shows the desktop widget; `--diag [--out FILE]
 //! [--helper PATH] [--ping HOST]` reads every source once and prints it;
 //! `--png FILE` draws the widget with live data into a PNG (no window);
-//! `--session FILE` prints a game session's summary.
+//! `--session FILE` prints a game session's summary; `--report FILE` starts
+//! the widget with that session's report open.
 
 mod alerts;
 mod collect;
 mod diag;
 mod game;
 mod layered;
+mod report_win;
 mod session_rec;
 mod taskbar;
 mod tray;
@@ -34,7 +36,8 @@ fn main() {
         };
         std::process::exit(print_session(path));
     }
-    std::process::exit(widget_win::run());
+    let report = args.iter().position(|a| a == "--report").and_then(|i| args.get(i + 1)).cloned();
+    std::process::exit(widget_win::run(report));
 }
 
 fn print_session(path: &str) -> i32 {

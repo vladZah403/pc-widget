@@ -25,7 +25,7 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE,
-    TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey, VK_CONTROL, VK_SHIFT,
+    TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey, VK_CONTROL, VK_ESCAPE, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -38,6 +38,7 @@ use crate::alerts::{Alert, Alerts, Limits};
 use crate::collect::{self, Shared, WM_APP_DATA};
 use crate::game::{GameWatch, Overlay, overlay_info};
 use crate::layered::{self, Surface};
+use crate::report_win::{self, Action, ReportWin};
 use crate::session_rec::{self, Recorder, Recording, WM_APP_SESSION};
 use crate::taskbar::Panel;
 use crate::tray::{self, Tray, WM_APP_TRAY};
@@ -177,7 +178,10 @@ struct App {
     game_fps: bool,
     recorder: Recorder,
     /// Sessions written in the background, waiting for their alert card.
-    sessions_done: Arc<Mutex<Vec<pcm_core::session::SessionInfo>>>,
+    sessions_done: Arc<Mutex<Vec<(PathBuf, pcm_core::session::SessionInfo)>>>,
+    report: ReportWin,
+    /// The alert card on screen tells about this session: a click opens its report.
+    toast_session: Option<PathBuf>,
 }
 
 thread_local! {
@@ -731,6 +735,7 @@ impl App {
 
     /// The alert card in the bottom-right corner of the work area; a click closes it.
     fn show_toast(&mut self, a: &Alert) {
+        self.toast_session = None;
         let scale = self.tab_scale();
         let sc = self.theme().scale();
         let accent = if a.hot { sc.at(1.0) } else { sc.at(0.75) };
@@ -838,17 +843,54 @@ impl App {
     /// "Сессия записана": the game, how long, the average FPS and 1% low.
     fn session_written(&mut self) {
         let done: Vec<_> = self.sessions_done.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default();
-        let Some(info) = done.last() else { return };
+        let Some((path, info)) = done.last() else { return };
         let s = &info.summary;
         let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
         let body = format!(
-            "{name}: {}, в среднем {:.0} FPS, 1% low {:.0}.",
+            "{name}: {}, в среднем {:.0} FPS, 1% low {:.0}. Нажми, чтобы открыть отчёт.",
             fmt_play_time(s.active_s),
             s.avg_fps,
             s.low1
         );
         let alert = Alert { title: "Игровая сессия записана".into(), body, hot: false };
+        let path = path.clone();
         self.show_toast(&alert);
+        self.toast_session = Some(path);
+    }
+
+    /// The alert card was clicked: a session's card opens its report.
+    fn toast_clicked(&mut self) {
+        if let Some(path) = self.toast_session.take() {
+            self.open_report(&path);
+        }
+    }
+
+    fn open_report(&mut self, path: &std::path::Path) {
+        let sc = self.theme().scale();
+        if !self.report.open(path, &mut self.fonts, &sc) {
+            let body = format!("Не удалось прочитать {}.", path.display());
+            self.show_toast(&Alert { title: "Отчёт не открылся".into(), body, hot: false });
+        }
+    }
+
+    /// Ask where to save, outside with_app (the dialog runs its own message loop).
+    fn save_report_csv(hwnd: HWND) {
+        let Some(name) = with_app(|a| a.report.csv_name()) else { return };
+        let Some(path) = report_win::save_dialog(hwnd, &name) else { return };
+        with_app(|a| {
+            let file = |p: &std::path::Path| {
+                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            };
+            let alert = match a.report.write_csv(&path) {
+                Ok(frames) => Alert {
+                    title: "CSV сохранён".into(),
+                    body: format!("{} (по секундам) и {} (каждый кадр).", file(&path), file(&frames)),
+                    hot: false,
+                },
+                Err(e) => Alert { title: "CSV не сохранён".into(), body: e.to_string(), hot: true },
+            };
+            a.show_toast(&alert);
+        });
     }
 
     fn toggle_fps_panel(&mut self) {
@@ -934,6 +976,7 @@ impl App {
         const ROWS: usize = 50;
         const FPS: usize = 7;
         const FPS_PANEL: usize = 8;
+        const LAST_SESSION: usize = 9;
         const CORNER: usize = 70;
         const FPS_SIZE: usize = 80;
         let themes = [("heat", "Тепло"), ("neon", "Неон"), ("ice", "Лёд")];
@@ -994,6 +1037,10 @@ impl App {
                 AppendMenuW(fm, MF_STRING | MF_GRAYED, 0, wide(&format!("● Идёт запись: {game}")).as_ptr());
                 AppendMenuW(fm, MF_SEPARATOR, 0, null());
             }
+            let last = report_win::latest_session(&session_rec::sessions_dir(&data_dir()));
+            let last_flags = MF_STRING | if last.is_some() { 0 } else { MF_GRAYED };
+            AppendMenuW(fm, last_flags, LAST_SESSION, wide("Отчёт о последней игре").as_ptr());
+            AppendMenuW(fm, MF_SEPARATOR, 0, null());
             AppendMenuW(fm, MF_STRING | check(self.cfg.fps), FPS, wide("Считать FPS").as_ptr());
             let off = if self.cfg.fps { 0 } else { MF_GRAYED };
             let panel_text = wide("Показывать FPS-панель (Ctrl+Alt+F)");
@@ -1043,6 +1090,12 @@ impl App {
                 }
                 FPS_PANEL => {
                     self.toggle_fps_panel();
+                    return;
+                }
+                LAST_SESSION => {
+                    if let Some(p) = last {
+                        self.open_report(&p);
+                    }
                     return;
                 }
                 c if (CORNER..CORNER + corners.len()).contains(&c) => {
@@ -1475,6 +1528,70 @@ unsafe extern "system" fn toast_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
     match msg {
         WM_LBUTTONUP => {
             unsafe { ShowWindow(hwnd, SW_HIDE) };
+            with_app(|a| a.toast_clicked());
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
+}
+
+unsafe extern "system" fn report_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_MOUSEMOVE => {
+            let (x, y) = lparam_xy(lp);
+            let mut t = TRACKMOUSEEVENT {
+                cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
+            unsafe { TrackMouseEvent(&mut t) };
+            with_app(|a| {
+                let sc = a.theme().scale();
+                a.report.mouse_move(x as f32, y as f32, &mut a.fonts, &sc);
+            });
+            0
+        }
+        WM_MOUSELEAVE => {
+            with_app(|a| {
+                let sc = a.theme().scale();
+                a.report.mouse_move(-1.0, -1.0, &mut a.fonts, &sc);
+            });
+            0
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = lparam_xy(lp);
+            // decided inside with_app, done outside it: the drag and the
+            // dialog run message loops of their own
+            match with_app(|a| a.report.press(x as f32, y as f32)) {
+                Some(Action::Drag) => unsafe {
+                    ReleaseCapture();
+                    SendMessageW(hwnd, WM_SYSCOMMAND, (SC_MOVE | 2) as usize, 0);
+                },
+                Some(Action::Close) => {
+                    with_app(|a| a.report.close());
+                }
+                Some(Action::SaveCsv) => App::save_report_csv(hwnd),
+                None => {}
+            }
+            0
+        }
+        WM_KEYDOWN if wp == VK_ESCAPE as usize => {
+            with_app(|a| a.report.close());
+            0
+        }
+        WM_CLOSE => {
+            with_app(|a| a.report.close());
+            0
+        }
+        WM_DPICHANGED => {
+            let r = unsafe { &*(lp as *const RECT) };
+            unsafe { SetWindowPos(hwnd, null_mut(), r.left, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER) };
+            with_app(|a| {
+                let sc = a.theme().scale();
+                a.fonts.clear_cache();
+                a.report.redraw(&mut a.fonts, &sc);
+            });
             0
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
@@ -1500,8 +1617,9 @@ unsafe extern "system" fn tab_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     }
 }
 
-/// Run the widget until it is closed. Returns the exit code.
-pub fn run() -> i32 {
+/// Run the widget until it is closed (with a session's report open, if
+/// given). Returns the exit code.
+pub fn run(report: Option<String>) -> i32 {
     unsafe {
         // one widget at a time (not 1.8's mutex: both may run during the alpha)
         let mutex = CreateMutexW(null(), 1, wide("Local\\PCMonitor2Widget").as_ptr());
@@ -1643,6 +1761,30 @@ pub fn run() -> i32 {
             hinst,
             null(),
         );
+        let report_class = wide("PCMonitor2Report");
+        let rc = WNDCLASSW {
+            lpfnWndProc: Some(report_proc),
+            hInstance: hinst,
+            lpszClassName: report_class.as_ptr(),
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            ..Default::default()
+        };
+        RegisterClassW(&rc);
+        let report_title = wide("PC Monitor: игровая сессия");
+        let report_hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_APPWINDOW,
+            report_class.as_ptr(),
+            report_title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            780,
+            480,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
         APP.with(|a| {
             *a.borrow_mut() = Some(App {
                 hwnd,
@@ -1684,6 +1826,8 @@ pub fn run() -> i32 {
                 game_fps: false,
                 recorder: Recorder::default(),
                 sessions_done: Arc::new(Mutex::new(Vec::new())),
+                report: ReportWin::new(report_hwnd),
+                toast_session: None,
             })
         });
         collect::start(shared.clone());
@@ -1702,6 +1846,10 @@ pub fn run() -> i32 {
             with_app(|a| a.dock_at_start());
         } else if visible {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+
+        if let Some(path) = report {
+            with_app(|a| a.open_report(std::path::Path::new(&path)));
         }
 
         let mut msg: MSG = std::mem::zeroed();

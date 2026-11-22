@@ -182,7 +182,12 @@ pub fn sessions_dir(data_dir: &Path) -> PathBuf {
 
 /// Build and save the session off the window's thread, then tell the window
 /// (WM_APP_SESSION) with the result in `done`.
-pub fn finish_in_background(rec: Recording, dir: PathBuf, done: Arc<Mutex<Vec<SessionInfo>>>, hwnd: HWND) {
+pub fn finish_in_background(
+    rec: Recording,
+    dir: PathBuf,
+    done: Arc<Mutex<Vec<(PathBuf, SessionInfo)>>>,
+    hwnd: HWND,
+) {
     let hwnd = hwnd as isize;
     std::thread::Builder::new()
         .name("session".into())
@@ -192,7 +197,7 @@ pub fn finish_in_background(rec: Recording, dir: PathBuf, done: Arc<Mutex<Vec<Se
                 if s.save(&path).is_ok()
                     && let Ok(mut d) = done.lock()
                 {
-                    d.push(s.info);
+                    d.push((path, s.info));
                     unsafe { PostMessageW(hwnd as HWND, WM_APP_SESSION, 0, 0) };
                 }
             }

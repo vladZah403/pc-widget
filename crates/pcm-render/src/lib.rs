@@ -10,6 +10,7 @@
 pub mod canvas;
 pub mod format;
 pub mod overlay;
+pub mod report;
 pub mod text;
 pub mod theme;
 pub mod widget;

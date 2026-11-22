@@ -168,6 +168,73 @@ impl Session {
     }
 }
 
+/// CSV for Excel: ';' and decimal commas, unless English (',' and points).
+struct Csv {
+    sep: &'static str,
+    comma: bool,
+    out: String,
+}
+
+impl Csv {
+    fn new(english: bool, header: &[&str]) -> Csv {
+        let sep = if english { "," } else { ";" };
+        // a BOM, so Excel reads it as UTF-8
+        let mut out = String::from("\u{feff}");
+        out += &header.join(sep);
+        out.push_str("\r\n");
+        Csv { sep, comma: !english, out }
+    }
+
+    fn row(&mut self, cells: &[Option<String>]) {
+        let line: Vec<String> = cells
+            .iter()
+            .map(|c| {
+                let v = c.clone().unwrap_or_default();
+                if self.comma { v.replace('.', ",") } else { v }
+            })
+            .collect();
+        self.out += &line.join(self.sep);
+        self.out.push_str("\r\n");
+    }
+}
+
+fn num(v: Option<f32>, digits: usize) -> Option<String> {
+    v.map(|v| format!("{v:.digits$}"))
+}
+
+impl Session {
+    /// One row a second: FPS, load, temperatures, memory.
+    pub fn csv_seconds(&self, english: bool) -> String {
+        let mut c = Csv::new(
+            english,
+            &["time_s", "fps", "cpu_load_%", "gpu_load_%", "cpu_temp_C", "gpu_temp_C", "ram_%"],
+        );
+        for s in &self.info.samples {
+            c.row(&[
+                num(Some(s.t), 1),
+                num(s.fps, 0),
+                num(s.cpu, 1),
+                num(s.gpu, 1),
+                num(s.cpu_t, 1),
+                num(s.gpu_t, 1),
+                num(s.ram, 1),
+            ]);
+        }
+        c.out
+    }
+
+    /// One row a frame: its number, when it ended (s from the first frame), its time in ms.
+    pub fn csv_frames(&self, english: bool) -> String {
+        let mut c = Csv::new(english, &["frame", "time_s", "frame_ms"]);
+        let mut t = 0.0f64;
+        for (i, &ms) in self.frame_ms.iter().enumerate() {
+            t += ms as f64 / 1000.0;
+            c.row(&[Some((i + 1).to_string()), Some(format!("{t:.4}")), Some(format!("{ms:.3}"))]);
+        }
+        c.out
+    }
+}
+
 /// "2026-11-22 13:05:41" + "civilizationvi" -> "2026-11-22_13-05-41_civilizationvi.pcms"
 pub fn file_name(started: &str, game: &str) -> String {
     let stamp: String = started
@@ -250,6 +317,23 @@ mod tests {
         assert!(back.frame_ms.iter().zip(&session.frame_ms).all(|(a, b)| (a - b).abs() < 0.001));
         assert!(Session::decode(b"not zstd").is_err());
         assert_eq!(file_name("2026-11-22 13:05:41", "Civ VI/dx12"), "2026-11-22_13-05-41_Civ_VI_dx12.pcms");
+    }
+
+    #[test]
+    fn csv_for_excel() {
+        let s = Session {
+            info: SessionInfo {
+                samples: vec![Sample { t: 1.0, fps: Some(60.0), cpu: Some(40.5), ..Sample::default() }],
+                ..SessionInfo::default()
+            },
+            frame_ms: vec![16.667, 16.5],
+        };
+        let ru = s.csv_seconds(false);
+        assert!(ru.starts_with("\u{feff}time_s;fps;cpu_load_%"));
+        assert!(ru.contains("\r\n1,0;60;40,5;;;;\r\n"), "{ru:?}");
+        assert!(s.csv_seconds(true).contains("\r\n1.0,60,40.5,,,,\r\n"));
+        let frames = s.csv_frames(false);
+        assert!(frames.contains("\r\n2;0,0332;16,500\r\n"), "{frames:?}");
     }
 
     #[test]

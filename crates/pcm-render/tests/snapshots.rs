@@ -105,3 +105,13 @@ fn fps_overlay_panel() {
     let pm = fps_overlay(&mut fonts, 1.5, &Theme::Heat.scale(), &sample_overlay()).expect("render");
     check_pm("overlay-150", &pm);
 }
+
+#[test]
+fn session_report_card() {
+    use pcm_render::report::{ReportHover, sample_session, session_report};
+    let mut fonts = Fonts::system();
+    let (pm, _) =
+        session_report(&mut fonts, 1.0, &Theme::Heat.scale(), &sample_session(), ReportHover::default())
+            .expect("render");
+    check_pm("report-100", &pm);
+}

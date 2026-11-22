@@ -1643,6 +1643,7 @@ dependencies = [
 name = "pcm-render"
 version = "0.0.0"
 dependencies = [
+ "pcm-core",
  "swash",
  "tiny-skia",
 ]
