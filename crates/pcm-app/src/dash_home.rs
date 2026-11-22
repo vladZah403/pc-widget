@@ -209,7 +209,13 @@ fn area(p: &Painter, r: Rect, values: &[f32], max: f32, color: Color32, top_alph
 }
 
 /// A segmented switch ("1 мин | 5 мин | 1 ч | 24 ч"); returns the clicked index.
-fn segments(ui: &mut Ui, right_top: Pos2, items: &[String], selected: usize, id: &str) -> Option<usize> {
+pub(crate) fn segments(
+    ui: &mut Ui,
+    right_top: Pos2,
+    items: &[String],
+    selected: usize,
+    id: &str,
+) -> Option<usize> {
     let p = ui.painter().clone();
     let f = text_font(12.5);
     let widths: Vec<f32> = items.iter().map(|t| text_w(&p, t, f.clone()) + 22.0).collect();

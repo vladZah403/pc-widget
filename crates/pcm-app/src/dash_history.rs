@@ -1,25 +1,28 @@
 //! The "История" tab of the PC Monitor window: the history database read
 //! (the widget writes it), charts for an hour, a day, a week or 30 days,
 //! and the shown points saved as CSV.
+//!
+//! Beta 2: in the home page's style: the range as a segmented switch, tiles
+//! with the period's numbers, charts painted with egui (the mouse shows
+//! the values).
 
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-
-use crate::dash_home::pal;
-use egui::{RichText, Vec2};
+use egui::{Rect, RichText, Sense, pos2, vec2};
 use pcm_core::history::{Column, FILE, History, Point, STEP_S, buckets, to_csv};
-use pcm_render::chart::{Chart, Series, chart, columns};
-use pcm_render::format::fmt_speed;
-use pcm_render::format::{tr, trf};
-use pcm_render::text::Fonts;
+use pcm_render::format::{dec, fmt_speed, tr, trf};
 use pcm_render::theme::Theme;
+
+use crate::dash_home::{pal, rgb, segments};
+use crate::dash_kit::{GAP, Series, Tile, TimeChart, button, grid_cells, stat_tiles, time_chart};
 
 const RANGES: [(&str, i64); 4] =
     [("Час", 3600), ("Сутки", 86400), ("Неделя", 7 * 86400), ("30 дней", 30 * 86400)];
-const CHART_H: f32 = 170.0;
 /// The open tab reads the database again this often.
 const RELOAD: Duration = Duration::from_secs(10);
+/// Columns of a chart at most.
+const COLS: usize = 240;
 
 #[derive(Default)]
 pub struct HistoryTab {
@@ -29,23 +32,7 @@ pub struct HistoryTab {
     /// (from, to) of the points, unix s.
     span: (i64, i64),
     loaded: Option<Instant>,
-    load_seq: u64,
-    textures: Vec<egui::TextureHandle>,
-    /// What the textures show: range, width, scale, load, theme.
-    drawn: Option<(usize, u32, u32, u64, String)>,
     note: Option<String>,
-}
-
-fn pct(v: f64) -> String {
-    format!("{v:.0}%")
-}
-
-fn deg(v: f64) -> String {
-    format!("{v:.0}°")
-}
-
-fn speed(v: f64) -> String {
-    fmt_speed(v)
 }
 
 /// "13:05" for an hour or a day, "22.11" for longer.
@@ -55,6 +42,22 @@ fn time_label(t: i64, long: bool) -> String {
         format!("{}.{}", s.get(8..10).unwrap_or(""), s.get(5..7).unwrap_or(""))
     } else {
         s.get(11..16).unwrap_or("").to_string()
+    }
+}
+
+/// "22.11 13:05" for the mouse's box.
+fn when_label(t: i64) -> String {
+    let s = pcm_win::system::local_time_of(t);
+    format!("{}.{} {}", s.get(8..10).unwrap_or(""), s.get(5..7).unwrap_or(""), s.get(11..16).unwrap_or(""))
+}
+
+/// "1,2 ГБ" of bytes.
+fn amount(bytes: f64) -> String {
+    let gb = bytes / (1u64 << 30) as f64;
+    if gb >= 1.0 {
+        trf("{v} ГБ", &[("v", dec(format!("{gb:.1}")))])
+    } else {
+        trf("{v} МБ", &[("v", format!("{:.0}", bytes / 1048576.0))])
     }
 }
 
@@ -83,64 +86,6 @@ impl HistoryTab {
         }
         self.span = (from, now);
         self.loaded = Some(Instant::now());
-        self.load_seq += 1;
-    }
-
-    fn charts(&self, cols: usize, sc: &pcm_render::theme::Scale) -> Vec<Chart> {
-        let (from, to) = self.span;
-        let b = |c: Column| buckets(&self.points, from, to, cols, c);
-        let long = RANGES[self.range].1 > 86400;
-        let mid = from + (to - from) / 2;
-        let times = [time_label(from, long), time_label(mid, long), time_label(to, long)];
-        let s = |name: &str, color, c| Series { name: name.into(), color, values: b(c) };
-        let (a, z) = (sc.at(0.05), sc.at(0.55));
-        vec![
-            Chart {
-                title: tr("Процессор, %"),
-                series: vec![s("CPU", a, Column::Cpu)],
-                lo: 0.0,
-                hi: Some(100.0),
-                min_hi: 100.0,
-                times: times.clone(),
-                fmt: pct,
-            },
-            Chart {
-                title: tr("Температура"),
-                series: vec![s("CPU", a, Column::CpuTemp), s("GPU", z, Column::GpuTemp)],
-                lo: 20.0,
-                hi: None,
-                min_hi: 60.0,
-                times: times.clone(),
-                fmt: deg,
-            },
-            Chart {
-                title: tr("Видеокарта, %"),
-                series: vec![s("GPU", z, Column::Gpu)],
-                lo: 0.0,
-                hi: Some(100.0),
-                min_hi: 100.0,
-                times: times.clone(),
-                fmt: pct,
-            },
-            Chart {
-                title: tr("Память, %"),
-                series: vec![s("RAM", a, Column::Ram)],
-                lo: 0.0,
-                hi: Some(100.0),
-                min_hi: 100.0,
-                times: times.clone(),
-                fmt: pct,
-            },
-            Chart {
-                title: tr("Сеть"),
-                series: vec![s("↓", a, Column::Down), s("↑", z, Column::Up)],
-                lo: 0.0,
-                hi: None,
-                min_hi: 64.0 * 1024.0,
-                times,
-                fmt: speed,
-            },
-        ]
     }
 
     fn save_csv(&self) {
@@ -152,74 +97,164 @@ impl HistoryTab {
         let _ = std::fs::write(path, to_csv(&self.points, false, pcm_win::system::local_time_of));
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, fonts: &mut Fonts, theme: Option<&Theme>, theme_key: &str) {
+    /// The period's numbers: average and peak load, the hottest CPU, memory, the traffic.
+    fn tiles(&self, theme: &Theme) -> Vec<Tile> {
+        let sc = theme.scale();
+        let col = |c: Column| self.points.iter().filter_map(|p| p.get(c)).collect::<Vec<f64>>();
+        let avg = |v: &[f64]| (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+        let max = |v: &[f64]| v.iter().copied().reduce(f64::max);
+        let cpu = col(Column::Cpu);
+        let ram = col(Column::Ram);
+        let cpu_t = col(Column::CpuTemp);
+        let down: f64 = col(Column::Down).iter().sum::<f64>() * STEP_S as f64;
+        let up: f64 = col(Column::Up).iter().sum::<f64>() * STEP_S as f64;
+        let pct = |v: Option<f64>| {
+            v.map_or(("—".to_string(), pal().text), |v| (format!("{v:.0}"), rgb(sc.at(v as f32 / 100.0))))
+        };
+        let (a, ac) = pct(avg(&cpu));
+        let (m, mc) = pct(max(&cpu));
+        let (r, rc) = pct(avg(&ram));
+        let (t, tc) = max(&cpu_t)
+            .map_or(("—".to_string(), pal().text), |t| (format!("{t:.0}"), rgb(sc.heat(t as f32))));
+        vec![
+            (tr("Процессор в среднем"), a, "%".into(), ac, None),
+            (tr("Пик процессора"), m, "%".into(), mc, None),
+            (tr("Пик температуры CPU"), t, "°C".into(), tc, None),
+            (tr("Память в среднем"), r, "%".into(), rc, None),
+            (tr("Скачано"), amount(down), String::new(), pal().text, None),
+            (tr("Отдано"), amount(up), String::new(), pal().text, None),
+        ]
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, theme: Option<&Theme>) {
         if self.loaded.is_none_or(|t| t.elapsed() >= RELOAD) {
             self.load();
         }
-        ui.horizontal(|ui| {
-            for (i, (name, _)) in RANGES.iter().enumerate() {
-                let sel = self.range == i;
-                let text = RichText::new(tr(name)).size(13.0).color(if sel { pal().text } else { pal().dim });
-                if ui.add(egui::Button::selectable(sel, text)).clicked() && !sel {
-                    self.range = i;
-                    self.load();
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enabled = !self.points.is_empty();
-                if ui.add_enabled(enabled, egui::Button::new(tr("Сохранить CSV"))).clicked() {
-                    self.save_csv();
-                }
-                ui.label(
-                    RichText::new(trf("точек: {n}", &[("n", self.points.len().to_string())]))
-                        .size(12.0)
-                        .color(pal().dim),
-                );
-            });
-        });
-        ui.add_space(10.0);
-        if let Some(n) = &self.note {
-            ui.label(RichText::new(n).color(pal().dim));
-            return;
-        }
-        let Some(theme) = theme else { return };
-        let ctx = ui.ctx().clone();
-        let ppp = ctx.pixels_per_point();
-        let w = (ui.available_width() - 16.0).max(300.0); // room for the scroll bar
-        let key = (self.range, w.round() as u32, (ppp * 100.0) as u32, self.load_seq, theme_key.to_string());
-        if self.drawn.as_ref() != Some(&key) {
-            let sc = theme.scale();
-            // never more columns than points, or the lines fall apart into dots
-            let points = ((self.span.1 - self.span.0) / STEP_S).max(10) as usize;
-            let charts = self.charts(columns(w, ppp).min(points), &sc);
-            let mut textures = Vec::new();
-            for (i, spec) in charts.iter().enumerate() {
-                let Some(pm) = chart(fonts, ppp, w, CHART_H, spec) else { continue };
-                let img = egui::ColorImage::from_rgba_premultiplied(
-                    [pm.width() as usize, pm.height() as usize],
-                    pm.data(),
-                );
-                match self.textures.get_mut(i) {
-                    Some(t) => {
-                        t.set(img, egui::TextureOptions::LINEAR);
-                        textures.push(t.clone());
-                    }
-                    None => textures.push(ctx.load_texture(
-                        format!("chart-{i}"),
-                        img,
-                        egui::TextureOptions::LINEAR,
-                    )),
-                }
-            }
-            self.textures = textures;
-            self.drawn = Some(key);
-        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for t in &self.textures {
-                ui.add(egui::Image::new((t.id(), Vec2::new(w, CHART_H))));
-                ui.add_space(4.0);
+            let w = ui.available_width();
+            // the range on the left, the points and CSV on the right
+            let (bar_r, _) = ui.allocate_exact_size(vec2(w, 38.0), Sense::hover());
+            let names: Vec<String> = RANGES.iter().map(|(n, _)| tr(n)).collect();
+            let seg_w: f32 = names
+                .iter()
+                .map(|n| {
+                    ui.painter()
+                        .layout_no_wrap(n.clone(), crate::dash_home::text_font(12.5), pal().text)
+                        .size()
+                        .x
+                        + 22.0
+                })
+                .sum::<f32>()
+                + 6.0;
+            if let Some(i) =
+                segments(ui, pos2(bar_r.left() + seg_w, bar_r.top() + 4.0), &names, self.range, "hist-range")
+                && i != self.range
+            {
+                self.range = i;
+                self.load();
             }
+            let (b, clicked) =
+                button(ui, bar_r.right(), bar_r.top(), &tr("Сохранить CSV"), false, false, "hist-csv");
+            if clicked && !self.points.is_empty() {
+                self.save_csv();
+            }
+            ui.painter().text(
+                pos2(b.left() - 14.0, b.center().y),
+                egui::Align2::RIGHT_CENTER,
+                trf("точек: {n}", &[("n", self.points.len().to_string())]),
+                crate::dash_home::text_font(12.5),
+                pal().dim,
+            );
+            ui.add_space(14.0);
+            if let Some(n) = &self.note {
+                ui.label(RichText::new(n).color(pal().dim));
+                return;
+            }
+            let Some(theme) = theme else { return };
+            stat_tiles(ui, w, &self.tiles(theme));
+            ui.add_space(GAP);
+            let cols = if w >= 1000.0 { 2 } else { 1 };
+            let cells = grid_cells(ui, w, 4, cols, 250.0);
+            self.charts(ui, &cells);
+            ui.add_space(8.0);
         });
-        ctx.request_repaint_after(RELOAD);
+        ui.ctx().request_repaint_after(RELOAD);
+    }
+
+    fn charts(&self, ui: &mut egui::Ui, cells: &[Rect]) {
+        let (from, to) = self.span;
+        // never more columns than points, or the lines fall apart into dots
+        let n = (((to - from) / STEP_S).max(10) as usize).min(COLS);
+        let b = |c: Column| -> Vec<Option<f32>> {
+            buckets(&self.points, from, to, n, c).into_iter().map(|x| x.map(|(avg, _)| avg as f32)).collect()
+        };
+        let long = RANGES[self.range].1 > 86400;
+        let times: Vec<String> = (0..5).map(|k| time_label(from + (to - from) * k / 4, long)).collect();
+        let when = |i: usize| when_label(from + ((i as f64 + 0.5) * (to - from) as f64 / n as f64) as i64);
+        let s = |name: &str, values, color, dashed, fill| Series {
+            name: name.into(),
+            values,
+            color,
+            dashed,
+            fill,
+        };
+        let pct = |v: f32| format!("{v:.0}%");
+        let deg = |v: f32| format!("{v:.0}°");
+        let speed = |v: f32| fmt_speed(v as f64);
+        // the temperature range from the data: 30..80 at least
+        let temps: Vec<f32> =
+            [b(Column::CpuTemp), b(Column::GpuTemp)].concat().into_iter().flatten().collect();
+        let t_lo = temps.iter().copied().fold(30.0f32, f32::min);
+        let t_hi = temps.iter().copied().fold(80.0f32, f32::max);
+        let down = b(Column::Down);
+        let up = b(Column::Up);
+        let net_hi = down.iter().chain(&up).flatten().copied().fold(64.0 * 1024.0, f32::max) * 1.1;
+        let charts = [
+            TimeChart {
+                title: tr("Процессор и видеокарта"),
+                series: vec![
+                    s("CPU", b(Column::Cpu), pal().cpu_line, false, true),
+                    s("GPU", b(Column::Gpu), pal().gpu_line, true, false),
+                ],
+                lo: 0.0,
+                hi: 100.0,
+                fmt: &pct,
+                times: times.clone(),
+                when: &when,
+            },
+            TimeChart {
+                title: tr("Температуры"),
+                series: vec![
+                    s("CPU", b(Column::CpuTemp), pal().warn, false, false),
+                    s("GPU", b(Column::GpuTemp), pal().gpu_line, true, false),
+                ],
+                lo: (t_lo / 10.0).floor() * 10.0,
+                hi: (t_hi / 10.0).ceil() * 10.0,
+                fmt: &deg,
+                times: times.clone(),
+                when: &when,
+            },
+            TimeChart {
+                title: tr("Память"),
+                series: vec![s("RAM", b(Column::Ram), pal().gpu_line, false, true)],
+                lo: 0.0,
+                hi: 100.0,
+                fmt: &pct,
+                times: times.clone(),
+                when: &when,
+            },
+            TimeChart {
+                title: tr("Сеть"),
+                series: vec![s("↓", down, pal().cpu_line, false, true), s("↑", up, pal().good, true, false)],
+                lo: 0.0,
+                hi: net_hi,
+                fmt: &speed,
+                times,
+                when: &when,
+            },
+        ];
+        for (i, (c, r)) in charts.iter().zip(cells).enumerate() {
+            time_chart(ui, *r, c, &format!("hist-chart-{i}"));
+        }
     }
 }

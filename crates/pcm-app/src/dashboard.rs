@@ -585,11 +585,8 @@ impl Dashboard {
                 }
             }
             TAB_HISTORY => {
-                let (theme, key) = {
-                    let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-                    (f.theme.clone(), f.theme_key.clone())
-                };
-                self.history.ui(ui, &mut self.fonts, theme.as_ref(), &key);
+                let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
+                self.history.ui(ui, theme.as_ref());
             }
             TAB_GAMES => {
                 let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
