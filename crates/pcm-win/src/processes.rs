@@ -121,6 +121,42 @@ fn token_user(process: windows_sys::Win32::Foundation::HANDLE) -> Option<Vec<u8>
     }
 }
 
+/// This process's CPU (% of the whole PC since the last read) and private memory.
+#[derive(Default)]
+pub struct OwnUsage {
+    last: Option<(f64, u64)>,
+}
+
+impl OwnUsage {
+    pub fn read(&mut self) -> (Option<f32>, Option<u64>) {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX};
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        let ft = |f: FILETIME| ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64;
+        unsafe {
+            let h = GetCurrentProcess();
+            let mut t = [FILETIME::default(); 4];
+            let cpu = if GetProcessTimes(h, &mut t[0], &mut t[1], &mut t[2], &mut t[3]) != 0 {
+                let busy = ft(t[2]) + ft(t[3]); // kernel + user, 100 ns
+                let now = crate::now_s();
+                let threads = crate::system::threads().max(1) as f64;
+                let pct = self.last.filter(|(t0, _)| now > *t0).map(|(t0, b0)| {
+                    (busy.saturating_sub(b0) as f64 / 1e7 / (now - t0) / threads * 100.0) as f32
+                });
+                self.last = Some((now, busy));
+                pct
+            } else {
+                None
+            };
+            let mut pmc: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+            pmc.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+            let mem = (GetProcessMemoryInfo(h, &mut pmc as *mut _ as *mut _, pmc.cb) != 0)
+                .then_some(pmc.PrivateUsage as u64);
+            (cpu, mem)
+        }
+    }
+}
+
 /// The program file's name of a process, lower case without ".exe"
 /// ("civilizationvi_dx12"); None when it can't be opened.
 pub fn image_name(pid: u32) -> Option<String> {

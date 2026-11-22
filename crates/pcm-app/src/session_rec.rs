@@ -66,9 +66,33 @@ fn refresh_hz(hwnd: HWND) -> u32 {
     }
 }
 
+/// The game being recorded, for the PC Monitor window's game card.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct LiveGame {
+    /// The program name ("stalzonew").
+    pub game: String,
+    pub title: String,
+    /// Since the session started.
+    pub seconds: f64,
+    /// Frames in the last full second.
+    pub fps: Option<f64>,
+    /// Over the session so far (pauses left out), every few seconds.
+    pub low1: Option<f64>,
+    pub low01: Option<f64>,
+    /// Frames in each of the last full seconds, oldest first (up to LIVE_BARS).
+    pub fps_hist: Vec<f32>,
+}
+
+pub const LIVE_BARS: usize = 40;
+/// The session's lows are worked out again this often (they sort every frame).
+const LOWS_EVERY_S: f64 = 5.0;
+
 #[derive(Default)]
 pub struct Recorder {
     rec: Option<Recording>,
+    /// (when, 1% low, 0.1% low) of the running session.
+    lows: Option<(f64, f64, f64)>,
 }
 
 impl Recorder {
@@ -156,6 +180,30 @@ impl Recorder {
     pub fn stop(&mut self) -> Option<Recording> {
         self.rec.take()
     }
+
+    /// The running session, as the window shows it.
+    pub fn live(&mut self) -> Option<LiveGame> {
+        let rec = self.rec.as_ref()?;
+        let times = if rec.times[0].len() >= rec.times[1].len() { &rec.times[0] } else { &rec.times[1] };
+        let now = pcm_win::now_s();
+        let elapsed = (now - rec.t0).max(0.0);
+        let hist = per_second(times, now, (elapsed.floor() as usize).min(LIVE_BARS));
+        if self.lows.is_none_or(|(at, _, _)| now - at >= LOWS_EVERY_S || at < rec.t0) {
+            let s = session::summarize(&session::frame_times(times), &[]);
+            self.lows = Some((now, s.low1, s.low01));
+        }
+        let (_, low1, low01) = self.lows.unwrap_or_default();
+        let known = |v: f64| (v > 0.0).then_some(v);
+        Some(LiveGame {
+            game: rec.info.game.clone(),
+            title: rec.info.title.clone(),
+            seconds: elapsed,
+            fps: hist.last().map(|&f| f as f64),
+            low1: known(low1),
+            low01: known(low01),
+            fps_hist: hist,
+        })
+    }
 }
 
 /// The session of a finished recording; None when it was too short to keep.
@@ -174,6 +222,23 @@ pub fn build(rec: Recording) -> Option<Session> {
     info.summary = summarize(&frame_ms, &samples);
     info.samples = samples;
     (info.summary.active_s >= MIN_ACTIVE_S).then_some(Session { info, frame_ms })
+}
+
+/// Frames in each of the last `n` full seconds before `now`, oldest first.
+fn per_second(times: &[f64], now: f64, n: usize) -> Vec<f32> {
+    let end = now.floor();
+    let mut bars = vec![0f32; n];
+    for &t in times.iter().rev() {
+        if t >= end {
+            continue; // the second still running
+        }
+        let k = (end - t) as usize; // 0 = the last full second
+        if k >= n {
+            break;
+        }
+        bars[n - 1 - k] += 1.0;
+    }
+    bars
 }
 
 pub fn sessions_dir(data_dir: &Path) -> PathBuf {

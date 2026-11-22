@@ -107,6 +107,21 @@ pub fn cores() -> Option<u32> {
     (count > 0).then_some(count)
 }
 
+/// "Windows 11 Pro", "Windows 10 Home": the build tells 10 from 11 (the
+/// registry's ProductName says 10 on both), EditionID the edition.
+pub fn windows_name() -> String {
+    let base = if is_windows_11() { "Windows 11" } else { "Windows 10" };
+    let key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    let edition = match reg_string(HKEY_LOCAL_MACHINE, key, "EditionID").as_deref() {
+        Some(e) if e.starts_with("Core") => "Home",
+        Some(e) if e.starts_with("Professional") => "Pro",
+        Some(e) if e.starts_with("Enterprise") => "Enterprise",
+        Some(e) if e.starts_with("Education") => "Education",
+        _ => "",
+    };
+    if edition.is_empty() { base.to_string() } else { format!("{base} {edition}") }
+}
+
 /// Is the PawnIO driver (LibreHardwareMonitor's way to the CPU sensors) installed?
 pub fn pawnio_installed() -> bool {
     reg_string(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\PawnIO", "ImagePath").is_some()

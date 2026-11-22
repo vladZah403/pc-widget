@@ -51,11 +51,29 @@ fn play_time(s: f64) -> String {
     }
 }
 
-fn dir() -> PathBuf {
+pub(crate) fn dir() -> PathBuf {
     crate::session_rec::sessions_dir(&crate::widget_win::data_dir())
 }
 
 impl SessionsTab {
+    /// Show this session's report (the home page's "Открыть отчёт сессии").
+    pub fn open_path(&mut self, p: &std::path::Path) {
+        self.delete_armed = None;
+        match Session::load(p) {
+            Ok(session) => {
+                self.open = Some(Open { path: p.to_path_buf(), session, texture: None, drawn: None });
+                self.note = None;
+            }
+            Err(e) => {
+                self.open = None;
+                self.note = Some(trf(
+                    "Не удалось прочитать {file}: {e}",
+                    &[("file", p.display().to_string()), ("e", e.to_string())],
+                ));
+            }
+        }
+    }
+
     fn reload(&mut self) {
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir())
             .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())

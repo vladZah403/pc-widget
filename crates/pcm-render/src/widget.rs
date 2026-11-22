@@ -32,8 +32,11 @@ pub const SUBJECT_GPU: usize = 1;
 pub const SUBJECT_RAM: usize = 2;
 pub const SUBJECT_NET: usize = 3;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Drive {
+    /// "Samsung SSD 980 PRO 1TB"
+    pub model: String,
     pub letters: Vec<String>,
     pub critical: u8,
     pub temp: Option<f32>,
@@ -121,6 +124,27 @@ pub struct Data {
     pub update: Option<String>,
     pub update_state: Option<UpdateState>,
     pub update_auto: bool,
+    // --- for the PC Monitor window (the widget doesn't draw these) ---
+    /// Physical cores.
+    pub cpu_cores: Option<u32>,
+    /// The GPU's load over the last minute, oldest first (up to 60).
+    pub gpu_hist: Vec<f32>,
+    /// RAM from SMBIOS: "DDR4", MT/s, each stick's size in bytes.
+    pub mem_kind: Option<String>,
+    pub mem_speed: Option<u32>,
+    pub mem_sticks: Vec<u64>,
+    /// The main adapter's IPv4 address.
+    pub net_ip: Option<String>,
+    /// Processes running (while the window asks for the process list).
+    pub proc_count: Option<u32>,
+    /// The fans' names, as `fans`.
+    pub fan_names: Vec<String>,
+    /// "Windows 11 Pro"
+    pub windows: String,
+    pub pawnio: bool,
+    /// PC Monitor's own CPU (% of the PC) and private memory.
+    pub own_cpu: Option<f32>,
+    pub own_mem: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1361,6 +1385,7 @@ pub fn sample_data() -> Data {
             spare_min: 10,
             wear: 3,
             written: Some(38_900_000_000_000),
+            model: "Samsung SSD 980 1TB".into(),
         }],
         fans: vec![1450.0, 820.0],
         sensors_online: true,

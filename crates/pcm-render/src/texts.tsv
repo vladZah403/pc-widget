@@ -333,3 +333,52 @@ PC Monitor: игровая сессия	PC Monitor: game session	PC Monitor: і�
 Частота видеокарты	GPU clock	Частота відеокарти	GPU-Takt
 Фон панели	Panel background	Фон панелі	Hintergrund der Anzeige
 Пример — так панель будет выглядеть поверх игры:	A sample: this is how the panel will look over a game:	Приклад — так панель виглядатиме поверх гри:	Beispiel: So sieht die Anzeige über einem Spiel aus:
+Главная	Home	Головна	Start
+1 мин	1 min	1 хв	1 Min.
+5 мин	5 min	5 хв	5 Min.
+1 ч	1 h	1 год	1 Std.
+24 ч	24 h	24 год	24 Std.
+Цвет значения показывает нагрузку: от спокойного до горячего	A value's colour shows the load: from calm to hot	Колір значення показує навантаження: від спокійного до гарячого	Die Farbe eines Werts zeigt die Last: von ruhig bis heiß
+{n} ядро	{n} cores	{n} ядро	{n} Kerne
+{n} ядра	{n} cores	{n} ядра	{n} Kerne
+{n} ядер	{n} cores	{n} ядер	{n} Kerne
+свободно {v} ГБ	{v} GB free	вільно {v} ГБ	{v} GB frei
+здоровье {v}%	health {v}%	здоров'я {v}%	Zustand {v}%
+Диск {d}	Drive {d}	Диск {d}	Laufwerk {d}
+% занято	% used	% зайнято	% belegt
+Нагрузка	Load	Навантаження	Last
+−{v} с	−{v} s	−{v} с	−{v} s
+−{v} мин	−{v} min	−{v} хв	−{v} Min.
+Температуры	Temperatures	Температури	Temperaturen
+Датчики температуры не отвечают	Temperature sensors don't answer	Датчики температури не відповідають	Temperatursensoren antworten nicht
+мс	ms	мс	ms
+Загрузка ↓	Download ↓	Завантаження ↓	Download ↓
+Отдача ↑	Upload ↑	Віддача ↑	Upload ↑
+Пинг {host}	Ping {host}	Пінг {host}	Ping {host}
+Больше всего нагружают	Busiest programs	Найбільше навантажують	Größte Last
+Все {n}	All {n}	Усі {n}	Alle {n}
+Все	All	Усі	Alle
+Работает {t}	Up {t}	Працює {t}	Läuft seit {t}
+Игровая сессия	Game session	Ігрова сесія	Spielsitzung
+Запись · {t}	Recording · {t}	Запис · {t}	Aufnahme · {t}
+Последняя: {name} · {when}	Last: {name} · {when}	Остання: {name} · {when}	Zuletzt: {name} · {when}
+Запусти игру — сессия запишется сама: FPS, 1% low, нагрузка и температуры по секундам.	Start a game and the session records itself: FPS, 1% low, load and temperatures second by second.	Запусти гру — сесія запишеться сама: FPS, 1% low, навантаження і температури по секундах.	Starte ein Spiel – die Sitzung zeichnet sich selbst auf: FPS, 1% Low, Last und Temperaturen pro Sekunde.
+Открыть отчёт сессии	Open the session report	Відкрити звіт сесії	Sitzungsbericht öffnen
+Все сессии	All sessions	Усі сесії	Alle Sitzungen
+Оборудование	Hardware	Обладнання	Hardware
+Игровой режим	Game mode	Ігровий режим	Spielmodus
+Счётчик FPS, панель поверх игры и запись игровых сессий	FPS counter, the panel over the game and game session recording	Лічильник FPS, панель поверх гри і запис ігрових сесій	FPS-Zähler, Anzeige über dem Spiel und Aufnahme der Spielsitzungen
+Трей	Tray	Трей	Infobereich
+Панель задач	Taskbar	Панель завдань	Taskleiste
+Оверлей	Overlay	Оверлей	Overlay
+Только это окно	Only this window	Лише це вікно	Nur dieses Fenster
+Режимы	Modes	Режими	Modi
+Настроить	Set up	Налаштувати	Einrichten
+Все датчики отвечают	All sensors answer	Усі датчики відповідають	Alle Sensoren antworten
+Датчики не отвечают	Sensors don't answer	Датчики не відповідають	Sensoren antworten nicht
+права администратора есть	admin rights: yes	права адміністратора є	Administratorrechte: ja
+без прав администратора	no admin rights	без прав адміністратора	ohne Administratorrechte
+PawnIO установлен	PawnIO installed	PawnIO встановлено	PawnIO installiert
+PawnIO не установлен	PawnIO not installed	PawnIO не встановлено	PawnIO nicht installiert
+Обновлено	Updated	Оновлено	Aktualisiert
+PC Monitor сам	PC Monitor itself	PC Monitor сам	PC Monitor selbst

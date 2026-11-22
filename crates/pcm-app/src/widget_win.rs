@@ -1197,6 +1197,7 @@ impl App {
             custom: self.cfg.custom_colors.clone(),
             cfg: Box::new(self.cfg.clone()),
             start,
+            game: self.recorder.live().map(Box::new),
         };
         if !d.send(&msg) {
             self.dashboard = None;

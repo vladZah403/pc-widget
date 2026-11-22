@@ -265,6 +265,7 @@ mod tests {
                 spare_min: 10,
                 wear: 92,
                 written: None,
+                model: String::new(),
             }],
             ..Data::default()
         };

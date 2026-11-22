@@ -92,6 +92,12 @@ fn run(shared: Arc<Shared>) {
     let helper =
         sensors_helper::find().map(|p| sensors_helper::Helper::start(p, "cpu,gpu,board,storage", 1000));
 
+    let mut own = processes::OwnUsage::default();
+    let cpu_cores = system::cores();
+    let windows = system::windows_name();
+    let pawnio = system::pawnio_installed();
+    let sticks = pcm_win::smbios::read().map(|t| t.memory).unwrap_or_default();
+    let mut gpu_hist = VecDeque::new();
     let mut cpu_hist = VecDeque::new();
     let mut net_hist = VecDeque::new();
     let mut volumes = Vec::new();
@@ -167,6 +173,7 @@ fn run(shared: Arc<Shared>) {
         }
         let want_procs = shared.want_procs.load(Ordering::Relaxed);
         let want_all = shared.want_procs_all.load(Ordering::Relaxed);
+        let mut proc_count = None;
         let (procs_list, procs_all) = if want_procs || want_all {
             let own = shared.pids.lock().map(|p| p.clone()).unwrap_or_default();
             let list: Vec<_> = tracker
@@ -176,6 +183,7 @@ fn run(shared: Arc<Shared>) {
                 .collect();
             let top: Option<Vec<(String, f32, u64)>> =
                 want_procs.then(|| list.iter().take(5).map(|g| (g.name.clone(), g.cpu, g.memory)).collect());
+            proc_count = want_all.then(|| list.iter().map(|g| g.pids.len() as u32).sum());
             let all: Option<Vec<ProcRow>> = want_all.then(|| {
                 list.iter()
                     .take(80)
@@ -199,6 +207,8 @@ fn run(shared: Arc<Shared>) {
         }
         // the GPU worth showing: the busiest (a game's), else the first
         let g = s.gpus.iter().max_by(|a, b| a.load.unwrap_or(0.0).total_cmp(&b.load.unwrap_or(0.0)));
+        push(&mut gpu_hist, g.and_then(|g| g.load).unwrap_or(0.0));
+        let (own_cpu, own_mem) = own.read();
         let gpu_temp = g.and_then(|g| g.temp);
         let (ping_ready, ping_ms, ping_host) = ping.lock().map(|p| p.clone()).unwrap_or_default();
         let ssd_temp = s.drives.iter().filter_map(|d| d.temp).reduce(f32::max);
@@ -244,6 +254,7 @@ fn run(shared: Arc<Shared>) {
                 .drives
                 .iter()
                 .map(|d| Drive {
+                    model: d.model.clone(),
                     letters: d.letters.clone(),
                     critical: d.critical,
                     temp: d.temp,
@@ -266,6 +277,18 @@ fn run(shared: Arc<Shared>) {
             update: None,
             update_state: None,
             update_auto: false,
+            cpu_cores,
+            gpu_hist: gpu_hist.iter().copied().collect(),
+            mem_kind: sticks.iter().find_map(|m| m.kind.clone()),
+            mem_speed: sticks.iter().find_map(|m| m.speed_mts),
+            mem_sticks: sticks.iter().map(|m| m.size).collect(),
+            net_ip: s.net.as_ref().and_then(|n| n.ipv4.clone()),
+            proc_count,
+            fan_names: s.fans.iter().take(3).map(|f| f.name.clone()).collect(),
+            windows: windows.clone(),
+            pawnio,
+            own_cpu,
+            own_mem,
         };
         if let Ok(mut d) = shared.data.lock() {
             *d = Some(data);

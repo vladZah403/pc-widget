@@ -19,6 +19,7 @@
 mod alerts;
 mod collect;
 mod dash_history;
+mod dash_home;
 mod dash_procs;
 mod dash_sessions;
 mod dash_settings;
