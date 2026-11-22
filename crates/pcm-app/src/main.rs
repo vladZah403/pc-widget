@@ -59,6 +59,9 @@ fn attach_console() {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == elevation::CLEANUP_ARG) {
+        std::process::exit(elevation::cleanup()); // the uninstaller asks
+    }
     if args.iter().any(|a| a == updater::FINISH_ARG) {
         std::process::exit(updater::finish_update(&args)); // the new version installs itself
     }

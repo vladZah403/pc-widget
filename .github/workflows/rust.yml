@@ -83,8 +83,43 @@ jobs:
             if ($names -notcontains $need) { throw "PC-Monitor.zip has no $need" }
           }
 
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          # while 2.0 is tried next to 1.8 (elevation.rs), the setup has its own AppId and folder
+          $beside = Select-String -Path crates\pcm-app\src\elevation.rs -Pattern '^pub const BESIDE_1_8: bool = true;' -Quiet
+          $defines = @("/DAppVersion=$version")
+          if ($beside) { $defines += "/DBeside18" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q @defines installer2.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $folder = if ($beside) { "PC-Monitor 2" } else { "PC-Monitor" }
+          "APP_FOLDER=$env:LOCALAPPDATA\Programs\$folder" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Check that the installer installs, runs and uninstalls
+        shell: pwsh
+        run: |
+          Start-Process dist2\PC-Monitor-Setup.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=autostart" -Wait
+          $app = $env:APP_FOLDER
+          if (-not (Test-Path "$app\PC-Monitor.exe")) { throw "not installed in $app" }
+          if (-not (Test-Path "$app\_internal\pcm-sensors.exe")) { throw "no sensor helper in $app" }
+          $exe = [regex]::Escape("$app\PC-Monitor.exe")
+          $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+          if (-not (@($run.PSObject.Properties.Value) -match ($exe + '" --autostart'))) { throw "no autostart entry" }
+          Start-Process "$app\PC-Monitor.exe" -ArgumentList "--diag", "--out", "$env:RUNNER_TEMP\diag-installed.txt" -Wait
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\diag-installed.txt" -Pattern "sensor helper: LHM" -Quiet)) { throw "the installed program can't read its helper" }
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          # the uninstaller hands over to a copy of itself in %TEMP%: wait for it to finish
+          for ($i = 0; $i -lt 30 -and (Test-Path "$app\PC-Monitor.exe"); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$app\PC-Monitor.exe") { throw "not uninstalled" }
+          $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+          if (@($run.PSObject.Properties.Value) -match $exe) { throw "the autostart entry stayed" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: PC-Monitor-2
-          path: dist2/PC-Monitor.zip
+          path: |
+            dist2/PC-Monitor.zip
+            dist2/PC-Monitor-Setup.exe
           retention-days: 14

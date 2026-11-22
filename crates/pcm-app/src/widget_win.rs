@@ -2280,6 +2280,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
         // it (and its children: the helper, the window) would block an update
         let _ = std::env::set_current_dir(data_dir());
         updater::clean_leftovers();
+        elevation::sync_uninstall_version();
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         crate::apply_language(&cfg.lang);
         let shared = Shared::new(cfg.ping_host.clone());

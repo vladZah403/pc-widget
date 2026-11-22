@@ -27,6 +27,13 @@ pub const TASK_NAME: &str = RUN_NAME;
 pub const INSTALL_FOLDER: &str = if BESIDE_1_8 { "PC-Monitor 2" } else { "PC-Monitor" };
 const MUTEX: &str = if BESIDE_1_8 { "Local\\PCMonitor2Widget" } else { "Local\\PCMonitorWidget" };
 const EXE_NAME: &str = "PC-Monitor.exe";
+/// The setup's entry in "Apps & features" (installer2.iss AppId, "_is1" by Inno).
+const UNINSTALL_KEY: &str = if BESIDE_1_8 {
+    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F0D6F2A-6C1B-4E9B-9D5E-2B7C3A1F4E12}_is1"
+} else {
+    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F0D6F2A-6C1B-4E9B-9D5E-2B7C3A1F4E11}_is1"
+};
+pub const CLEANUP_ARG: &str = "--cleanup";
 /// Started with Windows: quietly (no PC Monitor window), unlike by hand.
 pub const AUTOSTART_ARG: &str = "--autostart";
 const INTERNAL: &str = "_internal";
@@ -416,6 +423,56 @@ pub fn restart_elevated(owner: isize) -> bool {
         already_running(); // take the lock back
     }
     started
+}
+
+/// After an in-app update, "Apps & features" shows the new version too
+/// (the entry the setup made for this user, if there is one).
+pub fn sync_uninstall_version() {
+    if os::user_value(UNINSTALL_KEY, "DisplayVersion").is_some_and(|v| v != crate::APP_VERSION) {
+        os::set_user_value(UNINSTALL_KEY, "DisplayVersion", crate::APP_VERSION);
+    }
+}
+
+/// `PC-Monitor.exe --cleanup`, run by the uninstaller: the Run entry goes,
+/// and what admin mode left (the elevated task, the protected copy in
+/// Program Files) too. That needs admin rights: Windows asks only when
+/// there is something to remove.
+pub fn cleanup() -> i32 {
+    os::set_run_entry(RUN_NAME, None);
+    let dir = install_dir();
+    // only a folder that holds our program is ever removed
+    let copy = dir.join(EXE_NAME).is_file();
+    let task = task_enabled();
+    if !copy && !task {
+        return 0;
+    }
+    if !pcm_win::system::is_admin() {
+        let Some(exe) = this_exe() else { return 1 };
+        let owner = os::foreground_window();
+        return if os::run_as_admin_and_wait(&exe, CLEANUP_ARG, owner, std::time::Duration::from_secs(60)) {
+            0
+        } else {
+            1 // UAC refused: the task and the copy stay
+        };
+    }
+    if task {
+        set_task(false);
+    }
+    if copy {
+        let mut left = true;
+        for _ in 0..20 {
+            // the copy may still be on its way out (the uninstaller closed it)
+            if std::fs::remove_dir_all(&dir).is_ok() || !dir.exists() {
+                left = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        if left {
+            return 1;
+        }
+    }
+    0
 }
 
 /// One line for --diag.
