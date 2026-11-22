@@ -135,6 +135,9 @@ pub struct Config {
     pub lang: String,
     /// Temperatures need the sensor helper with admin rights (1.8's run_as_admin).
     pub run_as_admin: bool,
+    /// The PC Monitor window's × quits the program; off: only the window
+    /// closes, the widget, tray icons and taskbar panel keep running.
+    pub close_quits: bool,
     /// Look for a new version every 6 hours.
     pub check_updates: bool,
     /// The newest version the user has been told about.
@@ -179,6 +182,7 @@ impl Default for Config {
             auto_game: true,
             lang: "auto".into(),
             run_as_admin: false,
+            close_quits: false,
             check_updates: true,
             update_seen: String::new(),
             profiles: BTreeMap::new(),

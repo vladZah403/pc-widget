@@ -265,6 +265,15 @@ impl SettingsTab {
                 );
             }
 
+            heading(ui, &tr("Закрытие окна"));
+            ui.radio_value(
+                &mut c.close_quits,
+                false,
+                tr("Крестик закрывает только окно: виджет, значки в трее и мини-панель работают дальше"),
+            );
+            ui.radio_value(&mut c.close_quits, true, tr("Крестик полностью закрывает программу"));
+            hint(ui, &tr("Выйти совсем можно через «Выход» в меню значка в трее."));
+
             heading(ui, &tr("Запуск"));
             if let Some(st) = start {
                 let mut auto = st.autostart;

@@ -1028,9 +1028,11 @@ impl App {
                     self.autostart = Some(elevation::set_autostart(on, self.cfg.run_as_admin))
                 }
                 // posted, not DestroyWindow here: WM_DESTROY needs the app (a game session is saved)
-                FromDashboard::Quit => unsafe {
-                    PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
-                },
+                FromDashboard::Closed => {
+                    if self.cfg.close_quits {
+                        unsafe { PostMessageW(self.hwnd, WM_CLOSE, 0, 0) };
+                    }
+                }
                 FromDashboard::SetAdmin(on) => {
                     self.cfg.run_as_admin = on;
                     self.save();
@@ -1086,6 +1088,7 @@ impl App {
         c.alert_disk = new.alert_disk;
         c.ping_host = new.ping_host;
         c.lang = new.lang;
+        c.close_quits = new.close_quits;
         c.sanitize();
         self.cfg = c;
         self.save();

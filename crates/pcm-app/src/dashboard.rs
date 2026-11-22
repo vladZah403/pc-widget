@@ -65,8 +65,9 @@ pub enum FromDashboard {
     SetAutostart(bool),
     /// "Права администратора (температуры)": may restart the widget elevated.
     SetAdmin(bool),
-    /// The window's × was clicked: PC Monitor quits altogether (Vlad's choice).
-    Quit,
+    /// The window was closed by the user (×, Alt+F4): the widget quits too
+    /// if the settings say so.
+    Closed,
 }
 
 /// Ask the widget something.
@@ -253,11 +254,11 @@ impl Dashboard {
 }
 
 impl eframe::App for Dashboard {
-    /// The window closes: by its × (or Alt+F4) PC Monitor quits altogether;
-    /// not when the widget has gone already or in a test run.
+    /// The window closes: by its × (or Alt+F4) the widget is told (it may
+    /// quit too); not when the widget has gone already or in a test run.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if self.quit_on_close && !self.feed.lock().map(|f| f.gone).unwrap_or(true) {
-            send(&FromDashboard::Quit);
+            send(&FromDashboard::Closed);
         }
     }
 

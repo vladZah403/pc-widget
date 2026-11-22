@@ -315,3 +315,7 @@ PC Monitor: игровая сессия	PC Monitor: game session	PC Monitor: і�
 Питание	Power	Живлення	Stromversorgung
 Свободно	Free	Вільно	Frei
 Частота	Clock	Частота	Takt
+Закрытие окна	Closing the window	Закриття вікна	Fenster schließen
+Крестик закрывает только окно: виджет, значки в трее и мини-панель работают дальше	The × closes only the window: the widget, tray icons and taskbar panel keep running	Хрестик закриває лише вікно: віджет, значки в треї та міні-панель працюють далі	Das × schließt nur das Fenster: Widget, Tray-Symbole und Mini-Leiste laufen weiter
+Крестик полностью закрывает программу	The × quits the program	Хрестик повністю закриває програму	Das × beendet das Programm
+Выйти совсем можно через «Выход» в меню значка в трее.	To quit completely, use “Exit” in the tray icon's menu.	Вийти зовсім можна через «Вихід» у меню значка в треї.	Ganz beenden: „Beenden“ im Menü des Tray-Symbols.
