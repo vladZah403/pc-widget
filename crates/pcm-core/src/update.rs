@@ -15,7 +15,7 @@ pub const ZIP_NAME: &str = "PC-Monitor.zip";
 pub const SIG_NAME: &str = "PC-Monitor.zip.minisig";
 /// The public half of the release key (minisign); the secret half is only
 /// on Vlad's PC. A zip without a valid signature is never installed.
-pub const PUBLIC_KEY: &str = "RWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // set in 6.4c
+pub const PUBLIC_KEY: &str = "RWRl4jRnn5RGbck2PpZTPtvrKF4aLJK+e3zfaGL7Q9fOpxoKfpBN+X5T"; // key id 6D46949F6734E265
 const MAX_ZIP: u64 = 200 << 20;
 const MAX_SIG: u64 = 4096;
 /// The program unpacks to well under these: a far bigger archive is not ours.
@@ -253,6 +253,17 @@ mod tests {
         assert!(verify_signature(b"Test", sig.as_bytes(), key).is_err(), "another file");
         assert!(verify_signature(b"test", b"garbage", key).is_err());
         assert!(verify_signature(b"test", sig.as_bytes(), PUBLIC_KEY).is_err(), "not our key");
+    }
+
+    #[test]
+    fn our_release_key() {
+        // signed on Vlad's PC with the secret key (rsign sign, prehashed): PUBLIC_KEY is its other half
+        let file = include_bytes!("../tests/fixtures/release-key-check.txt");
+        let sig = include_bytes!("../tests/fixtures/release-key-check.txt.minisig");
+        assert_eq!(verify_signature(file, sig, PUBLIC_KEY), Ok(()));
+        let mut changed = file.to_vec();
+        changed[0] ^= 1;
+        assert!(verify_signature(&changed, sig, PUBLIC_KEY).is_err());
     }
 
     fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {

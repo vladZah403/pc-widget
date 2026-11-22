@@ -1,0 +1,2 @@
+# signed test files: byte for byte as signed, never CRLF-converted
+crates/pcm-core/tests/fixtures/release-key-check.txt* -text

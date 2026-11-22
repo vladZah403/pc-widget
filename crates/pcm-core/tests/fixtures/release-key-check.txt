@@ -1,0 +1,1 @@
+PC Monitor: a file signed with the release key, to check the key in the program.
