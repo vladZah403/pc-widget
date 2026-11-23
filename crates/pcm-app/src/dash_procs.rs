@@ -122,11 +122,19 @@ impl ProcsTab {
             let right = card.right() - 18.0;
             let btn_w = 128.0;
             let count_x = right - btn_w - 20.0; // right edge of "Процессов"
-            // the network column when there's room for it
+            // the columns the card has room for: the network from 860 px, the
+            // bars and the process count from 700; narrower, just the numbers
             let show_net = card.width() >= 860.0;
+            let full = card.width() >= 700.0;
             let net_x = count_x - 200.0; // left edge of the network column
-            let mem_x = if show_net { net_x - 190.0 } else { count_x - 250.0 }; // left edge of the memory column
-            let cpu_x = mem_x - 180.0; // left edge of the CPU column
+            let mem_x = if show_net {
+                net_x - 190.0
+            } else if full {
+                count_x - 250.0
+            } else {
+                right - btn_w - 20.0 - 80.0
+            }; // left edge of the memory column
+            let cpu_x = mem_x - if full { 180.0 } else { 90.0 }; // left edge of the CPU column
             // traffic needs admin rights: without them the column says how to get it
             let net_known = rows.iter().any(|r| r.net.is_some());
             let max_net = rows.iter().filter_map(|r| r.net).fold(64.0 * 1024.0, f64::max);
@@ -138,7 +146,7 @@ impl ProcsTab {
                 (tr("Сеть"), Sort::Net, net_x, Align2::LEFT_TOP),
                 (tr("Процессов"), Sort::Count, count_x, Align2::RIGHT_TOP),
             ] {
-                if sort == Sort::Net && !show_net {
+                if (sort == Sort::Net && !show_net) || (sort == Sort::Count && !full) {
                     continue;
                 }
                 let on = self.sort == sort;
@@ -193,20 +201,24 @@ impl ProcsTab {
                     bold(13.0),
                     cpu_col,
                 );
-                bar(
-                    &p,
-                    Rect::from_min_size(pos2(cpu_x + 56.0, cy - 2.5), vec2(90.0, 5.0)),
-                    r.cpu / 50.0,
-                    cpu_col,
-                );
+                if full {
+                    bar(
+                        &p,
+                        Rect::from_min_size(pos2(cpu_x + 56.0, cy - 2.5), vec2(90.0, 5.0)),
+                        r.cpu / 50.0,
+                        cpu_col,
+                    );
+                }
                 // memory: against the biggest program
                 p.text(pos2(mem_x, cy), Align2::LEFT_CENTER, fmt_mem(r.memory), text_font(13.0), pal().text);
-                bar(
-                    &p,
-                    Rect::from_min_size(pos2(mem_x + 72.0, cy - 2.5), vec2(90.0, 5.0)),
-                    r.memory as f32 / max_mem as f32,
-                    pal().gpu_line,
-                );
+                if full {
+                    bar(
+                        &p,
+                        Rect::from_min_size(pos2(mem_x + 72.0, cy - 2.5), vec2(90.0, 5.0)),
+                        r.memory as f32 / max_mem as f32,
+                        pal().gpu_line,
+                    );
+                }
                 // network: received + sent, against the busiest program
                 match r.net.filter(|_| show_net) {
                     Some(bps) => {
@@ -224,13 +236,15 @@ impl ProcsTab {
                     }
                     None => {}
                 }
-                p.text(
-                    pos2(count_x, cy),
-                    Align2::RIGHT_CENTER,
-                    r.count.to_string(),
-                    text_font(13.0),
-                    pal().dim,
-                );
+                if full {
+                    p.text(
+                        pos2(count_x, cy),
+                        Align2::RIGHT_CENTER,
+                        r.count.to_string(),
+                        text_font(13.0),
+                        pal().dim,
+                    );
+                }
                 let b = Rect::from_min_size(pos2(right - btn_w, cy - 14.0), vec2(btn_w, 28.0));
                 if can_close(&r.name) {
                     let armed = self.armed.as_ref().is_some_and(|(n, _)| *n == r.name);
