@@ -1,6 +1,6 @@
 # PC Monitor 2.0: the release signature. Vlad's PC signs a release's
 # PC-Monitor.zip with the release key (sign-release.bat) and pushes it as
-# signatures/<tag>.minisig to v2. This checks it against the zip in that
+# signatures/<tag>.minisig to main (or v2). This checks it against the zip in that
 # release and the public key in the code (update::PUBLIC_KEY), and attaches it
 # as PC-Monitor.zip.minisig: only then 2.0 installs the update. A tag without
 # "-" (2.0.0, not 2.0.0-beta.1) then becomes the latest release, the one 1.8
@@ -9,7 +9,7 @@ name: Release signature
 
 on:
   push:
-    branches: [v2]
+    branches: [main, v2]
     paths: ["signatures/*.minisig"]
 
 permissions:
