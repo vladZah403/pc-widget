@@ -558,6 +558,10 @@ impl SettingsTab {
                 self.search.clear();
             }
         });
+        // a card asked for (a link elsewhere) must not be hidden by a search
+        if JUMP.with(|j| j.borrow().is_some()) {
+            self.search.clear();
+        }
         let query = self.search.trim().to_lowercase();
         SEARCH.with(|s| *s.borrow_mut() = query.clone());
         if query.is_empty() {
