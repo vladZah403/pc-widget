@@ -51,6 +51,8 @@ pub enum ToDashboard {
     OpenSession(std::path::PathBuf),
     /// "Итоги недели" was clicked: History for the week.
     HistoryWeek,
+    /// Settings at a card (its title untranslated, "Предупреждения").
+    Settings(String),
 }
 
 /// How PC Monitor starts (not in the settings file: Windows keeps it).
@@ -142,6 +144,8 @@ struct Feed {
     open_session: Option<std::path::PathBuf>,
     /// Show History for the week (ToDashboard::HistoryWeek).
     history_week: bool,
+    /// Show this settings card (ToDashboard::Settings).
+    settings_card: Option<String>,
     /// The widget has gone: the window closes without asking it to quit.
     gone: bool,
 }
@@ -814,10 +818,19 @@ impl eframe::App for Dashboard {
         }
         self.keys(&ctx);
         self.screenshot(&ctx);
-        let (focus, session, week) = {
+        let (focus, session, week, card) = {
             let mut f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-            (std::mem::take(&mut f.focus), f.open_session.take(), std::mem::take(&mut f.history_week))
+            (
+                std::mem::take(&mut f.focus),
+                f.open_session.take(),
+                std::mem::take(&mut f.history_week),
+                f.settings_card.take(),
+            )
         };
+        if let Some(card) = card {
+            self.tab = TAB_SETTINGS;
+            crate::dash_settings::jump_to(tr(&card));
+        }
         if week {
             self.history.show_week();
             self.tab = TAB_HISTORY;
@@ -917,6 +930,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                             }
                             ToDashboard::HistoryWeek => {
                                 f.history_week = true;
+                                f.focus = true;
+                            }
+                            ToDashboard::Settings(card) => {
+                                f.settings_card = Some(card);
                                 f.focus = true;
                             }
                         }

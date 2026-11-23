@@ -1,8 +1,9 @@
-//! An alert card into a PNG: `cargo run -p pcm-render --example alert -- OUT.png [TITLE BODY]`
+//! An alert card into a PNG, and one with buttons (OUT-buttons.png):
+//! `cargo run -p pcm-render --example alert -- OUT.png [TITLE BODY]`
 
 use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
-use pcm_render::widget::alert_card;
+use pcm_render::widget::{alert_card, alert_card_with};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -12,5 +13,9 @@ fn main() {
         args.get(3).map_or("Занято 93% (20,3 из 21,8 ГБ). Больше всех: chrome — 3,4 ГБ.", String::as_str);
     let mut fonts = Fonts::system();
     let pm = alert_card(&mut fonts, 1.5, title, body, Theme::Heat.scale().at(1.0)).unwrap();
-    pm.save_png(out).unwrap();
+    pm.save_png(&out).unwrap();
+    // the same with its buttons, beside it: OUT-buttons.png
+    let names = ["Изменить порог".to_string(), "Не показывать час".to_string()];
+    let (pm, _) = alert_card_with(&mut fonts, 1.5, title, body, Theme::Heat.scale().at(1.0), &names).unwrap();
+    pm.save_png(out.replace(".png", "-buttons.png")).unwrap();
 }

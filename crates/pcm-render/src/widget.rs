@@ -1515,6 +1515,19 @@ pub const CARD_W: f32 = 300.0;
 /// An alert card (1.8's Toast): a coloured bar, the title, the text wrapped
 /// in lines.
 pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent: Rgb) -> Option<Pixmap> {
+    alert_card_with(fonts, scale, title, body, accent, &[]).map(|(pm, _)| pm)
+}
+
+/// An alert card with buttons along its bottom (wrapping when they don't
+/// fit): the card and each button's rectangle, physical px (x0, y0, x1, y1).
+pub fn alert_card_with(
+    fonts: &mut Fonts,
+    scale: f32,
+    title: &str,
+    body: &str,
+    accent: Rgb,
+    buttons: &[String],
+) -> Option<(Pixmap, Vec<[f32; 4]>)> {
     // wrap the text at the card's inner width
     let probe = Canvas::new(1, 1, scale)?;
     let max = CARD_W - 46.0;
@@ -1531,7 +1544,22 @@ pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent
     if !line.is_empty() {
         lines.push(line);
     }
-    let h = 46.0 + 17.0 * lines.len() as f32;
+    // the buttons: left to right under the text, a new row when one doesn't fit
+    const BTN_H: f32 = 28.0;
+    const BTN_ROW: f32 = 34.0;
+    let mut placed: Vec<(f32, usize, f32)> = Vec::new();
+    let (mut x, mut row) = (30.0f32, 0usize);
+    for b in buttons {
+        let w = probe.width(fonts, b, Style::SemiBold, 12.0) + 24.0;
+        if x > 30.0 && x + w > CARD_W - 16.0 {
+            x = 30.0;
+            row += 1;
+        }
+        placed.push((x, row, w));
+        x += w + 8.0;
+    }
+    let text_h = 46.0 + 17.0 * lines.len() as f32;
+    let h = if buttons.is_empty() { text_h } else { text_h + 2.0 + (row + 1) as f32 * BTN_ROW + 8.0 };
     let mut c = Canvas::new((CARD_W * scale).round() as u32, (h * scale).round() as u32, scale)?;
     c.rrect(0.0, 0.0, CARD_W, h, 12.0, BORDER);
     let bw = 1.0 / scale * scale.round().max(1.0);
@@ -1541,7 +1569,14 @@ pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent
     for (i, l) in lines.iter().enumerate() {
         c.text(fonts, 30.0, 48.0 + 17.0 * i as f32, l, Style::Regular, 12.0, DIM);
     }
-    Some(c.pm)
+    let mut rects = Vec::new();
+    for (b, (x, row, w)) in buttons.iter().zip(&placed) {
+        let y = text_h + 2.0 + *row as f32 * BTN_ROW;
+        c.rrect_stroke(*x, y, x + w, y + BTN_H, 8.0, 1.0, BORDER);
+        c.text(fonts, x + 12.0, y + 18.5, b, Style::SemiBold, 12.0, TEXT);
+        rects.push([x * scale, y * scale, (x + w) * scale, (y + BTN_H) * scale]);
+    }
+    Some((c.pm, rects))
 }
 
 /// The two-line readout on the taskbar (1.8's TaskbarPanel): CPU/RAM load,
@@ -1695,6 +1730,16 @@ pub(crate) mod tests {
     fn alert_cards_wrap() {
         let mut fonts = Fonts::system();
         let short = alert_card(&mut fonts, 1.0, "Батарея садится", "Осталось 12%.", (200, 100, 0)).unwrap();
+        // buttons make it taller and say where they are
+        let names = ["Изменить порог".to_string(), "Не показывать час".to_string()];
+        let (with, rects) =
+            alert_card_with(&mut fonts, 1.5, "Батарея садится", "Осталось 12%.", (200, 100, 0), &names)
+                .unwrap();
+        assert_eq!(rects.len(), 2);
+        assert!(with.height() > short.height() * 3 / 2, "a row of buttons under the text");
+        for r in &rects {
+            assert!(r[0] >= 0.0 && r[2] <= with.width() as f32 && r[3] <= with.height() as f32, "{r:?}");
+        }
         let long_text = "Свободно 9,8 ГБ (2%). Очисти корзину и «Загрузки» или удали ненужные программы.";
         let long = alert_card(&mut fonts, 1.0, "Мало места на диске C:", long_text, (200, 100, 0)).unwrap();
         assert_eq!(short.width(), 300);

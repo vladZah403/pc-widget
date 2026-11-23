@@ -40,7 +40,11 @@ struct State {
 #[derive(Default)]
 pub struct Alerts {
     states: HashMap<String, State>,
-    held: Option<Alert>,
+    held: Option<(String, Alert)>,
+    /// "Не показывать час": a rule's key and until when (s, as `now`).
+    snoozed: HashMap<String, f64>,
+    /// The rule of the alert check() returned last ("cpu_temp", "ram"…).
+    pub fired_key: Option<String>,
 }
 
 impl Alerts {
@@ -53,7 +57,8 @@ impl Alerts {
         cleared: bool,
         hold_s: f64,
         make: impl FnOnce() -> Alert,
-    ) -> Option<Alert> {
+    ) -> Option<(String, Alert)> {
+        let snoozed = self.snoozed.get(key).is_some_and(|until| now < *until);
         let st = self.states.entry(key.into()).or_insert(State {
             armed: true,
             since: None,
@@ -61,10 +66,10 @@ impl Alerts {
         });
         if active {
             let since = *st.since.get_or_insert(now);
-            if st.armed && now - since >= hold_s && now - st.last >= COOLDOWN_S {
+            if st.armed && !snoozed && now - since >= hold_s && now - st.last >= COOLDOWN_S {
                 st.armed = false;
                 st.last = now;
-                return Some(make());
+                return Some((key.to_string(), make()));
             }
         } else {
             st.since = None;
@@ -87,7 +92,7 @@ impl Alerts {
         in_game: bool,
         top_ram: impl FnOnce() -> Option<(String, u64)>,
     ) -> Option<Alert> {
-        let mut fired: Vec<Alert> = Vec::new();
+        let mut fired: Vec<(String, Alert)> = Vec::new();
         let lim = limits.temp;
         if let Some(t) = d.temp_cpu {
             let body = trf(
@@ -209,9 +214,19 @@ impl Alerts {
             }
             return None;
         }
-        fired.pop().or_else(|| self.held.take())
+        let (key, alert) = fired.pop().or_else(|| self.held.take())?;
+        self.fired_key = Some(key);
+        Some(alert)
+    }
+
+    /// "Не показывать час": the rule `key` stays quiet until `until` (s, as `now`).
+    pub fn snooze(&mut self, key: &str, until: f64) {
+        self.snoozed.insert(key.to_string(), until);
     }
 }
+
+/// The rules whose limit the settings change ("Изменить порог").
+pub const WITH_LIMIT: [&str; 5] = ["cpu_temp", "gpu_temp", "ram", "battery", "disk_space"];
 
 #[cfg(test)]
 mod tests {
@@ -240,6 +255,22 @@ mod tests {
         a.check(720.0, &data(80.0), &LIMITS, "C:", false, none);
         a.check(721.0, &data(95.0), &LIMITS, "C:", false, none);
         assert!(a.check(726.0, &data(95.0), &LIMITS, "C:", false, none).is_some());
+    }
+
+    #[test]
+    fn says_which_rule_and_snoozes_it() {
+        let mut a = Alerts::default();
+        let none = || None;
+        a.check(0.0, &data(95.0), &LIMITS, "C:", false, none);
+        assert!(a.check(5.0, &data(95.0), &LIMITS, "C:", false, none).is_some());
+        assert_eq!(a.fired_key.as_deref(), Some("cpu_temp"));
+        // "Не показывать час": cooled, hot again after the cooldown, still quiet within the hour
+        a.snooze("cpu_temp", 5.0 + 3600.0);
+        a.check(100.0, &data(50.0), &LIMITS, "C:", false, none);
+        a.check(700.0, &data(95.0), &LIMITS, "C:", false, none);
+        assert!(a.check(710.0, &data(95.0), &LIMITS, "C:", false, none).is_none(), "snoozed");
+        // after it: back
+        assert!(a.check(3700.0, &data(95.0), &LIMITS, "C:", false, none).is_some());
     }
 
     #[test]

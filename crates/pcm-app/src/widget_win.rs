@@ -15,7 +15,7 @@ use pcm_render::overlay::Look;
 use pcm_render::text::Fonts;
 use pcm_render::theme::{DARK_INK, LIGHT_INK, Rgb, Theme, hex};
 use pcm_render::widget::{
-    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, WidgetLook, alert_card,
+    BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, WidgetLook, alert_card_with,
     hover_card, side_tab,
 };
 use windows_sys::Win32::Foundation::*;
@@ -306,6 +306,8 @@ struct App {
     toast_session: Option<PathBuf>,
     /// The alert card on screen is about an update: a click updates or opens this page.
     toast_link: Option<ToastLink>,
+    /// The card's buttons: where (physical px in the card) and what they do.
+    toast_buttons: Vec<([f32; 4], ToastButton)>,
     /// Since when a game is in front / since when none is (the automatic profile).
     game_seen: Option<std::time::Instant>,
     game_gone: Option<std::time::Instant>,
@@ -331,6 +333,17 @@ struct App {
 }
 
 /// What a click on the alert card does besides opening a session's report.
+/// A button on the alert card.
+#[derive(Clone)]
+enum ToastButton {
+    /// "Изменить порог": Settings at "Предупреждения".
+    Limits,
+    /// "Не показывать час": this alert rule is quiet for an hour.
+    Snooze(String),
+    /// "Открыть отчёт" / "Открыть историю": what a click on the card does.
+    Open,
+}
+
 enum ToastLink {
     Update,
     Page(String),
@@ -950,7 +963,16 @@ impl App {
         let in_game = self.busy && self.cfg.quiet_games;
         let now = self.started.elapsed().as_secs_f64();
         if let Some(alert) = self.alerts.check(now, &d, &limits, &system, in_game, Self::top_ram) {
-            self.show_toast(&alert);
+            // what can be done about it, right on the card
+            let key = self.alerts.fired_key.clone().unwrap_or_default();
+            let mut buttons = Vec::new();
+            if crate::alerts::WITH_LIMIT.contains(&key.as_str()) {
+                buttons.push((tr("Изменить порог"), ToastButton::Limits));
+            }
+            if !key.is_empty() {
+                buttons.push((tr("Не показывать час"), ToastButton::Snooze(key)));
+            }
+            self.show_toast_with(&alert, buttons);
         }
     }
 
@@ -1002,20 +1024,29 @@ impl App {
             body += " ";
             body += &trf("Процессор — до {t}°.", &[("t", format!("{t:.0}"))]);
         }
-        body += " ";
-        body += &tr("Нажми, чтобы открыть историю за неделю.");
-        self.show_toast(&Alert { title: tr("Итоги недели"), body, hot: false });
+        let week = Alert { title: tr("Итоги недели"), body, hot: false };
+        self.show_toast_with(&week, vec![(tr("Открыть историю"), ToastButton::Open)]);
         self.toast_link = Some(ToastLink::Week);
     }
 
     /// The alert card in the bottom-right corner of the work area; a click closes it.
     fn show_toast(&mut self, a: &Alert) {
+        self.show_toast_with(a, Vec::new());
+    }
+
+    /// The alert card with buttons along its bottom.
+    fn show_toast_with(&mut self, a: &Alert, buttons: Vec<(String, ToastButton)>) {
         self.toast_session = None;
         self.toast_link = None;
         let scale = self.tab_scale();
         let sc = self.theme().scale();
         let accent = if a.hot { sc.at(1.0) } else { sc.at(0.75) };
-        let Some(pm) = alert_card(&mut self.fonts, scale, &a.title, &a.body, accent) else { return };
+        let names: Vec<String> = buttons.iter().map(|(n, _)| n.clone()).collect();
+        let Some((pm, rects)) = alert_card_with(&mut self.fonts, scale, &a.title, &a.body, accent, &names)
+        else {
+            return;
+        };
+        self.toast_buttons = rects.into_iter().zip(buttons.into_iter().map(|(_, b)| b)).collect();
         let mut wa = RECT::default();
         unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut _ as *mut _, 0) };
         let gap = (14.0 * scale).round() as i32;
@@ -1548,7 +1579,7 @@ impl App {
         let s = &info.summary;
         let name = if info.title.trim().is_empty() { &info.game } else { &info.title };
         let body = trf(
-            "{name}: {time}, в среднем {fps} FPS, 1% low {low}. Нажми, чтобы открыть отчёт.",
+            "{name}: {time}, в среднем {fps} FPS, 1% low {low}.",
             &[
                 ("name", name.to_string()),
                 ("time", fmt_play_time(s.active_s)),
@@ -1558,8 +1589,33 @@ impl App {
         );
         let alert = Alert { title: tr("Игровая сессия записана"), body, hot: false };
         let path = path.clone();
-        self.show_toast(&alert);
+        self.show_toast_with(&alert, vec![(tr("Открыть отчёт"), ToastButton::Open)]);
         self.toast_session = Some(path);
+    }
+
+    /// A click on the alert card at (x, y), its own physical px: one of its
+    /// buttons, or the card (what its text says).
+    fn toast_clicked_at(&mut self, x: i32, y: i32) {
+        let (x, y) = (x as f32, y as f32);
+        let hit = self.toast_buttons.iter().find(|(r, _)| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
+        match hit.map(|(_, b)| b.clone()) {
+            Some(ToastButton::Limits) => {
+                self.toast_session = None;
+                self.toast_link = None;
+                self.open_dashboard(Some(crate::dashboard::TAB_SETTINGS));
+                if let Some(d) = &self.dashboard {
+                    d.send(&ToDashboard::Settings("Предупреждения".into()));
+                }
+            }
+            Some(ToastButton::Snooze(key)) => {
+                self.toast_session = None;
+                self.toast_link = None;
+                let now = self.started.elapsed().as_secs_f64();
+                self.alerts.snooze(&key, now + 3600.0);
+            }
+            Some(ToastButton::Open) | None => self.toast_clicked(),
+        }
+        self.toast_buttons.clear();
     }
 
     /// The alert card was clicked: a session's card opens its report.
@@ -2587,7 +2643,8 @@ unsafe extern "system" fn toast_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
     match msg {
         WM_LBUTTONUP => {
             unsafe { ShowWindow(hwnd, SW_HIDE) };
-            with_app(|a| a.toast_clicked());
+            let (x, y) = lparam_xy(lp);
+            with_app(|a| a.toast_clicked_at(x, y));
             0
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
@@ -2933,6 +2990,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
                 report: ReportWin::new(report_hwnd),
                 toast_session: None,
                 toast_link: None,
+                toast_buttons: Vec::new(),
                 game_seen: None,
                 game_gone: None,
                 auto_switched: false,

@@ -242,7 +242,6 @@ GPU {t}°. Понизь настройки графики или огранич�
 Жду данные от виджета…	Waiting for data from the widget…	Чекаю на дані від віджета…	Warte auf Daten vom Widget…
 «{tab}» появится позже.	"{tab}" comes later.	«{tab}» з'явиться пізніше.	„{tab}“ kommt später.
 Windows отказала: нужны права администратора.	Windows refused: admin rights are needed.	Windows відмовила: потрібні права адміністратора.	Windows hat abgelehnt: Administratorrechte sind nötig.
-{name}: {time}, в среднем {fps} FPS, 1% low {low}. Нажми, чтобы открыть отчёт.	{name}: {time}, {fps} FPS on average, 1% low {low}. Click to open the report.	{name}: {time}, у середньому {fps} FPS, 1% low {low}. Натисни, щоб відкрити звіт.	{name}: {time}, im Schnitt {fps} FPS, 1% low {low}. Klicken öffnet den Bericht.
 Игровая сессия записана	Game session recorded	Ігрову сесію записано	Spielsitzung aufgezeichnet
 Не удалось прочитать {file}.	Couldn't read {file}.	Не вдалося прочитати {file}.	{file} konnte nicht gelesen werden.
 Отчёт не открылся	The report didn't open	Звіт не відкрився	Der Bericht ließ sich nicht öffnen
@@ -491,7 +490,6 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 За компьютером: {time}.	PC on: {time}.	За комп'ютером: {time}.	PC an: {time}.
 В играх: {time}, больше всего — {game} ({fps} FPS).	In games: {time}, most of all {game} ({fps} FPS).	В іграх: {time}, найбільше — {game} ({fps} FPS).	In Spielen: {time}, am meisten {game} ({fps} FPS).
 Процессор — до {t}°.	Processor up to {t}°.	Процесор — до {t}°.	Prozessor bis {t}°.
-Нажми, чтобы открыть историю за неделю.	Click to open the week's history.	Натисни, щоб відкрити історію за тиждень.	Klicke, um den Verlauf der Woche zu öffnen.
 Раз в неделю: сколько ПК работал, во что ты играл и с каким FPS	Once a week: how long the PC ran, what you played and at what FPS	Раз на тиждень: скільки ПК працював, у що ти грав і з яким FPS	Einmal pro Woche: wie lange der PC lief, was du gespielt hast und mit welchen FPS
 Игры за период	Games in this period	Ігри за період	Spiele im Zeitraum
 всего {time}	{time} in all	усього {time}	insgesamt {time}
@@ -516,3 +514,8 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 Скрыть	Hide	Сховати	Ausblenden
 Скрытые:	Hidden:	Сховані:	Ausgeblendet:
 «Скрыть» убирает блок, стрелки двигают его в ряду. Скрытые появятся здесь	“Hide” removes a block, the arrows move it along its row. Hidden ones show up here	«Сховати» прибирає блок, стрілки рухають його в ряду. Сховані з'являться тут	„Ausblenden“ entfernt einen Block, die Pfeile verschieben ihn in seiner Reihe. Ausgeblendete erscheinen hier
+Изменить порог	Change the limit	Змінити поріг	Grenze ändern
+Не показывать час	Not for an hour	Не показувати годину	Eine Stunde nicht
+Открыть историю	Open History	Відкрити історію	Verlauf öffnen
+Открыть отчёт	Open the report	Відкрити звіт	Bericht öffnen
+{name}: {time}, в среднем {fps} FPS, 1% low {low}.	{name}: {time}, {fps} FPS on average, 1% low {low}.	{name}: {time}, у середньому {fps} FPS, 1% low {low}.	{name}: {time}, im Schnitt {fps} FPS, 1% Low {low}.
