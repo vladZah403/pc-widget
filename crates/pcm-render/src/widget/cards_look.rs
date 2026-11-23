@@ -4,6 +4,9 @@
 //! Compact: one line a reading, with a bar.
 //!
 //! The same readings as the PC Monitor window's home cards, smaller.
+//!
+//! The gauges look (WidgetLook::Gauges) shows the same readings as round
+//! gauges, two a row, under the same header and over the same footer.
 
 use super::*;
 use crate::canvas::{Align, Canvas, part};
@@ -14,6 +17,10 @@ use tiny_skia::Pixmap;
 
 /// Logical width of the card look (fixed: Ctrl + wheel scales it).
 pub const CARDS_W: f32 = 280.0;
+/// Logical width of the gauges look.
+pub const GAUGES_W: f32 = 300.0;
+const TILE_H: f32 = 122.0;
+const TILE_GAP: f32 = 8.0;
 pub const COMPACT_W: f32 = 264.0;
 const HEAD_H: f32 = 46.0;
 const ROW_H: f32 = 60.0;
@@ -33,6 +40,13 @@ struct Reading {
     hist: Vec<f32>,
     /// The short name for the compact look ("CPU").
     short: String,
+    /// The temperature under a gauge ("66°") and its colour's 0..1.
+    temp: Option<(String, f32)>,
+}
+
+/// "66°" / "≈66°" and its place on the 30..100 ° scale.
+fn temp_of(t: Option<f32>, approx: bool) -> Option<(String, f32)> {
+    t.map(|t| (format!("{}{t:.0}°", if approx { "≈" } else { "" }), (t - 30.0) / 70.0))
 }
 
 fn readings(d: &Data, view: &View) -> Vec<Reading> {
@@ -54,6 +68,7 @@ fn readings(d: &Data, view: &View) -> Vec<Reading> {
         value: format!("{:.0}%", d.cpu),
         hist: d.cpu_hist.clone(),
         short: "CPU".into(),
+        temp: temp_of(d.temp_cpu, d.temp_cpu_approx),
     });
     if let Some(load) = d.gpu_load.filter(|_| !hidden("gpu")) {
         let mut sub = Vec::new();
@@ -73,6 +88,11 @@ fn readings(d: &Data, view: &View) -> Vec<Reading> {
             value: format!("{load:.0}%"),
             hist: d.gpu_hist.clone(),
             short: "GPU".into(),
+            temp: match (d.temp_gpu, d.gpu_shared) {
+                (Some(t), _) => temp_of(Some(t), false),
+                (None, true) => temp_of(d.temp_cpu, true),
+                _ => None,
+            },
         });
     }
     if !hidden("ram") {
@@ -86,6 +106,7 @@ fn readings(d: &Data, view: &View) -> Vec<Reading> {
             value: format!("{:.0}%", d.ram_pct),
             hist: d.ram_hist.clone(),
             short: "RAM".into(),
+            temp: None,
         });
     }
     // the system drive, else the first
@@ -107,6 +128,7 @@ fn readings(d: &Data, view: &View) -> Vec<Reading> {
             value: format!("{pct:.0}%"),
             hist: d.io_hist.clone(),
             short: letter.clone(),
+            temp: temp_of(drive.and_then(|x| x.temp), false),
         });
     }
     out
@@ -119,11 +141,23 @@ pub fn height(d: &Data, view: &View) -> f32 {
         let temp = d.temp_cpu.is_some() as u8 as f32;
         return 12.0 + (n + temp) * LINE_H + 8.0;
     }
-    HEAD_H + n * ROW_H + if footer(d, view).is_some() { FOOT_H } else { 10.0 }
+    let body = if view.look == WidgetLook::Gauges {
+        let rows = (n / 2.0).ceil();
+        rows * TILE_H + (rows - 1.0).max(0.0) * TILE_GAP + 4.0
+    } else {
+        n * ROW_H
+    };
+    HEAD_H + body + if footer(d, view).is_some() { FOOT_H } else { 10.0 }
 }
 
 pub fn width(view: &View) -> f32 {
-    if view.compact { COMPACT_W } else { CARDS_W }
+    if view.compact {
+        COMPACT_W
+    } else if view.look == WidgetLook::Gauges {
+        GAUGES_W
+    } else {
+        CARDS_W
+    }
 }
 
 /// "↓ 24,5 МБ/с · ↑ 3,2 МБ/с" and "пинг 14 мс"; None when both are hidden.
@@ -155,9 +189,24 @@ pub fn render(fonts: &mut Fonts, d: &Data, view: &View) -> Option<Frame> {
     } else {
         x.card_header(view, &ink);
         let mut y = HEAD_H;
-        for (i, r) in list.iter().enumerate() {
-            x.card_row(r, y, view.hover_row == Some(i), &ink);
-            y += ROW_H;
+        if view.look == WidgetLook::Gauges {
+            // two a row; an odd last one takes the whole row
+            let tw = (w - 2.0 * PAD - TILE_GAP) / 2.0;
+            for (i, r) in list.iter().enumerate() {
+                let (col, row) = (i % 2, i / 2);
+                let alone = i == list.len() - 1 && i % 2 == 0;
+                let x0 = PAD + col as f32 * (tw + TILE_GAP);
+                let x1 = if alone { w - PAD } else { x0 + tw };
+                let y0 = HEAD_H + row as f32 * (TILE_H + TILE_GAP);
+                x.gauge_tile(r, x0, y0, x1, y0 + TILE_H, view.hover_row == Some(i), &ink);
+            }
+            let rows = list.len().div_ceil(2) as f32;
+            y += rows * TILE_H + (rows - 1.0).max(0.0) * TILE_GAP + 4.0;
+        } else {
+            for (i, r) in list.iter().enumerate() {
+                x.card_row(r, y, view.hover_row == Some(i), &ink);
+                y += ROW_H;
+            }
         }
         if let Some((net, ping)) = footer(d, view) {
             x.c.rect(PAD, y + 4.0, w - PAD, y + 4.0 + 1.0 / s, ink.track);
@@ -249,6 +298,42 @@ impl Ctx<'_> {
         let sub = self.c.ellipsize(self.f, &r.sub, Style::Regular, 11.5, room);
         self.c.text(self.f, tx, top + 44.0, &sub, Style::Regular, 11.5, ink.dim);
         self.sparkline(spark_x0, cy - 8.0, w - PAD, cy + 8.0, &r.hist, col);
+    }
+
+    /// A gauge tile: a 270° arc open at the bottom, the number in it, and
+    /// under it the name with the temperature.
+    #[allow(clippy::too_many_arguments)]
+    fn gauge_tile(&mut self, r: &Reading, x0: f32, y0: f32, x1: f32, y1: f32, hover: bool, ink: &Ink) {
+        let fill = if hover { ink.row_hover } else { lerp(ink.card, ink.text, 0.035) };
+        self.c.rrect(x0, y0, x1, y1, 12.0, fill);
+        let row = self.bx(x0, y0, x1, y1);
+        self.boxes.rows.push((r.subject.unwrap_or(usize::MAX), row));
+        let t = r.t.clamp(0.0, 1.0);
+        let col = self.scale.at(t);
+        let (cx, cy, rad) = ((x0 + x1) / 2.0, y0 + 50.0, 33.0);
+        self.c.arc(cx, cy, rad, 135.0, 270.0, 7.0, true, ink.track);
+        if t > 0.004 {
+            self.c.arc(cx, cy, rad, 135.0, 270.0 * t, 7.0, true, col);
+        }
+        // "37" big, "%" small
+        let (num, unit) = match r.value.strip_suffix('%') {
+            Some(n) => (n.to_string(), "%"),
+            None => (r.value.clone(), ""),
+        };
+        self.c.rich(
+            self.f,
+            cx,
+            cy + 8.0,
+            &[part(num, Style::SemiBold, 22.0, col), part(unit.to_string(), Style::Regular, 12.0, ink.dim)],
+            Align::Center,
+        );
+        // the name and the temperature, in the arc's open bottom and under it
+        let mut parts = vec![part(r.title.clone(), Style::Regular, 11.5, ink.dim)];
+        if let Some((text, tt)) = &r.temp {
+            parts.push(part(" · ".to_string(), Style::Regular, 11.5, ink.faint));
+            parts.push(part(text.clone(), Style::SemiBold, 11.5, self.scale.at(tt.clamp(0.0, 1.0))));
+        }
+        self.c.rich(self.f, cx, y1 - 13.0, &parts, Align::Center);
     }
 
     /// The last minute as a thin line: its own range, so a calm minute still moves.

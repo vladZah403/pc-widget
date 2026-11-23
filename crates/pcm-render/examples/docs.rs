@@ -57,6 +57,11 @@ fn main() {
     let light = shot(View { light: true, ..cards.clone() });
     let compact = shot(View { compact: true, ..cards.clone() });
     save(&row(&[dark, light, compact], s), "widget");
+    // the gauges look, dark and light
+    let gauges = View { look: WidgetLook::Gauges, ..View::default() };
+    let gd = shot(gauges.clone());
+    let gl = shot(View { light: true, ..gauges });
+    save(&row(&[gd, gl], s), "widget-gauges");
     let classic = shot(View::default());
     let classic_compact = shot(View { compact: true, ..View::default() });
     save(&row(&[classic, classic_compact], s), "widget-classic");

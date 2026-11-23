@@ -824,9 +824,9 @@ fn widget(ui: &mut Ui, c: &mut Config, env: &mut Env) {
         |ui| {
             toggle(ui, &tr("Показывать виджет (Ctrl+Alt+W)"), "", &mut c.widget);
             sep(ui);
-            let looks = ["cards", "classic"];
+            let looks = ["cards", "gauges", "classic"];
             let at = looks.iter().position(|k| *k == c.widget_style);
-            let items = strings(&["Карточки", "Классический (как в 1.8)"]);
+            let items = strings(&["Карточки", "Шкалы", "Классический (как в 1.8)"]);
             if let Some(i) = choice(ui, &tr("Вид"), "", &items, at, "widget-look") {
                 c.widget_style = looks[i].to_string();
             }

@@ -561,3 +561,4 @@ FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче зв
 Файл подкачки приложений	Apps' swap file	Файл підкачки застосунків	Auslagerungsdatei der Apps
 Если гибернация не нужна, её выключает команда powercfg /h off (от администратора)	If you don't need hibernation, the command powercfg /h off (as admin) turns it off	Якщо гібернація не потрібна, її вимикає команда powercfg /h off (від адміністратора)	Wenn du den Ruhezustand nicht brauchst, schaltet ihn der Befehl powercfg /h off (als Admin) ab
 Размер задаётся в «Параметры быстродействия → Дополнительно → Виртуальная память»	Its size is set in Performance Options → Advanced → Virtual memory	Розмір задається в «Параметри швидкодії → Додатково → Віртуальна пам'ять»	Die Größe stellst du unter Leistungsoptionen → Erweitert → Virtueller Arbeitsspeicher ein
+Шкалы	Gauges	Шкали	Anzeigen

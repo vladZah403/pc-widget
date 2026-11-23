@@ -164,18 +164,29 @@ pub enum Edge {
     Bottom,
 }
 
-/// How the widget looks: 1.8's rows or the concept's cards.
+/// How the widget looks: 1.8's rows, the concept's cards, or round gauges.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WidgetLook {
     #[default]
     Classic,
     Cards,
+    /// Four round gauges in a grid (NZXT CAM's way), the card look's header and footer.
+    Gauges,
 }
 
 impl WidgetLook {
-    /// "cards" / "classic" (the settings' names); anything else is classic.
+    /// "cards" / "gauges" / "classic" (the settings' names); anything else is classic.
     pub fn from_name(name: &str) -> WidgetLook {
-        if name == "cards" { WidgetLook::Cards } else { WidgetLook::Classic }
+        match name {
+            "cards" => WidgetLook::Cards,
+            "gauges" => WidgetLook::Gauges,
+            _ => WidgetLook::Classic,
+        }
+    }
+
+    /// Cards and gauges: a fixed width, light or dark, a header with "›".
+    pub fn modern(self) -> bool {
+        self != WidgetLook::Classic
     }
 }
 
@@ -497,7 +508,7 @@ impl Renderer<'_> {
 
     /// Height of the widget in logical px.
     pub fn layout_height(d: &Data, view: &View) -> f32 {
-        if view.look == WidgetLook::Cards {
+        if view.look.modern() {
             return cards_look::height(d, view);
         }
         if view.compact {
@@ -509,7 +520,7 @@ impl Renderer<'_> {
     }
 
     pub fn render(&mut self, data: &Data, view: &View) -> Option<Frame> {
-        if view.look == WidgetLook::Cards {
+        if view.look.modern() {
             return cards_look::render(self.fonts, data, view);
         }
         let s = view.scale;

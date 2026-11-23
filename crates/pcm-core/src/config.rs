@@ -45,7 +45,7 @@ pub const LANGS: &[&str] = &["auto", "ru", "en", "uk", "de"];
 pub const PROFILES: &[&str] = &["work", "game"];
 
 /// The widget's looks (`widget_style`).
-pub const WIDGET_STYLES: [&str; 2] = ["cards", "classic"];
+pub const WIDGET_STYLES: [&str; 3] = ["cards", "gauges", "classic"];
 
 /// What a profile remembers (1.8's PROFILE_KEYS).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

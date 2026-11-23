@@ -89,6 +89,14 @@ fn widget_cards_look() {
 }
 
 #[test]
+fn widget_gauges_look() {
+    let gauges = View { look: WidgetLook::Gauges, ..View::default() };
+    check("widget-gauges-100", gauges.clone());
+    check("widget-gauges-light-100", View { light: true, ..gauges.clone() });
+    check("widget-gauges-hover-150", View { scale: 1.5, hover_row: Some(2), ..gauges });
+}
+
+#[test]
 fn widget_states() {
     // pinned, hovered row, armed close, the resize corner and edge line
     check(

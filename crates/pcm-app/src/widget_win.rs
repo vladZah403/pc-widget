@@ -427,8 +427,9 @@ impl App {
         None
     }
 
+    /// The cards or the gauges look (a fixed width, light or dark, "›").
     fn cards_look(&self) -> bool {
-        WidgetLook::from_name(&self.cfg.widget_style) == WidgetLook::Cards
+        WidgetLook::from_name(&self.cfg.widget_style).modern()
     }
 
     fn view(&self) -> View {
