@@ -29,6 +29,14 @@ const FRAME_COLS: usize = 480;
 const STUTTER_MS: f32 = 25.0;
 /// "в первые 2 минуты": loading hitches.
 const EARLY_S: f32 = 120.0;
+/// Stutters as % of the frames: from 1% the tile turns yellow, from 3% red.
+const STUTTER_WARN: f64 = 1.0;
+const STUTTER_HOT: f64 = 3.0;
+/// The GPU's load (75th percentile) from which the FPS is the GPU's limit.
+/// Integrated graphics share the chip's power with the CPU and rarely show
+/// more than ~85% (Vlad's Radeon in Civilization VI: 83–86%).
+const GPU_BOUND: f32 = 90.0;
+const IGPU_BOUND: f32 = 80.0;
 const NOTE_SAVE_EVERY: f32 = 0.8;
 
 /// The load and temperature lines: the GPU solid, the CPU dashed.
@@ -51,8 +59,12 @@ struct Stats {
     /// The stutter threshold (ms), the stutters' times (s from the start).
     thr_ms: f32,
     stutters: Vec<f32>,
-    /// The longest frame time per column and the average.
-    cols: Vec<(f32, f32)>,
+    /// The longest frame time per column, the average and its stutters.
+    cols: Vec<(f32, f32, u32)>,
+    /// A column with at least this many stutters gets a red mark.
+    mark_min: u32,
+    /// Frames played (pauses left out).
+    frames: usize,
     gpu_range: Option<(f32, f32)>,
     cpu_range: Option<(f32, f32)>,
     gpu_t_peak: Option<f32>,
@@ -77,24 +89,31 @@ fn stats(s: &Session) -> Stats {
     let frames_s: f32 = s.frame_ms.iter().sum::<f32>() / 1000.0;
     let last_sample = info.samples.last().map_or(0.0, |x| x.t);
     let span = (info.duration_s as f32).max(frames_s).max(last_sample).max(1.0);
-    let mut cols = vec![(0f32, 0f32, 0u32); FRAME_COLS];
+    // per column: the longest frame, the sum, frames, stutters
+    let mut cols = vec![(0f32, 0f32, 0u32, 0u32); FRAME_COLS];
     let mut stutters = Vec::new();
+    let mut frames = 0;
     let mut t = 0.0f32;
     for &ms in &s.frame_ms {
         t += ms / 1000.0;
         if ms <= 0.0 || ms >= pause {
             continue; // a pause (alt-tab, loading screen), not a frame
         }
-        if ms > thr_ms {
-            stutters.push(t);
-        }
+        frames += 1;
         let k = ((t / span) * FRAME_COLS as f32) as usize;
         let c = &mut cols[k.min(FRAME_COLS - 1)];
+        if ms > thr_ms {
+            stutters.push(t);
+            c.3 += 1;
+        }
         c.0 = c.0.max(ms);
         c.1 += ms;
         c.2 += 1;
     }
-    let cols = cols.into_iter().map(|(mx, sum, n)| (mx, if n > 0 { sum / n as f32 } else { 0.0 })).collect();
+    let played = cols.iter().filter(|c| c.2 > 0).count();
+    let mark_min = pcm_core::session::stutter_mark_min(stutters.len(), played);
+    let cols =
+        cols.into_iter().map(|(mx, sum, n, st)| (mx, if n > 0 { sum / n as f32 } else { 0.0 }, st)).collect();
     let pick = |f: fn(&pcm_core::session::Sample) -> Option<f32>| {
         info.samples.iter().filter_map(f).collect::<Vec<_>>()
     };
@@ -103,6 +122,8 @@ fn stats(s: &Session) -> Stats {
         thr_ms,
         stutters,
         cols,
+        mark_min,
+        frames,
         gpu_range: quartiles(pick(|x| x.gpu)),
         cpu_range: quartiles(pick(|x| x.cpu)),
         gpu_t_peak: peak(pick(|x| x.gpu_t)),
@@ -118,6 +139,22 @@ fn long_time(s: f64) -> String {
         trf("{h} ч {m} мин", &[("h", (s / 3600).to_string()), ("m", format!("{:02}", s / 60 % 60))])
     } else {
         trf("{m} мин {s} с", &[("m", (s / 60).to_string()), ("s", (s % 60).to_string())])
+    }
+}
+
+/// Stutters in % of the frames played.
+fn stutter_share(stutters: usize, frames: usize) -> f64 {
+    if frames == 0 { 0.0 } else { stutters as f64 * 100.0 / frames as f64 }
+}
+
+/// "0,5%", "<0,1%", "0%"
+fn share_text(share: f64) -> String {
+    if share <= 0.0 {
+        "0%".into()
+    } else if share < 0.1 {
+        format!("<{}%", dec("0.1".into()))
+    } else {
+        format!("{}%", dec(format!("{share:.1}")))
     }
 }
 
@@ -351,12 +388,15 @@ impl ReportPage {
             };
             Some((format!("{}{:.0}", if d >= 0.0 { "+" } else { "−" }, d.abs()), col))
         };
+        // the hotter of the two (an APU's CPU runs hotter than its graphics)
         let (peak, peak_unit) = match (self.stats.gpu_t_peak, self.stats.cpu_t_peak) {
+            (Some(g), Some(c)) if c > g => (Some(c), "°C CPU"),
             (Some(g), _) => (Some(g), "°C GPU"),
             (None, Some(c)) => (Some(c), "°C CPU"),
             _ => (None, ""),
         };
-        let stut = self.stats.stutters.len();
+        // stutters as a share of the frames: a count grows with the session's length
+        let share = stutter_share(self.stats.stutters.len(), self.stats.frames);
         let tiles: Vec<Tile> = vec![
             (
                 tr("Средний FPS"),
@@ -383,9 +423,17 @@ impl ReportPage {
             (tr("Время кадра"), dec(format!("{:.1}", s.median_ms)), tr("мс"), pal().text, None),
             (
                 tr("Подтормаживания"),
-                stut.to_string(),
+                share_text(share),
                 format!("> {:.0} {}", self.stats.thr_ms, tr("мс")),
-                if stut > 0 { pal().hot } else { pal().good },
+                if share >= STUTTER_HOT {
+                    pal().hot
+                } else if share >= STUTTER_WARN {
+                    pal().warn
+                } else if share > 0.0 {
+                    pal().text
+                } else {
+                    pal().good
+                },
                 None,
             ),
             (
@@ -503,15 +551,16 @@ impl ReportPage {
         fill_under(&p, &pts, plots[0].bottom(), pal().cpu_line);
         p.add(Shape::line(pts, Stroke::new(1.6, pal().cpu_line)));
 
-        // 2) frame time: the average per column, stutters as red marks, the zone above the threshold
+        // 2) frame time: the average per column, stutters as red marks (in a long
+        // session only where they bunch up), the zone above the threshold
         let thr = self.stats.thr_ms;
         let ft_hi = (thr * 1.6).max(40.0).round();
-        frame(
-            &p,
-            rects[1],
-            &tr("Время кадра"),
-            &trf("красные отметки — кадры дольше {v} мс", &[("v", format!("{thr:.0}"))]),
-        );
+        let note = if self.stats.mark_min > 1 {
+            trf("красные отметки — где кадров дольше {v} мс больше обычного", &[("v", format!("{thr:.0}"))])
+        } else {
+            trf("красные отметки — кадры дольше {v} мс", &[("v", format!("{thr:.0}"))])
+        };
+        frame(&p, rects[1], &tr("Время кадра"), &note);
         grid(&p, plots[1], 0.0, ft_hi, 2, |v| {
             if v >= ft_hi { format!("{v:.0} {}", tr("мс")) } else { format!("{v:.0}") }
         });
@@ -523,7 +572,7 @@ impl ReportPage {
         let n = self.stats.cols.len().max(2);
         let col_x = |i: usize, plot: &Rect| plot.left() + plot.width() * i as f32 / (n - 1) as f32;
         let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
-        for (i, (_, avg)) in self.stats.cols.iter().enumerate() {
+        for (i, (_, avg, _)) in self.stats.cols.iter().enumerate() {
             if *avg > 0.0 {
                 runs.last_mut().unwrap().push(pos2(col_x(i, &plots[1]), y_of(*avg, &plots[1], 0.0, ft_hi)));
             } else if !runs.last().unwrap().is_empty() {
@@ -534,8 +583,8 @@ impl ReportPage {
             p.add(Shape::line(r, Stroke::new(1.4, pal().cpu_line)));
         }
         let mut last_x = f32::MIN;
-        for (i, (mx, _)) in self.stats.cols.iter().enumerate() {
-            if *mx > thr {
+        for (i, (mx, _, st)) in self.stats.cols.iter().enumerate() {
+            if *st >= self.stats.mark_min {
                 let x = col_x(i, &plots[1]);
                 if x - last_x >= 2.0 {
                     let y = y_of(*mx, &plots[1], 0.0, ft_hi);
@@ -620,7 +669,7 @@ impl ReportPage {
                     0 => sm.fps.map(|v| vec![(format!("{v:.0} FPS"), pal().cpu_line)]).unwrap_or_default(),
                     1 => {
                         let i = ((f * (n - 1) as f32).round() as usize).min(n - 1);
-                        let (mx, avg) = self.stats.cols.get(i).copied().unwrap_or_default();
+                        let (mx, avg, _) = self.stats.cols.get(i).copied().unwrap_or_default();
                         vec![
                             (format!("⌀ {} {}", dec(format!("{avg:.1}")), tr("мс")), pal().cpu_line),
                             (
@@ -803,11 +852,12 @@ impl ReportPage {
         let gpu = self.stats.gpu_range.map(|r| r.1);
         let cpu = self.stats.cpu_range.map(|r| r.1);
         let at_refresh = info.refresh_hz > 0 && info.summary.avg_fps >= info.refresh_hz as f64 * 0.95;
+        let gpu_bound = if pcm_core::sensors::is_integrated(&info.gpu) { IGPU_BOUND } else { GPU_BOUND };
         let text = if at_refresh {
             tr(
                 "FPS держится у частоты монитора: его ограничивает вертикальная синхронизация или лимит кадров, а не железо.",
             )
-        } else if gpu.is_some_and(|g| g >= 90.0) {
+        } else if gpu.is_some_and(|g| g >= gpu_bound) {
             tr(
                 "Видеокарта загружена почти всё время, процессор — меньше. FPS упирается в видеокарту: снизить разрешение или качество графики даст больше, чем что-то с процессором.",
             )
@@ -952,6 +1002,11 @@ mod tests {
         assert_eq!(st.cols.len(), FRAME_COLS);
         assert!(st.cols.iter().any(|c| c.0 == 40.0));
         assert!(st.cols.iter().all(|c| c.0 < 2000.0), "the pause is left out");
+        assert_eq!(st.frames, 999);
+        assert_eq!(st.mark_min, 1, "a short session marks every stutter");
+        assert_eq!(st.cols.iter().map(|c| c.2).sum::<u32>(), 2);
+        assert!((stutter_share(2679, 523_000) - 0.512).abs() < 0.001);
+        assert_eq!(stutter_share(5, 0), 0.0);
     }
 
     #[test]

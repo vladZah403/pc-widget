@@ -202,6 +202,7 @@ pub fn session_report(
     let cols = ((p.x1 - p.x0) * scale).max(1.0) as usize;
     let mut lo = vec![f32::INFINITY; cols];
     let mut hi = vec![0.0f32; cols];
+    let mut n_bad = vec![0u32; cols];
     let mut t = 0.0f32;
     for &ms in &s.frame_ms {
         t += ms / 1000.0;
@@ -211,14 +212,20 @@ pub fn session_report(
         let i = (((t / span) * cols as f32) as usize).min(cols - 1);
         lo[i] = lo[i].min(ms);
         hi[i] = hi[i].max(ms);
+        if ms > bad_ms {
+            n_bad[i] += 1;
+        }
     }
+    // red only where bad frames bunch up (a long session has some in every column)
+    let played = hi.iter().filter(|h| **h > 0.0).count();
+    let mark_min = pcm_core::session::stutter_mark_min(n_bad.iter().sum::<u32>() as usize, played);
     for i in 0..cols {
         if hi[i] <= 0.0 {
             continue;
         }
         let x = p.x0 + i as f32 / scale;
         let (ya, yb) = (p.y(hi[i]), p.y(lo[i]));
-        let col = if hi[i] > bad_ms { bad } else { good };
+        let col = if n_bad[i] >= mark_min { bad } else { good };
         c.rect(x, ya, x + 1.0 / scale, yb.max(ya + 1.0 / scale), col);
     }
 

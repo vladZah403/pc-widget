@@ -408,6 +408,7 @@ PC Monitor сам	PC Monitor itself	PC Monitor сам	PC Monitor selbst
 пунктир — частота монитора {hz} Гц	dashed: the monitor's {hz} Hz	пунктир — частота монітора {hz} Гц	gestrichelt: Monitor mit {hz} Hz
 Кадры в секунду	Frames per second	Кадри за секунду	Bilder pro Sekunde
 красные отметки — кадры дольше {v} мс	red marks: frames longer than {v} ms	червоні позначки — кадри довші за {v} мс	rote Striche: Frames über {v} ms
+красные отметки — где кадров дольше {v} мс больше обычного	red marks: where frames longer than {v} ms bunch up	червоні позначки — де кадрів довших за {v} мс більше, ніж зазвичай	rote Striche: wo sich Frames über {v} ms häufen
 сплошная — видеокарта, пунктир — процессор	solid: graphics card, dashed: processor	суцільна — відеокарта, пунктир — процесор	durchgezogen: Grafikkarte, gestrichelt: Prozessor
 0 мин	0 min	0 хв	0 Min.
 Что ограничивает	What limits the FPS	Що обмежує	Was die FPS begrenzt

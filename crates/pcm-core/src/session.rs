@@ -245,6 +245,19 @@ impl Session {
     }
 }
 
+/// A frame-time chart squeezes many frames into one column; in a long
+/// session nearly every column holds a stutter or two, and marking them all
+/// paints the chart red (Vlad's 3 h Civilization VI). So a column is marked
+/// only with at least three times its share of the stutters: in a short
+/// session that is still every one of them, in a long one the bursts.
+/// `stutters` and `columns` count only the columns that have frames.
+pub fn stutter_mark_min(stutters: usize, columns: usize) -> u32 {
+    if columns == 0 {
+        return 1;
+    }
+    ((stutters as f64 / columns as f64) * 3.0).ceil().max(1.0) as u32
+}
+
 /// "2026-11-22 13:05:41" + "civilizationvi" -> "2026-11-22_13-05-41_civilizationvi.pcms"
 pub fn file_name(started: &str, game: &str) -> String {
     let stamp: String = started
@@ -358,5 +371,15 @@ mod tests {
         let bytes = s.encode().unwrap();
         assert!(bytes.len() < 2_000_000, "{} bytes", bytes.len());
         assert_eq!(Session::decode(&bytes).unwrap().frame_ms.len(), 518_399);
+    }
+
+    #[test]
+    fn stutter_marks() {
+        // a short session: every stutter is marked
+        assert_eq!(stutter_mark_min(12, 480), 1);
+        assert_eq!(stutter_mark_min(0, 480), 1);
+        assert_eq!(stutter_mark_min(5, 0), 1);
+        // Vlad's 3 h Civilization VI: 2679 stutters over 480 columns, ~5.6 each
+        assert_eq!(stutter_mark_min(2679, 480), 17);
     }
 }
