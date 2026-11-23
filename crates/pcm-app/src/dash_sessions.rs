@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::dash_home::{bold, fit, icon, icon_font, pal, panel, text_font};
-use crate::dash_kit::{GAP, Tile, sparkline, stat_tiles};
+use crate::dash_kit::{GAP, Tile, empty_state, sparkline, stat_tiles};
 use crate::dash_report::{ReportAction, ReportPage};
 use egui::{Align2, CursorIcon, Painter, Rect, RichText, Sense, Stroke, pos2, vec2};
 use pcm_core::session::{EXTENSION, Session, SessionInfo};
@@ -32,6 +32,8 @@ pub struct SessionsTab {
 pub enum SessionsAction {
     /// "← Главная" on a report opened from the home page.
     Home,
+    /// "Включить" on the empty page: game mode on.
+    GameModeOn,
 }
 
 /// "42 мин", "1 ч 05 мин", "45 с"
@@ -94,7 +96,13 @@ impl SessionsTab {
         self.listed = Some(Instant::now());
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, theme: Option<&Theme>) -> Option<SessionsAction> {
+    /// `game_mode`: sessions are being recorded (the empty page says how).
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: Option<&Theme>,
+        game_mode: bool,
+    ) -> Option<SessionsAction> {
         if self.listed.is_none_or(|t| t.elapsed() >= RELOAD) {
             self.reload();
         }
@@ -118,14 +126,19 @@ impl SessionsTab {
             return None;
         }
         if self.list.is_empty() {
-            ui.label(
-                RichText::new(
-                    tr("Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню виджета) и \
-                     игра идёт больше 30 секунд."),
-                )
-                .color(pal().dim),
-            );
-            return None;
+            let on = if game_mode {
+                let text = tr(
+                    "Запусти игру: когда она идёт больше 30 секунд, сессия запишется сама. Потом здесь будет отчёт: FPS, 1% low, нагрузка и температуры.",
+                );
+                empty_state(ui, icon::GAME, &tr("Игр пока нет"), &text, None, "games-empty")
+            } else {
+                let text = tr(
+                    "Включи «Игровой режим», и каждая игра запишется сама: FPS, просадки, нагрузка и температуры по секундам.",
+                );
+                let label = tr("Включить игровой режим");
+                empty_state(ui, icon::GAME, &tr("Запись игр выключена"), &text, Some(&label), "games-off")
+            };
+            return on.then_some(SessionsAction::GameModeOn);
         }
         let mut open: Option<PathBuf> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {

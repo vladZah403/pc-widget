@@ -7,7 +7,7 @@ use egui::{
     Align2, Color32, CursorIcon, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2,
 };
 
-use crate::dash_home::{alpha, bold, fit, pal, panel, text_font};
+use crate::dash_home::{alpha, bold, fit, icon_font, pal, panel, text_font};
 
 pub const GAP: f32 = 16.0;
 
@@ -339,4 +339,42 @@ pub fn grid_cells(ui: &mut Ui, w: f32, n: usize, cols: usize, h: f32) -> Vec<Rec
         }
     }
     out
+}
+
+/// A page with nothing to show yet: its icon in a circle, a title, what to
+/// do, and a button when there's something to switch on. True: clicked.
+pub fn empty_state(
+    ui: &mut Ui,
+    glyph: &str,
+    title: &str,
+    text: &str,
+    action: Option<&str>,
+    id: &str,
+) -> bool {
+    let w = ui.available_width();
+    let col = (w - 48.0).clamp(240.0, 460.0);
+    let p = ui.painter().clone();
+    let mut job = egui::text::LayoutJob::simple(text.to_string(), text_font(13.5), pal().dim, col);
+    job.halign = egui::Align::Center;
+    let body = p.layout_job(job);
+    let h = 56.0 + 68.0 + 18.0 + 24.0 + body.size().y + if action.is_some() { 56.0 } else { 0.0 } + 40.0;
+    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    let cx = r.center().x;
+    let mut y = r.top() + 56.0;
+    p.circle_filled(pos2(cx, y + 34.0), 34.0, pal().card_hi);
+    p.text(pos2(cx, y + 34.0), Align2::CENTER_CENTER, glyph, icon_font(26.0), pal().accent);
+    y += 68.0 + 18.0;
+    p.text(pos2(cx, y), Align2::CENTER_TOP, fit(&p, title, &bold(17.0), col), bold(17.0), pal().text);
+    y += 28.0;
+    // centred lines: the galley is laid out around x = 0
+    p.galley(pos2(cx, y), body.clone(), pal().dim);
+    y += body.size().y + 20.0;
+    match action {
+        Some(label) => {
+            let lw = p.layout_no_wrap(label.to_string(), bold(13.0), pal().text).size().x;
+            let b = Rect::from_center_size(pos2(cx, y + 18.0), vec2(lw + 40.0, 36.0));
+            button_at(ui, b, label, true, false, id)
+        }
+        None => false,
+    }
 }

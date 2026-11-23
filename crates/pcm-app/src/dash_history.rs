@@ -15,8 +15,10 @@ use pcm_core::history::{Column, FILE, History, Point, STEP_S, buckets, to_csv};
 use pcm_render::format::{dec, fmt_speed, tr, trf};
 use pcm_render::theme::Theme;
 
-use crate::dash_home::{bold, fit, pal, panel, rgb, segments, text_font};
-use crate::dash_kit::{GAP, Series, Tile, TimeChart, button, grid_cells, stat_tiles, time_chart};
+use crate::dash_home::{bold, fit, icon, pal, panel, rgb, segments, text_font};
+use crate::dash_kit::{
+    GAP, Series, Tile, TimeChart, button, empty_state, grid_cells, stat_tiles, time_chart,
+};
 
 const RANGES: [(&str, i64); 4] =
     [("Час", 3600), ("Сутки", 86400), ("Неделя", 7 * 86400), ("30 дней", 30 * 86400)];
@@ -262,7 +264,18 @@ impl HistoryTab {
             );
             ui.add_space(14.0);
             if let Some(n) = &self.note {
-                ui.label(RichText::new(n).color(pal().dim));
+                if self.db.is_none() {
+                    // nothing recorded yet
+                    let text = tr("Виджет записывает точку раз в 10 секунд: первые графики появятся через пару минут. Хранится 30 дней.");
+                    empty_state(ui, icon::HISTORY, &tr("Истории пока нет"), &text, None, "hist-empty");
+                } else {
+                    ui.label(RichText::new(n).color(pal().dim));
+                }
+                return;
+            }
+            if self.points.is_empty() {
+                let text = tr("Здесь появятся точки, пока PC Monitor работает. Выбери период подлиннее.");
+                empty_state(ui, icon::HISTORY, &tr("За этот период точек нет"), &text, None, "hist-none");
                 return;
             }
             let Some(theme) = theme else { return };

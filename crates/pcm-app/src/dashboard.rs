@@ -655,10 +655,16 @@ impl Dashboard {
                 self.history.ui(ui, theme.as_ref());
             }
             TAB_GAMES => {
-                let theme = self.feed.lock().unwrap_or_else(|e| e.into_inner()).theme.clone();
-                if let Some(crate::dash_sessions::SessionsAction::Home) = self.sessions.ui(ui, theme.as_ref())
-                {
-                    self.tab = TAB_HOME;
+                let (theme, game_mode) = {
+                    let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+                    (f.theme.clone(), f.cfg.as_ref().is_none_or(|c| c.fps))
+                };
+                match self.sessions.ui(ui, theme.as_ref(), game_mode) {
+                    Some(crate::dash_sessions::SessionsAction::Home) => self.tab = TAB_HOME,
+                    Some(crate::dash_sessions::SessionsAction::GameModeOn) => {
+                        self.change_config(|c| c.fps = true)
+                    }
+                    None => {}
                 }
             }
             TAB_PROCS => {
