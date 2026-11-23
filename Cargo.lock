@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-app"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "eframe",
  "pcm-core",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "minisign-verify",
  "rusqlite",
@@ -1681,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-proto-dashboard"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "eframe",
  "fontdue",
@@ -1691,14 +1691,14 @@ dependencies = [
 
 [[package]]
 name = "pcm-proto-fps"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "pcm-proto-ring"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "fontdue",
  "tiny-skia",
@@ -1707,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-render"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "pcm-core",
  "serde",
@@ -1717,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-win"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "pcm-core",
  "serde_json",
