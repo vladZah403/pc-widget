@@ -2692,6 +2692,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
             hInstance: hinst,
             lpszClassName: class.as_ptr(),
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hIcon: crate::icon::class_icon(),
             ..Default::default()
         };
         RegisterClassW(&wc);
@@ -2834,6 +2835,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
             hInstance: hinst,
             lpszClassName: report_class.as_ptr(),
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hIcon: crate::icon::class_icon(),
             ..Default::default()
         };
         RegisterClassW(&rc);

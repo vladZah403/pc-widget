@@ -194,6 +194,8 @@ struct Dashboard {
     own_read: (u64, Option<f32>, Option<u64>),
     /// The look in use: Some(light) once applied (the title bar too).
     look: Option<bool>,
+    /// The logo is on the window (title bar, taskbar).
+    icon: bool,
     /// Closing the window quits PC Monitor (not in the offscreen test runs).
     quit_on_close: bool,
     /// `--screenshot FILE`: save the window's own pixels once fed, then close.
@@ -216,6 +218,7 @@ impl Dashboard {
             own: Default::default(),
             own_read: (0, None, None),
             look: None,
+            icon: false,
             quit_on_close: false,
             shot: None,
         }
@@ -677,6 +680,10 @@ impl eframe::App for Dashboard {
         let light = self.feed.lock().map(|f| f.cfg.as_ref().is_some_and(|c| c.window_light)).unwrap_or(false);
         if self.look != Some(light) {
             self.set_look(&ctx, light);
+        }
+        if !self.icon {
+            crate::icon::set_on_this_thread();
+            self.icon = true;
         }
         self.screenshot(&ctx);
         let (focus, session, week) = {

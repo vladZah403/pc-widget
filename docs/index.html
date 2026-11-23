@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PC Monitor — load, temperatures and FPS for Windows</title>
 <meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in its own window, a desktop widget, the tray, the taskbar and over your game, with a report of every game session. Free and open source.">
-<link rel="icon" href="img/compact.png">
+<link rel="icon" href="img/logo-64.png">
+<link rel="apple-touch-icon" href="img/logo-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
@@ -62,6 +63,7 @@
     align-items: center;
   }
   .pitch h1 { font-size: clamp(60px, 9.5vw, 116px); letter-spacing: -0.015em; }
+  .pitch h1 .logo { width: 0.78em; height: 0.78em; vertical-align: -0.07em; margin-right: 0.16em; }
   .pitch p.lead { font-size: clamp(20px, 2.3vw, 25px); line-height: 1.4; max-width: 26ch; margin: 18px 0 32px; }
   .actions { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
   .button {
@@ -271,7 +273,7 @@
 <header class="desktop">
   <div class="desktop-inner">
     <div class="pitch">
-      <h1>PC Monitor</h1>
+      <h1><img class="logo" src="img/logo-256.png" width="256" height="256" alt="">PC Monitor</h1>
       <p class="lead">Your PC's load, temperatures and FPS — in its own window, on the desktop, on the taskbar and over your game.</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor-Setup.exe">Download for Windows</a>

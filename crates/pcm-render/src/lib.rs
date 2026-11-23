@@ -11,6 +11,7 @@ pub mod canvas;
 pub mod cards;
 pub mod chart;
 pub mod format;
+pub mod logo;
 pub mod overlay;
 pub mod report;
 pub mod share;

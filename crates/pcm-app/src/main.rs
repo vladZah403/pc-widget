@@ -30,6 +30,7 @@ mod dashboard;
 mod diag;
 mod elevation;
 mod game;
+mod icon;
 mod layered;
 mod report_win;
 mod session_rec;
