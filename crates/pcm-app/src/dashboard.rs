@@ -244,6 +244,9 @@ impl Dashboard {
         apply_look(ctx, light);
         let system = if light { egui::SystemTheme::Light } else { egui::SystemTheme::Dark };
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(system));
+        // the title bar in the window's own colours (not Windows 11's accent)
+        let c = |c: Color32| (c.r(), c.g(), c.b());
+        crate::titlebar::set_colors(c(pal().chrome), c(pal().text), c(pal().border));
         self.look = Some(light);
         if let Ok(mut f) = self.feed.lock() {
             f.theme_key = theme_key(&f.theme_name, light);

@@ -35,6 +35,7 @@ mod layered;
 mod report_win;
 mod session_rec;
 mod taskbar;
+mod titlebar;
 mod tray;
 mod updater;
 mod widget_win;
