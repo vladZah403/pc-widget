@@ -21,7 +21,7 @@ use windows_sys::Win32::System::Threading::CreateMutexW;
 /// neither takes over 1.8's autostart, admin task and Program Files copy nor
 /// keeps 1.8 from running. The release sets this to false: the names are
 /// then 1.8's, and an update from 1.8 keeps the user's autostart.
-pub const BESIDE_1_8: bool = true;
+pub const BESIDE_1_8: bool = false;
 pub const RUN_NAME: &str = if BESIDE_1_8 { "PCMonitor2Widget" } else { "PCMonitorWidget" };
 pub const TASK_NAME: &str = RUN_NAME;
 pub const INSTALL_FOLDER: &str = if BESIDE_1_8 { "PC-Monitor 2" } else { "PC-Monitor" };
