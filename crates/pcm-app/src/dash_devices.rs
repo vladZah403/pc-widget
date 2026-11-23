@@ -10,7 +10,139 @@ use pcm_render::theme::Scale;
 use pcm_render::widget::Data;
 
 use crate::dash_home::{bold, fit, icon, icon_font, pal, panel, rgb, text_font};
-use crate::dash_kit::{GAP, bar, sparkline};
+use crate::dash_kit::{GAP, bar, button_at, sparkline};
+use pcm_win::diskuse::{Item, Place};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// "Что занимает диск C:": counted on a thread when asked.
+#[derive(Default)]
+struct DiskScan {
+    running: bool,
+    /// The items and the local time they were counted at ("21:04").
+    done: Option<(Vec<Item>, String)>,
+}
+
+static SCAN: Mutex<DiskScan> = Mutex::new(DiskScan { running: false, done: None });
+static SCAN_FILES: AtomicU64 = AtomicU64::new(0);
+static SCAN_STOP: AtomicBool = AtomicBool::new(false);
+/// Rows the card shows at most.
+const DISK_ROWS: usize = 16;
+
+fn start_scan() {
+    let Ok(mut s) = SCAN.lock() else { return };
+    if s.running {
+        return;
+    }
+    s.running = true;
+    SCAN_FILES.store(0, Ordering::Relaxed);
+    let spawned = std::thread::Builder::new().name("disk use".into()).spawn(|| {
+        let items = pcm_win::diskuse::scan(&SCAN_STOP, &SCAN_FILES);
+        let when = pcm_win::system::local_time().get(11..16).unwrap_or("").to_string();
+        if let Ok(mut s) = SCAN.lock() {
+            s.done = Some((items, when));
+            s.running = false;
+        }
+    });
+    if spawned.is_err() {
+        s.running = false;
+    }
+}
+
+/// "12,4 ГБ" or "850 МБ".
+fn size(bytes: u64) -> String {
+    let gb = bytes as f64 / (1u64 << 30) as f64;
+    if gb >= 1.0 {
+        trf("{v} ГБ", &[("v", dec(format!("{gb:.1}")))])
+    } else {
+        trf("{v} МБ", &[("v", format!("{:.0}", bytes as f64 / 1048576.0))])
+    }
+}
+
+/// The card: a button that counts, then the biggest places with "Открыть".
+fn disk_use(ui: &mut Ui, w: f32) {
+    let (running, done) = match SCAN.lock() {
+        Ok(s) => (s.running, s.done.clone()),
+        Err(_) => return,
+    };
+    let rows: Vec<Item> = done
+        .as_ref()
+        .map(|(items, _)| items.iter().filter(|i| i.bytes >= 1 << 20).take(DISK_ROWS).cloned().collect())
+        .unwrap_or_default();
+    let row_h = 36.0;
+    let h = 76.0 + rows.len() as f32 * row_h + if rows.is_empty() { 0.0 } else { 8.0 };
+    let (r, _) = ui.allocate_exact_size(vec2(w, h), egui::Sense::hover());
+    // test runs: count right away and show the card (PCM_DISK_SCAN=1)
+    if std::env::var_os("PCM_DISK_SCAN").is_some() {
+        if !running && done.is_none() {
+            start_scan();
+        }
+        ui.scroll_to_rect(r, Some(egui::Align::BOTTOM));
+    }
+    let p = ui.painter().clone();
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let sub = if running {
+        trf("Считаю… файлов: {n}", &[("n", SCAN_FILES.load(Ordering::Relaxed).to_string())])
+    } else if let Some((_, when)) = &done {
+        trf("Посчитано в {time}", &[("time", when.clone())])
+    } else {
+        tr("Нажми «Посчитать»: это займёт до минуты")
+    };
+    head(&p, r, icon::DISK, &trf("Что занимает диск {d}", &[("d", drive)]), &sub);
+    let label = if done.is_some() { tr("Посчитать заново") } else { tr("Посчитать") };
+    let bw = p.layout_no_wrap(label.clone(), bold(13.0), pal().text).size().x + 32.0;
+    let b = Rect::from_min_size(pos2(r.right() - 18.0 - bw, r.top() + 18.0), vec2(bw, 32.0));
+    if running {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
+    } else if button_at(ui, b, &label, done.is_none(), false, "disk-scan") {
+        start_scan();
+    }
+    let max = rows.first().map_or(1, |i| i.bytes.max(1));
+    let (x0, x1) = (r.left() + 18.0, r.right() - 18.0);
+    let open_w = 96.0;
+    let size_x = x1 - open_w - 16.0; // right edge of the size
+    let bar_w = ((x1 - x0) * 0.22).clamp(80.0, 220.0);
+    let bar_x = size_x - 84.0 - bar_w;
+    let mut y = r.top() + 72.0;
+    for (k, it) in rows.iter().enumerate() {
+        let cy = y + row_h / 2.0;
+        let name = if it.named { tr(&it.name) } else { it.name.clone() };
+        p.text(
+            pos2(x0, cy),
+            Align2::LEFT_CENTER,
+            fit(&p, &name, &text_font(13.0), bar_x - x0 - 16.0),
+            text_font(13.0),
+            pal().text,
+        );
+        bar(
+            &p,
+            Rect::from_min_size(pos2(bar_x, cy - 2.5), vec2(bar_w, 5.0)),
+            it.bytes as f32 / max as f32,
+            pal().gpu_line,
+        );
+        p.text(pos2(size_x, cy), Align2::RIGHT_CENTER, size(it.bytes), bold(13.0), pal().text);
+        let ob = Rect::from_min_size(pos2(x1 - open_w, cy - 14.0), vec2(open_w, 28.0));
+        match it.place {
+            Place::Folder | Place::RecycleBin => {
+                if button_at(ui, ob, &tr("Открыть"), false, false, &format!("disk-open-{k}")) {
+                    pcm_win::autostart::open(&it.path.to_string_lossy());
+                }
+            }
+            Place::SystemFile => {
+                let tip = if it.path.to_string_lossy().to_lowercase().ends_with("hiberfil.sys") {
+                    tr("Если гибернация не нужна, её выключает команда powercfg /h off (от администратора)")
+                } else {
+                    tr("Размер задаётся в «Параметры быстродействия → Дополнительно → Виртуальная память»")
+                };
+                let t =
+                    p.text(ob.center(), Align2::CENTER_CENTER, tr("системный"), text_font(12.0), pal().faint);
+                ui.interact(t.expand(6.0), ui.scope_id().with(("disk-tip", k)), egui::Sense::hover())
+                    .on_hover_text(tip);
+            }
+        }
+        y += row_h;
+    }
+}
 
 /// A card's head: the icon in its box, the title and a line under it.
 fn head(p: &Painter, r: Rect, glyph: &str, title: &str, sub: &str) {
@@ -118,6 +250,8 @@ pub fn ui(ui: &mut Ui, d: Option<&Data>, sc: Option<&Scale>) {
                 painters[i](p, cell, d, sc);
             }
         }
+        ui.add_space(GAP);
+        disk_use(ui, w);
         ui.add_space(8.0);
     });
 }

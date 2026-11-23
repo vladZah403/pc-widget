@@ -540,3 +540,24 @@ FPS как обычно	FPS as usual	FPS як зазвичай	FPS wie üblich
 FPS выше обычного на {v}%	FPS {v}% above usual	FPS вище звичайного на {v}%	FPS {v} % über dem Üblichen
 FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче звичайного на {v}%	FPS {v} % unter dem Üblichen
 Трафик программ Windows даёт только с правами администратора: Настройки → Запуск и закрытие	Windows gives programs' traffic only with admin rights: Settings → Startup and closing	Трафік програм Windows дає лише з правами адміністратора: Налаштування → Запуск і закриття	Den Datenverkehr der Programme gibt Windows nur mit Administratorrechten heraus: Einstellungen → Start und Beenden
+Что занимает диск {d}	What fills drive {d}	Що займає диск {d}	Was Laufwerk {d} füllt
+Считаю… файлов: {n}	Counting… files: {n}	Рахую… файлів: {n}	Zähle… Dateien: {n}
+Посчитано в {time}	Counted at {time}	Пораховано о {time}	Gezählt um {time}
+Нажми «Посчитать»: это займёт до минуты	Click “Count”: it takes up to a minute	Натисни «Порахувати»: це займе до хвилини	Klicke „Zählen“: Es dauert bis zu einer Minute
+Посчитать	Count	Порахувати	Zählen
+Посчитать заново	Count again	Порахувати знову	Neu zählen
+Открыть	Open	Відкрити	Öffnen
+системный	system	системний	System
+Корзина	Recycle Bin	Кошик	Papierkorb
+Загрузки	Downloads	Завантаження	Downloads
+Рабочий стол	Desktop	Робочий стіл	Desktop
+Документы	Documents	Документи	Dokumente
+Изображения	Pictures	Зображення	Bilder
+Музыка	Music	Музика	Musik
+Временные файлы	Temporary files	Тимчасові файли	Temporäre Dateien
+Загрузки обновлений Windows	Windows Update downloads	Завантаження оновлень Windows	Windows-Update-Downloads
+Файл подкачки	Page file	Файл підкачки	Auslagerungsdatei
+Файл гибернации	Hibernation file	Файл гібернації	Ruhezustandsdatei
+Файл подкачки приложений	Apps' swap file	Файл підкачки застосунків	Auslagerungsdatei der Apps
+Если гибернация не нужна, её выключает команда powercfg /h off (от администратора)	If you don't need hibernation, the command powercfg /h off (as admin) turns it off	Якщо гібернація не потрібна, її вимикає команда powercfg /h off (від адміністратора)	Wenn du den Ruhezustand nicht brauchst, schaltet ihn der Befehl powercfg /h off (als Admin) ab
+Размер задаётся в «Параметры быстродействия → Дополнительно → Виртуальная память»	Its size is set in Performance Options → Advanced → Virtual memory	Розмір задається в «Параметри швидкодії → Додатково → Віртуальна пам'ять»	Die Größe stellst du unter Leistungsoptionen → Erweitert → Virtueller Arbeitsspeicher ein

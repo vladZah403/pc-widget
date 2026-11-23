@@ -7,6 +7,7 @@ pub mod battery;
 pub mod clipboard;
 pub mod cpu;
 pub mod disk;
+pub mod diskuse;
 pub mod display;
 pub mod eventlog;
 pub mod frames;

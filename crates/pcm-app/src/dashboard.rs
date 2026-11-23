@@ -780,7 +780,9 @@ impl Dashboard {
             return;
         }
         let since = *since.get_or_insert_with(std::time::Instant::now);
-        if since.elapsed() < Duration::from_secs(2) {
+        // test runs may wait longer for what they show (PCM_SHOT_DELAY=s)
+        let wait = std::env::var("PCM_SHOT_DELAY").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        if since.elapsed() < Duration::from_secs(wait) {
             ctx.request_repaint_after(Duration::from_millis(200));
             return;
         }
