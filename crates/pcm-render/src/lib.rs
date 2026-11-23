@@ -13,6 +13,7 @@ pub mod chart;
 pub mod format;
 pub mod overlay;
 pub mod report;
+pub mod share;
 pub mod text;
 pub mod theme;
 pub mod widget;

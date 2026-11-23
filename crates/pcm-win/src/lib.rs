@@ -4,6 +4,7 @@
 
 pub mod autostart;
 pub mod battery;
+pub mod clipboard;
 pub mod cpu;
 pub mod disk;
 pub mod display;

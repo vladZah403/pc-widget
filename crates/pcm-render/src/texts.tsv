@@ -214,7 +214,6 @@ GPU {t}°. Понизь настройки графики или огранич�
 Сессий пока нет. Они записываются сами, когда ты играешь (нужно «Считать FPS» в меню виджета) и игра идёт больше 30 секунд.	No sessions yet. They are recorded by themselves while you play ("Count FPS" in the widget's menu) and the game runs for more than 30 seconds.	Сесій поки немає. Вони записуються самі, коли ти граєш (потрібно «Рахувати FPS» у меню віджета) і гра йде понад 30 секунд.	Noch keine Sitzungen. Sie werden von selbst aufgezeichnet, während du spielst („FPS zählen“ im Widget-Menü) und das Spiel länger als 30 Sekunden läuft.
 Когда	When	Коли	Wann
 Время игры	Play time	Час гри	Spielzeit
-FPS в среднем	Average FPS	FPS у середньому	FPS im Schnitt
 Отчёт	Report	Звіт	Bericht
 Не удалось прочитать {file}: {e}	Couldn't read {file}: {e}	Не вдалося прочитати {file}: {e}	{file} konnte nicht gelesen werden: {e}
 ← Все сессии	← All sessions	← Усі сесії	← Alle Sitzungen
@@ -483,3 +482,8 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 сплошная — видеокарта, пунктир — процессор, полосы — троттлинг	solid: graphics card, dashed: processor, bands: throttling	суцільна — відеокарта, пунктир — процесор, смуги — тротлінг	durchgezogen: Grafikkarte, gestrichelt: Prozessor, Streifen: Drosselung
 урезан до {l}%	held back to {l}%	обмежений до {l}%	gedrosselt auf {l} %
 сбрасывает частоту	slowing down	скидає частоту	drosselt
+Поделиться	Share	Поділитися	Teilen
+Картинка скопирована: вставь в чат (Ctrl+V). Файл — в «Изображения\PC Monitor».	Picture copied: paste it into a chat (Ctrl+V). The file is in Pictures\PC Monitor.	Картинку скопійовано: встав у чат (Ctrl+V). Файл — у «Зображення\PC Monitor».	Bild kopiert: in einen Chat einfügen (Strg+V). Die Datei liegt in Bilder\PC Monitor.
+Картинка скопирована: вставь в чат (Ctrl+V).	Picture copied: paste it into a chat (Ctrl+V).	Картинку скопійовано: встав у чат (Ctrl+V).	Bild kopiert: in einen Chat einfügen (Strg+V).
+Не удалось скопировать; картинка сохранена: {file}	Couldn't copy it; the picture is saved: {file}	Не вдалося скопіювати; картинку збережено: {file}	Kopieren ging nicht; das Bild ist gespeichert: {file}
+Не удалось сделать картинку.	Couldn't make the picture.	Не вдалося зробити картинку.	Das Bild ließ sich nicht erstellen.

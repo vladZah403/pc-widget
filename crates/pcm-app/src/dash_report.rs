@@ -25,8 +25,6 @@ const GAP: f32 = 16.0;
 const SIDE_W: f32 = 300.0;
 /// Columns the frame-time chart is drawn in.
 const FRAME_COLS: usize = 480;
-/// Frames longer than this (or twice the median, if more) are stutters.
-const STUTTER_MS: f32 = 25.0;
 /// "в первые 2 минуты": loading hitches.
 const EARLY_S: f32 = 120.0;
 /// Stutters as % of the frames: from 1% the tile turns yellow, from 3% red.
@@ -102,8 +100,7 @@ fn quartiles(mut v: Vec<f32>) -> Option<(f32, f32)> {
 
 fn stats(s: &Session) -> Stats {
     let info = &s.info;
-    let median = info.summary.median_ms as f32;
-    let thr_ms = STUTTER_MS.max(median * 2.0).round();
+    let thr_ms = pcm_core::session::stutter_ms(info.summary.median_ms);
     let pause = (FRAME_PAUSE_S * 1000.0) as f32;
     let frames_s: f32 = s.frame_ms.iter().sum::<f32>() / 1000.0;
     let last_sample = info.samples.last().map_or(0.0, |x| x.t);
@@ -211,6 +208,10 @@ pub struct ReportPage {
     pub from_home: bool,
     /// Test runs' screenshots of the lower part (PCM_REPORT_SCROLL=px).
     start_offset: Option<f32>,
+    /// "Поделиться" was clicked (done in ui(), which has the colours).
+    share_now: bool,
+    /// What it did, shown under the buttons for a while: text, good, since.
+    share_note: Option<(String, bool, Instant)>,
 }
 
 impl ReportPage {
@@ -228,6 +229,8 @@ impl ReportPage {
             delete_armed: None,
             from_home: false,
             start_offset: std::env::var("PCM_REPORT_SCROLL").ok().and_then(|v| v.parse().ok()),
+            share_now: false,
+            share_note: None,
         })
     }
 
@@ -257,6 +260,9 @@ impl ReportPage {
             let w = ui.available_width();
             if let Some(a) = self.header(ui, w, others) {
                 action = Some(a);
+            }
+            if std::mem::take(&mut self.share_now) {
+                self.share(sc);
             }
             ui.add_space(14.0);
             self.tiles(ui, w, sc);
@@ -311,7 +317,23 @@ impl ReportPage {
         }
         let name = if info.title.trim().is_empty() { info.game.clone() } else { info.title.clone() };
         let title = trf("Сессия: {name}", &[("name", name)]);
-        let right_room = 470.0;
+        // the four buttons' width (as button() lays them out) and a gap: the rest is the title's
+        let right_room = {
+            let cmp = match &self.compare {
+                Some(c) => trf("Сравнение: {when} ✕", &[("when", short_when(&c.started))]),
+                None => tr("Сравнить с другой сессией"),
+            };
+            let del = if self.delete_armed.is_some() {
+                tr("Точно удалить?")
+            } else {
+                tr("Удалить")
+            };
+            [cmp, tr("Поделиться"), tr("Экспорт CSV"), del]
+                .iter()
+                .map(|t| p.layout_no_wrap(t.clone(), bold(13.0), pal().text).size().x + 32.0 + 10.0)
+                .sum::<f32>()
+                + 24.0
+        };
         p.text(
             pos2(r.left(), r.top() + 20.0),
             Align2::LEFT_TOP,
@@ -357,6 +379,21 @@ impl ReportPage {
         let (b, clicked) = button(ui, x, y, &tr("Экспорт CSV"), true, false, "report-csv");
         if clicked && let Some(path) = save_dialog(std::ptr::null_mut(), &session_csv_name(&info)) {
             let _ = write_session_csv(&self.session, &path);
+        }
+        x = b.left() - 10.0;
+        let (b, clicked) = button(ui, x, y, &tr("Поделиться"), false, false, "report-share");
+        if clicked {
+            self.share_now = true;
+        }
+        // what "Поделиться" did, under the buttons
+        if let Some((text, good, since)) = &self.share_note {
+            if since.elapsed().as_secs_f32() < 8.0 {
+                let col = if *good { pal().good } else { pal().hot };
+                p.text(pos2(r.right(), r.top() + 64.0), Align2::RIGHT_TOP, text, text_font(12.0), col);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+            } else {
+                self.share_note = None;
+            }
         }
         x = b.left() - 10.0;
         let label = match &self.compare {
@@ -923,6 +960,39 @@ impl ReportPage {
             )
         };
         (text, bars)
+    }
+
+    /// "Поделиться": the session as a picture (pcm_render::share) on the
+    /// clipboard, for Ctrl+V in a chat, and in Pictures\PC Monitor.
+    fn share(&mut self, sc: &Scale) {
+        let mut fonts = pcm_render::text::Fonts::system();
+        let Some(pm) = pcm_render::share::share_card(&mut fonts, 2.0, sc, &self.session) else { return };
+        let Ok(png) = pm.encode_png() else { return };
+        // the card is opaque: its premultiplied pixels are the straight ones
+        let copied = pcm_win::clipboard::set_image(pm.data(), pm.width(), pm.height(), &png);
+        let name = self.path.file_stem().map_or("session".into(), |n| n.to_string_lossy().into_owned());
+        let saved = pcm_win::clipboard::pictures_dir().map(|d| d.join("PC Monitor")).and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            let file = dir.join(format!("{name}.png"));
+            std::fs::write(&file, &png).ok().map(|_| file)
+        });
+        self.share_note = Some(match (copied, saved) {
+            (true, Some(_)) => (
+                tr("Картинка скопирована: вставь в чат (Ctrl+V). Файл — в «Изображения\\PC Monitor»."),
+                true,
+                Instant::now(),
+            ),
+            (true, None) => (tr("Картинка скопирована: вставь в чат (Ctrl+V)."), true, Instant::now()),
+            (false, Some(f)) => (
+                trf(
+                    "Не удалось скопировать; картинка сохранена: {file}",
+                    &[("file", f.display().to_string())],
+                ),
+                false,
+                Instant::now(),
+            ),
+            (false, None) => (tr("Не удалось сделать картинку."), false, Instant::now()),
+        });
     }
 
     /// "Процессор перегревался и сбрасывал частоту: 3 мин 20 с, Windows урезала его до 70%."

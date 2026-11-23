@@ -249,6 +249,12 @@ impl Session {
     }
 }
 
+/// Frames longer than this are stutters in the report: twice the median,
+/// at least 25 ms (at 200 FPS a 10 ms frame is no stutter one can see).
+pub fn stutter_ms(median_ms: f64) -> f32 {
+    25f32.max(median_ms as f32 * 2.0).round()
+}
+
 /// A frame-time chart squeezes many frames into one column; in a long
 /// session nearly every column holds a stutter or two, and marking them all
 /// paints the chart red (Vlad's 3 h Civilization VI). So a column is marked
