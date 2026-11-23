@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PC Monitor — a desktop widget for Windows</title>
-<meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in a widget on the Windows desktop that takes any shape, on the taskbar and over your game. Free and open source.">
+<title>PC Monitor — load, temperatures and FPS for Windows</title>
+<meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in its own window, a desktop widget, the tray, the taskbar and over your game, with a report of every game session. Free and open source.">
 <link rel="icon" href="img/compact.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -212,6 +212,14 @@
   }
   .caption { color: var(--mute); font-size: 15px; margin: 12px 0 0; }
 
+  /* 2.0: the PC Monitor window and pictures as wide as the page */
+  .wide { margin: 0; }
+  .wide img { width: 100%; border-radius: 12px; border: 1px solid var(--line); filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); }
+  .wide.plain img { border: 0; filter: none; }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; margin-top: 28px; }
+  .pair img { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+  .games-pic img { width: 100%; border-radius: 12px; }
+
   .themes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
   .themes figure { margin: 0; }
   .themes img { width: 100%; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.35)); }
@@ -237,7 +245,7 @@
   @media (max-width: 900px) {
     .desktop-inner { grid-template-columns: 1fr; gap: 40px; }
     .pinned { justify-self: start; width: min(300px, 100%); }
-    .groups, .split { grid-template-columns: 1fr; }
+    .groups, .split, .pair { grid-template-columns: 1fr; }
     .groups { gap: 44px; }
     .split .shot { justify-self: start; }
     .themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -264,16 +272,16 @@
   <div class="desktop-inner">
     <div class="pitch">
       <h1>PC Monitor</h1>
-      <p class="lead">Your PC's load, temperatures and FPS — on the desktop, on the taskbar and over your game.</p>
+      <p class="lead">Your PC's load, temperatures and FPS — in its own window, on the desktop, on the taskbar and over your game.</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor-Setup.exe">Download for Windows</a>
         <a class="button secondary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor.zip">Portable zip</a>
       </div>
-      <p class="small">Windows 10 and 11. Free and open source. Updates install in one click from the widget.</p>
-      <p class="news"><b>New in 1.8:</b> tuck the widget behind the screen edge — a click on the tab at its side, and only the tab stays at the edge. Click it to bring the widget back. <a href="https://github.com/vladZah403/pc-widget/releases/latest">All changes</a></p>
+      <p class="small">Windows 10 and 11. Free and open source. Updates install in one click.</p>
+      <p class="news"><b>New: PC Monitor 2.0.</b> Rewritten from scratch — about 15 MB of memory instead of 80+, a full window with 30 days of history, a report of every game session, a new look for the widget and the tray. 1.8 updates itself and keeps your settings. <a href="https://github.com/vladZah403/pc-widget/releases/latest">All changes</a></p>
     </div>
     <div class="pinned">
-      <img src="img/widget.png" width="528" height="1140" alt="The PC Monitor widget: CPU at 45% with a one-minute histogram, cores, memory, graphics, disk, temperatures, battery, SSD health, network graph, ping">
+      <img src="img/widget-hero.png" width="560" height="648" alt="The PC Monitor widget: processor, graphics, memory and drive C: as rings with their load and a short graph, network speed and ping">
     </div>
   </div>
   <div class="taskbar" aria-label="The mini panel on the taskbar">
@@ -286,8 +294,32 @@
 
 <section>
   <div class="intro">
+    <h2>The PC Monitor window</h2>
+    <p>Processor, graphics card, memory and drive at a glance, a load chart from one minute to a day, temperatures and fans, network and ping, the busiest programs and the game you are playing. Beside it: <strong>History</strong> for 30 days, <strong>Games</strong>, <strong>Processes</strong>, <strong>Hardware</strong> and <strong>Settings</strong> — light or dark. Close it, and the widget, tray icons and taskbar panel keep going.</p>
+  </div>
+  <figure class="wide"><img src="img/window.png" width="1280" height="800" alt="The PC Monitor window: processor 21%, graphics 35%, memory 42%, drive C: 76% used, a load chart, temperatures, network, busiest programs and a game session being recorded"></figure>
+  <div class="pair">
+    <img src="img/window-light.png" width="1280" height="800" alt="The same window in the light theme">
+    <img src="img/history-page.png" width="1280" height="800" alt="History: averages and peaks of the last hour, CPU and GPU load, temperatures, memory and network charts">
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>A widget, if you want one</h2>
+    <p>Turn it on in Settings or with <strong>Ctrl+Alt+W</strong>. The new <strong>Cards</strong> look, dark or light, or a compact list — or the <strong>Classic</strong> widget of 1.8 with everything it had, shown below.</p>
+  </div>
+  <figure class="wide plain"><img src="img/widget-cards.png" width="1380" height="558" alt="The widget's Cards look, dark and light, and its compact list"></figure>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
     <h2>Everything at a glance</h2>
-    <p>Every value is coloured on one cool-to-hot scale, so a red number means "look here" whatever it measures. <strong>Click any row</strong> — cores, memory, graphics, temperature, network — for its last hour or day.</p>
+    <p>Every value is coloured on one cool-to-hot scale, so a red number means "look here" whatever it measures. The Classic widget shows all of it at once:</p>
   </div>
   <div class="groups">
     <div style="--dot: var(--cool)">
@@ -344,29 +376,24 @@
 
 <div class="meter" aria-hidden="true"></div>
 
-<section class="split">
+<section>
   <div class="intro">
-    <h2>History in one click</h2>
-    <p>Click a row and the card beside the widget shows that reading for the last hour or the whole day, with its peak and average: CPU, GPU, memory or network. The day is kept on disk, so it survives restarts, and "Save CSV" hands it to Excel.</p>
+    <h2>Tray and taskbar</h2>
+    <p>Up to three numbers in the tray on coloured squares — CPU, temperature, memory, graphics. Hover one for a card with the details, click it to open the window. The mini panel on the taskbar shows the same card.</p>
   </div>
-  <img class="shot" src="img/history.png" width="760" height="584" alt="History card: CPU temperature and load for the last hour, with maximum and average">
+  <figure class="wide plain"><img src="img/tray-card.png" width="1118" height="330" alt="Tray icons 12, 42, 97 and 66 degrees, and the processor card in dark and light: load, temperature, clock, busiest program"></figure>
 </section>
 
 <div class="meter" aria-hidden="true"></div>
 
-<section class="split">
+<section>
   <div class="intro">
     <h2>In games</h2>
-    <p>A small counter sits in the corner of the game: FPS, the low (how far it drops in the worst moments), a frame-time graph where every stutter shows up red, and below it the CPU and GPU load and temperature, video memory, GPU clock and your ping. Put it in any corner, make it bigger, or hide it with <strong>Ctrl+Alt+F</strong>. DirectX 9–12, OpenGL and Vulkan games all count, and clicks go straight through it. The widget itself steps aside while you play.</p>
+    <p>A small panel sits in the corner of the game: FPS, the 1% low, a frame-time graph where every stutter shows up red, CPU and GPU load and temperature, video memory, GPU clock and your ping. A card or one line, the rows you want, any corner and size; <strong>Ctrl+Alt+F</strong> hides it. DirectX 9–12, OpenGL and Vulkan games all count, and clicks go straight through it.</p>
+    <p>Every game is recorded. Afterwards you get a <strong>report</strong>: average FPS and lows, stutters, load and temperatures over time, what held the FPS back, your note, a comparison with another session and a CSV of every frame.</p>
   </div>
-  <div>
-    <div class="scene" role="img" aria-label="The FPS counter in the top-left corner of a game">
-      <div class="sun"></div>
-      <div class="ridge far"></div>
-      <div class="ridge mid"></div>
-      <div class="ridge near"></div>
-      <img class="pill" src="img/fps.png" width="527" height="132" alt="">
-    </div>
+  <div class="games-pic">
+    <img src="img/fps-looks.png" width="1689" height="444" alt="The FPS panel over a game: as a card in the top-left corner and as one line at the bottom">
     <p class="caption">Use windowed or borderless mode: Windows lets nothing draw over exclusive fullscreen.</p>
   </div>
 </section>
@@ -374,9 +401,15 @@
 <div class="meter" aria-hidden="true"></div>
 
 <section>
+  <figure class="wide"><img src="img/report.png" width="1280" height="800" alt="A game session's report: average FPS 52, 1% low 37, stutters under 0.1%, charts of FPS and frame time, and what limits the FPS: the graphics card"></figure>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
   <div class="intro">
     <h2>Make it yours</h2>
-    <p>Three palettes or two colours of your own, any size from 80 to 200%, a compact mode, any opacity. Pin it to the desktop or keep it on top. Two profiles, Work and Game, each with its own look — Game turns on by itself while you play. The interface speaks English, Ukrainian, German and Russian.</p>
+    <p>A light or dark window. For the widget: Cards or Classic, three palettes or two colours of your own, any size from 80 to 200%, a compact mode, any opacity; pin it to the desktop or keep it on top. Two profiles, Work and Game, each with its own look — Game turns on by itself while you play. The interface speaks English, Ukrainian, German and Russian.</p>
   </div>
   <div class="themes">
     <figure><img src="img/theme-heat.png" width="528" height="356" alt="Compact widget, Warm palette"><figcaption>Warm</figcaption></figure>
@@ -391,9 +424,9 @@
 <section>
   <h2>Install</h2>
   <ol class="steps">
-    <li><div><b>Download PC-Monitor-Setup.exe</b><span>It installs for your user only — no admin rights needed.</span></div></li>
+    <li><div><b>Download PC-Monitor-Setup.exe</b><span>It installs for your user only — no admin rights needed. Have 1.8? It updates itself to 2.0 and keeps your settings.</span></div></li>
     <li><div><b>Run it.</b><span>The program isn't signed yet (see the <a href="#code-signing-policy">code signing policy</a>), so Windows may say "Windows protected your PC": click "More info", then "Run anyway". On a fresh Windows 11, Smart App Control may block it outright until the releases are signed. The source code is all on GitHub.</span></div></li>
-    <li><div><b>Turn on temperatures if you want them.</b><span>Right-click the widget → Settings → "Admin rights (temperatures)": Windows gives temperatures only to programs running as administrator. On some PCs the processor also needs the free PawnIO driver.</span></div></li>
+    <li><div><b>Turn on temperatures if you want them.</b><span>PC Monitor → Settings → "Startup and closing" → "Admin rights (temperatures)": Windows gives CPU temperatures only to programs running as administrator. On some PCs the processor also needs the free PawnIO driver.</span></div></li>
   </ol>
 </section>
 
@@ -402,7 +435,7 @@
 <section class="policy" id="code-signing-policy">
   <h2>Code signing policy</h2>
   <p>The releases are not code-signed yet, so Windows SmartScreen may warn about them and Smart App Control on a fresh Windows 11 may block them. Every release is built by GitHub Actions from a tagged commit of the public repository — nothing is built or signed by hand. Committers, reviewers and approvers: <a href="https://github.com/vladZah403">vladZah403</a>.</p>
-  <p><strong>Privacy.</strong> PC Monitor sends nothing about you or your PC anywhere. It goes online only to ask GitHub whether a new release is out (every 6 hours, can be switched off), to download one when you click "update", and to ping the address you chose (1.1.1.1 by default). Settings, the log and the day of history stay on your PC.</p>
+  <p><strong>Privacy.</strong> PC Monitor sends nothing about you or your PC anywhere. It goes online only to ask GitHub whether a new release is out (every 6 hours, can be switched off), to download one when you click "update", and to ping the address you chose (1.1.1.1 by default). Settings, history and game sessions stay on your PC. Updates are installed only if they carry the release signature.</p>
 </section>
 
 <footer>

@@ -1,232 +1,186 @@
-# PC Monitor — a desktop widget for Windows
+# PC Monitor — load, temperatures and FPS for Windows
 
-A light monitor for your laptop or PC: CPU, memory and GPU load, disk space
-and activity, network and ping, temperatures and battery. It sits in a widget
-on the desktop and in a mini panel right on the taskbar.
+PC Monitor shows your laptop's or PC's load, temperatures, network and FPS:
+in its own window, in a widget on the desktop, in the tray, on the taskbar and
+over your game. Version 2.0 is rewritten in Rust: one small program, about
+15 MB of memory and well under 1% of one CPU core at idle.
 
-![The widget and the process list](docs/widget.png)
+Website: [vladzah403.github.io/pc-widget](https://vladzah403.github.io/pc-widget/) ·
+Download: [PC-Monitor-Setup.exe](https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor-Setup.exe)
 
-Every value is coloured on one "cool → hot" scale: the redder, the higher the
-load or temperature. Three palettes to choose from, or your own two colours
-(Settings → Look → "Choose custom colours…"):
+![The PC Monitor window: processor, graphics, memory and drive, a load chart, temperatures, network, busiest programs and the game being played](docs/img/window.png)
 
-![Palettes: Warm, Neon, Ice and custom colours](docs/themes.png)
+Every value is coloured on one "calm → hot" scale: the redder, the higher the
+load or temperature.
 
-Compact mode, the hover card of the mini panel and the panel itself:
+## The PC Monitor window
+- **Home** — processor, graphics card, memory and drive at a glance, a load
+  chart (1 min to 24 h), temperatures and fans, network and ping, the busiest
+  programs and the game being played.
+- **History** — load, temperatures, memory and network for the last hour, day,
+  week or 30 days (a point every 10 s), with "Save CSV".
+- **Games** — every game session with its report (see below).
+- **Processes** — search, sort by CPU or memory, close a program (Windows' own
+  processes can't be closed from here).
+- **Hardware** — a card for every part: CPU, graphics, memory, drives with SSD
+  health, battery, network, the system.
+- **Settings** — everything in one place, as cards with switches.
+- **Light or dark** — one switch at the bottom of the page list.
 
-![Compact mode and the mini panel](docs/compact-and-taskbar.png)
+Closing the window keeps the widget, tray icons and taskbar panel running, or
+quits altogether — your choice in Settings.
 
-CPU history for the last hour or day, and the FPS counter in a game with the
-1% low and a frame-time graph (a red bar is a stutter):
+![History: averages and peaks, CPU and GPU load, temperatures, memory and network](docs/img/history-page.png)
 
-![History card and FPS counter](docs/history-and-fps.png)
+## The widget
+Optional (Settings → "Show the widget", or **Ctrl+Alt+W**). Two looks:
+**Cards** (dark or light, with a compact list) and **Classic**, the 1.8 widget
+with everything it had — cores, memory, graphics, disks, temperatures,
+battery, SSD health, fans, network graph, ping, disk activity.
 
-## Features
-- **Processor** — the load and a histogram of the last minute, clock and
-  power (with admin rights). Click the block to see the top 5 programs by
-  load (processes with the same name are added up, memory as in Task Manager);
-  × next to a program closes it on the second click. Windows' own processes
-  have no ×, and only your own programs are closed.
-- **Cores** — a bar per logical processor, so one overloaded core (a game,
-  a stuck program) is visible even when the average is low.
-- **Memory, graphics, disks** — segment meters; a plugged-in USB stick shows
-  up by itself.
-- **CPU / GPU / SSD temperatures** — with admin rights (see below).
-  Integrated graphics without a sensor of its own shows the shared chip
-  temperature marked with "≈".
-- **Network** (↓ ↑) with a one-minute graph (download up, upload down),
-  **ping** (to 1.1.1.1, 8.8.8.8, 9.9.9.9 or your own address — Settings →
-  Network and games), disk activity, uptime.
-- **History** — click a row (cores, memory, graphics, temperature, network —
-  the row under the mouse lights up) or the menu "History (hour and day)":
-  charts of CPU, GPU, memory or network for the last hour or day with
-  the maximum and average, and "Save CSV" for the whole day. Kept in
-  `%APPDATA%\PC-Monitor\history.csv` (a point every 10 s, one day at most),
-  so it survives restarts.
-- **Battery** — charge and how long it will last (Windows' estimate), wear
-  (how much capacity is lost since new) and the power draw in watts when
-  unplugged.
-- **SSD health** — for NVMe drives: wear (how much of the rated endurance is
-  used up), data written and temperature, read from the drive's own health
-  log — no admin rights needed.
-- **Fans** — fan speeds, when the PC reports them (board fans need admin
-  rights; many laptops don't report fans at all).
-- **Show** (Settings) — hide the rows you don't need: graphics, disks, network
-  graph, ping and so on.
-- **Mini panel on the taskbar**, left of the tray icons: CPU/RAM, network,
-  ping, temperatures. Hover for a detailed card, click to open the widget.
-  The task buttons move aside and get their space back on exit. It hides in
-  fullscreen games and when the taskbar auto-hides.
-- **Alerts** as a card in the corner: CPU overheating (from 90° by default,
-  GPU 3° earlier), memory from 90% (with the program that ate it), battery
-  below 15% when unplugged. The limits are in Settings → Alerts. Each alert at
-  most once in 10 minutes; they never take the focus from a game. Also: little
-  free space on C: (below 10% by default) and an SSD that reports a fault or
-  is 90% worn.
-- **Profiles "Work" and "Game"** — each remembers its own look (compact or
-  full, size, colours, rows, opacity, mini panel). Switch from the right-click
-  menu; "Game" turns on by itself while a game is running and switches back
-  afterwards. Alert cards never pop up over a game: they show once you close it.
-- **Pin to the desktop** (📌 button): the widget lives under the windows,
-  survives Win+D and can't be moved. Grey 📌 — it can be dragged.
-- **FPS in games** — a small panel in the corner of the game window (clicks go
-  through it): "FPS 60 · low 48" with a frame-time graph where stutters stand
-  out in red, and below it CPU and GPU load and temperature, video memory, GPU
-  clock and the ping (to the address chosen in Settings). Any corner, 100/125/150%
-  (Settings → Network and games); **Ctrl+Alt+F** hides or shows it. Frames are counted from Windows' own events for every presented frame
-  (like PresentMon), so DirectX 9–12, OpenGL and Vulkan games all count.
-  low ("1% low") = the 99th percentile frame time over the last 10 s. Windows doesn't
-  let anything draw over *exclusive* fullscreen — use windowed or borderless.
-  Browsers, chats and players don't count as games.
-- **Hides itself** while a game (FPS shown) or a fullscreen video is in front
-  and comes back afterwards; or just dims to 30%, or does nothing (Settings →
-  Look). Ctrl+Alt+W during a game shows it anyway.
-- **Tray icon** next to the clock: left click shows/hides the widget, right
-  click opens the menu, hover shows CPU, RAM and temperature. Can be switched
-  off in Settings.
-- **Languages**: Russian, English, Ukrainian, German — as in Windows or from
-  Settings → General.
-- **Hotkey Ctrl+Alt+W** — show/hide the widget.
-- **Any shape** — drag the widget's right edge (width), its bottom edge (height)
-  or the bottom-right corner (both). Taller: the CPU and network graphs grow.
-  Wider: from twice the standard width the rows go into 2 columns (resources |
-  sensors and network), from three times into 3. Double-click the corner (or
-  "Standard shape" in Settings → Look) to get the usual shape back.
-- **Any size from 80 to 200%** (text and all) — Ctrl + mouse wheel over the
-  widget, or the slider in Settings → Look.
-- **Sticks to screen edges** while you drag it (hold Shift to place it freely),
-  and stays above the taskbar when it grows.
-- **Tuck it behind the screen edge** — hover the widget and a small tab shows on
-  its side: a click slides the widget behind the nearer screen edge, and only
-  the tab stays there (with a little CPU meter). Click the tab to bring the
-  widget back; drag it up or down to move it. Ctrl+Alt+W and the tray icon
-  bring the widget back too.
-- **Start with Windows**, **compact mode**, palettes, opacity — all in the
-  **Settings** window (right-click → "Settings…"); the right-click menu keeps
-  only the everyday items. Starting it twice doesn't open a second copy.
-- **Updates** — every 6 hours the widget asks GitHub whether a new version is
-  out and, if so, shows a "Version … is out" row and one card. It never
-  downloads or installs anything by itself. Off in "About → Check for updates".
-- **The cross** closes the widget on the second click (the first one turns it
-  red: "Click again to close"), so a slip next to 📌 doesn't quit it.
+![The widget: cards dark and light, and the compact list](docs/img/widget-cards.png)
+
+- **Any shape and size** (Classic): drag the edges or the corner; wider, the
+  rows go into two or three columns. Ctrl + mouse wheel: 80 to 200%.
+- **Pin to the desktop** (under the windows, survives Win+D) or keep it on top;
+  it sticks to screen edges while you drag it.
+- **Tuck it behind the screen edge**: a click on the small tab at its side, and
+  only the tab stays.
+- **Hides itself** while a game or a fullscreen video is in front (or dims, or
+  stays).
+- **Palettes**: Warm, Neon, Ice or two colours of your own; any opacity.
+
+## Tray and taskbar
+- **Tray icons** — up to three numbers on coloured squares (CPU, temperature,
+  memory, GPU…). Hover one for a card with the details, click it to open the
+  window.
+- **Taskbar panel** left of the tray icons: CPU/RAM, network, ping,
+  temperatures; the task buttons move aside and get their space back on exit.
+  Off by default on Windows 11 (see below).
+
+![Tray icons and the card shown when the mouse is over one](docs/img/tray-card.png)
+
+## In games
+- **FPS panel** in a corner of the game: FPS, 1% low, a frame-time graph where
+  every stutter shows up red, CPU and GPU load and temperature, video memory,
+  GPU clock and ping. A card, the 1.8 look or one line; pick the rows, size
+  and background with a live preview in Settings. **Ctrl+Alt+F** hides or
+  shows it. Frames are counted from Windows' own events for every presented
+  frame (like PresentMon), so DirectX 9–12, OpenGL and Vulkan games all count.
+  Windows lets nothing draw over *exclusive* fullscreen — use windowed or
+  borderless.
+- **Game sessions**: every game is recorded; afterwards a report — average FPS,
+  1% / 0.1% lows, frame time, stutters, load and temperature over time, what
+  held the FPS back, the system, your note, comparing two sessions, CSV of
+  every second and every frame.
+- **Profiles "Work" and "Game"**, each with its own look; "Game" turns on by
+  itself while you play.
+
+![The FPS panel as a card and as one line](docs/img/fps-looks.png)
+
+![A game session's report](docs/img/report.png)
+
+## Also
+- **Alerts** as a card in the corner: CPU overheating, memory running out,
+  low battery, little space on C:, a worn or failing SSD. At most once in 10
+  minutes each, never over a game.
+- **Languages**: English, Russian, Ukrainian, German — as in Windows or from
+  Settings.
+- **Updates**: every 6 hours PC Monitor asks GitHub whether a new version is
+  out and shows it once; one click installs it. An update is installed only if
+  it carries the release signature (Ed25519, minisign), besides GitHub's
+  checksum. Off in Settings → Updates.
+- **Starting it twice** doesn't open a second copy: it brings up the window.
 
 ## Installation
-Windows 10 is needed (for Windows 11 see below). Website:
-[vladzah403.github.io/pc-widget](https://vladzah403.github.io/pc-widget/).
+Windows 10 or 11, 64-bit.
 
-1. Download `PC-Monitor-Setup.exe` from
-   [Releases](https://github.com/vladZah403/pc-widget/releases) and run it. It
-   installs for your user only (no admin rights) into
+1. Download [`PC-Monitor-Setup.exe`](https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor-Setup.exe)
+   and run it. It installs for your user only (no admin rights) into
    `%LOCALAPPDATA%\Programs\PC-Monitor`, adds a Start menu shortcut and can be
    removed from "Apps & features".
-2. Or take `PC-Monitor.zip`, unpack it into any folder and run
-   `PC-Monitor.exe` — a portable copy.
+2. Or take [`PC-Monitor.zip`](https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor.zip),
+   unpack it into any folder and run `PC-Monitor.exe` — a portable copy.
 
-Later versions install from the widget itself: "Version … is out — update".
+**Coming from 1.8?** It updates itself to 2.0 and keeps your settings,
+autostart and history; or install the setup over it. **Tried a 2.0 beta**
+("PC Monitor 2")? Remove it in "Apps & features" first, then install 2.0.
 
-**SmartScreen warning.** The program isn't signed with a certificate (that
-costs money), so Windows shows "Windows protected your PC". Click "More info"
-→ "Run anyway". An antivirus may react the same way: programs built with
-PyInstaller look alike and heuristics get it wrong. All the source code is in
-this repository — you can build it yourself (see below).
+**SmartScreen warning.** The program isn't signed with a code-signing
+certificate yet, so Windows may show "Windows protected your PC": click
+"More info" → "Run anyway". All the source code is in this repository.
 
-Settings, the error log (`pc-monitor.log`) and diagnostics are in
-`%APPDATA%\PC-Monitor`. If something doesn't work, send `pc-monitor.log` and
-the output of `PC-Monitor.exe --diag` (`pc-monitor-diag.txt` in the same
-folder).
+The PC Monitor window needs OpenGL (any PC with a graphics driver).
 
-### From source
-Python 3.10+ is needed:
-
-```
-python -m pip install -r requirements.txt
-```
-
-Run `start.bat` (or `widget.pyw`). `build_exe.bat` builds `PC-Monitor.zip`
-(needs the packages from `requirements-build.txt` and the LibreHardwareMonitor
-DLLs listed in `lhm-files.txt` in the `lhm/` folder, see below).
-
-### Tests
-`python -m pytest tests` (needs `pip install pytest`). They load `widget.pyw`
-with `%APPDATA%` in a temp folder and never touch the real settings, the
-taskbar or the sensors; GitHub Actions runs them before every build.
-
-### Releasing a version
-GitHub Actions does the build (`.github/workflows/build.yml`): on every push
-to `main` it builds `PC-Monitor.zip` on Windows and checks that the program
-starts (the zip is kept as a run artifact). LibreHardwareMonitorLib comes from
-its official release, checked by SHA-256.
-
-To release: raise `APP_VERSION` in `widget.pyw`, write the notes in
-`docs/releases/vX.Y.md`, then `git tag -a vX.Y -m "PC Monitor X.Y"` and
-`git push origin vX.Y` — Actions creates the Release with the zip.
+Settings, history and game sessions are in `%APPDATA%\PC-Monitor`. If
+something doesn't work, open an issue with the output of
+`PC-Monitor.exe --diag` (or `--diag --out diag.txt`).
 
 ## Temperatures and admin rights
 Windows doesn't give real CPU temperatures to ordinary programs — they are
-read through a driver. The widget does it itself with
+read through a driver. PC Monitor does it with
 [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
-(MPL-2.0 license), but only with admin rights. So:
+(MPL-2.0) in a small helper (`_internal\pcm-sensors.exe`, .NET Framework 4.8,
+built into Windows), but only with admin rights. So:
 
-- by default the widget runs **without** admin rights: everything but the
+- by default PC Monitor runs **without** admin rights: everything but the CPU
   temperatures is shown right away;
-- temperatures are switched on in Settings: **"Admin rights (temperatures)"**.
-  The PawnIO driver is needed (installed once; LibreHardwareMonitor installs
-  it too);
+- temperatures are switched on in Settings → "Startup and closing" → **"Admin rights
+  (temperatures)"**. The free PawnIO driver is needed on some PCs (installed
+  once; LibreHardwareMonitor installs it too);
 - in this mode the program copies itself to `C:\Program Files\PC-Monitor` and
   from then on runs with admin rights only from there. Nothing can be written
-  there without admin rights — so no program can swap the widget's files to
-  get admin rights through it;
+  there without admin rights, so no program can swap PC Monitor's files to get
+  admin rights through it;
 - autostart in this mode goes through the Task Scheduler (no UAC prompt at
-  logon), also only for the copy in Program Files. The source version
-  (`widget.pyw`) never gets such an autostart: Python and its packages live in
-  folders anyone can write to.
+  logon), also only for the copy in Program Files.
 
-When there is no CPU temperature that way (no admin rights, or an Intel CPU
-without PawnIO), the widget takes the hottest ACPI thermal zone from Windows'
-"Thermal Zone Information" counters, if the PC has them, and marks it "≈": the
-firmware's own reading, close to the CPU's on many laptops, but not exact.
-
-SSD health comes from the drive's own log (Windows' NVMe query, no admin rights
-needed). Drives behind Intel RST / VMD refuse that query; with admin rights the
-widget then takes wear, spare and data written from LibreHardwareMonitorLib.
-
-**To remove** the copy in Program Files: switch off "Start with Windows" and
-"Admin rights" in Settings, close the widget and delete
-`C:\Program Files\PC-Monitor`.
-
-**LibreHardwareMonitor** as a separate program isn't needed any more. If the
-widget, without admin rights, sees its web server (`Options → Remote Web
-Server`), it takes the temperatures from there — but that server has no
-password and, if the firewall lets it through, is visible to everyone on your
-network. Better leave it off unless you need it. The widget only connects to
-`127.0.0.1`.
-
-To run from source, put the DLLs from a LibreHardwareMonitor release
-(`LibreHardwareMonitorLib.dll` and its dependencies) into `lhm/` and install
-`pythonnet` (`pip install -r requirements.txt`).
+Without admin rights the graphics temperature still comes from the driver
+(D3DKMT) on many PCs, and SSD health from the drive's own NVMe log. When there
+is no CPU temperature, the hottest ACPI thermal zone is shown, marked "≈".
 
 ## Windows 11
-- Windows 11 has a different taskbar: the task buttons can't be moved aside, so
-  the mini panel may cover icons. That's why it's off there by default — switch
-  it on in Settings → "Mini panel on the taskbar".
+- Windows 11's taskbar can't move the task buttons aside, so the taskbar panel
+  may cover icons. That's why it's off there by default — switch it on in
+  Settings.
 - **Smart App Control** (on on many fresh Windows 11 installs) blocks programs
-  that aren't signed: the setup stops with "error 4551: an Application Control
-  policy has blocked this file". Until the releases are signed (see the code
-  signing policy below), it runs only with Smart App Control off: Windows
+  that aren't code-signed: the setup stops with "error 4551". Until the
+  releases are signed it runs only with Smart App Control off: Windows
   Security → App & browser control → Smart App Control.
 
-## How it works
-- `widget.pyw` (+ translations in `translations.py`): a borderless tkinter
-  window, everything drawn with Pillow (supersampled), the Bahnschrift font
-  from Windows.
-- Sensors: LibreHardwareMonitorLib via `pythonnet` (or the LHM web server).
-- Data: `psutil`; processes with one `NtQuerySystemInformation` call, as Task
-  Manager does; ping via `IcmpSendEcho` (no admin rights needed); FPS from the
-  Microsoft-Windows-DXGI ETW provider.
-- Pinning: the window is owned by the desktop icons (`SHELLDLL_DefView`); the
-  mini panel by the taskbar (`Shell_TrayWnd`).
+## Building from source
+Rust (stable, MSVC toolchain) and Visual Studio Build Tools (C++ workload):
 
-Tested on Windows 10 (1600×900, 100%).
+```
+cargo build --release -p pcm-app
+```
+
+- `crates/pcm-core` — data model, settings (TOML), history (SQLite), game
+  sessions (zstd), updates; no Windows calls.
+- `crates/pcm-win` — Windows: PDH, D3DKMT, ETW frame counting, NVMe, network,
+  ping, battery, autostart, WinHTTP.
+- `crates/pcm-render` — the widget, tray icons, FPS panel and charts, drawn
+  with tiny-skia and the Bahnschrift font from Windows.
+- `crates/pcm-app` — `PC-Monitor.exe`: the widget, tray and panel windows; the
+  PC Monitor window (egui) runs as a child process, so closing it frees its
+  memory.
+- `sensors-helper` — `pcm-sensors.exe` (C#), LibreHardwareMonitorLib's
+  readings as JSON lines; `build.bat` builds it with the .NET Framework
+  compiler (the DLLs listed in `lhm-files.txt` go into `lhm/`).
+
+Tests: `cargo test --workspace`. GitHub Actions (`.github/workflows/rust.yml`)
+on every push also checks formatting and clippy, builds the zip and the setup,
+measures idle CPU and memory, installs and uninstalls the setup, updates a
+1.8 install to the new build and lets the build update itself.
+
+**Releasing**: raise `version` in `Cargo.toml`, write
+`docs/releases/vX.Y.Z.md`, tag `vX.Y.Z` and push it — Actions builds and
+publishes a pre-release. The zip is then signed with the release key (kept
+off this repository) into `signatures/vX.Y.Z.minisig`; pushing it lets
+`release-signature.yml` check the signature, attach it and make the release
+the latest one.
+
+PC Monitor 1.8 (Python) is in `widget.pyw`; its releases are tagged `v1.*`.
 
 ## Code signing policy
 The releases are not code-signed yet, so Windows SmartScreen may warn about
@@ -234,20 +188,19 @@ them and Smart App Control on a fresh Windows 11 may block them.
 
 - Committers, reviewers and approvers: [vladZah403](https://github.com/vladZah403)
 - Every release is built by GitHub Actions from this repository
-  (`.github/workflows/build.yml`), from a tagged commit; nothing is built or
-  signed by hand.
+  (`.github/workflows/rust.yml`), from a tagged commit. The only thing done by
+  hand is the update signature of the built zip, which the program checks
+  before installing an update.
 
 ### Privacy
 PC Monitor sends nothing about you or your PC anywhere. It connects to the
 network only to:
 - ask GitHub whether a new release is out (`api.github.com`, every 6 hours;
-  off in "About → Check for updates");
+  off in Settings → Updates);
 - download a new release, when you click "update" (`github.com`);
-- ping the address you chose (1.1.1.1 by default; Settings → Network and games);
-- read LibreHardwareMonitor's web server on this computer (`127.0.0.1`), if you
-  run it.
+- ping the address you chose (1.1.1.1 by default; Settings).
 
-Settings, the log and the day of history stay in `%APPDATA%\PC-Monitor`.
+Settings, history and game sessions stay in `%APPDATA%\PC-Monitor`.
 
 ## License
 [MIT](LICENSE). The bundled LibreHardwareMonitorLib is under the
