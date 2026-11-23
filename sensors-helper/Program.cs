@@ -8,6 +8,9 @@
 //
 // Default parts: cpu,gpu,board,storage. The battery is read by PC-Monitor.exe
 // itself (IOCTL_BATTERY_*): through the library it costs ~70 ms a second.
+// Drives are read every 30 s only (their SMART log and temperature change
+// slowly; with admin rights a read costs ~17 ms of the ~39 ms of a whole
+// reading); between those the last values go out again.
 //
 // Lines on stdout:
 //   {"type":"hello","protocol":1,"lhm":"0.9.6.0","admin":false,"pid":123}
@@ -161,6 +164,10 @@ namespace PcMonitor.Sensors
     class Reader
     {
         readonly LibreHardwareMonitor.Hardware.Computer computer;
+        /// <summary>Drives are updated this seldom (ms).</summary>
+        const long StorageEveryMs = 30000;
+        readonly Stopwatch sinceStorage = new Stopwatch();
+        bool storageDue = true;
 
         /// <param name="parts">",cpu,gpu,...," (lower case, comma on both ends)</param>
         public Reader(string parts)
@@ -184,6 +191,8 @@ namespace PcMonitor.Sensors
         {
             var arr = new StringBuilder("[");
             bool first = true;
+            storageDue = !sinceStorage.IsRunning || sinceStorage.ElapsedMilliseconds >= StorageEveryMs;
+            if (storageDue) sinceStorage.Restart();
             foreach (var hw in computer.Hardware) Add(arr, hw, null, ref first);
             return arr.Append(']').ToString();
         }
@@ -194,7 +203,8 @@ namespace PcMonitor.Sensors
             var sw = Stopwatch.StartNew();
             try
             {
-                hw.Update();
+                if (storageDue || hw.HardwareType != LibreHardwareMonitor.Hardware.HardwareType.Storage)
+                    hw.Update();
             }
             catch (Exception e)
             {
