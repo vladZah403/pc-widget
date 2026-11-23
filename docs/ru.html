@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC Monitor — нагрузка, температуры и FPS для Windows</title>
+<meta name="description" content="Нагрузка процессора, памяти и видеокарты, температуры, сеть, батарея и FPS в играх — в своём окне, виджете на рабочем столе, в трее, на панели задач и поверх игры, с отчётом о каждой игровой сессии. Бесплатно и с открытым кодом.">
+<link rel="alternate" hreflang="en" href="index.html">
+<link rel="alternate" hreflang="ru" href="ru.html">
+<link rel="icon" href="img/logo-64.png">
+<link rel="apple-touch-icon" href="img/logo-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Sans+Condensed:wght@500;600&subset=cyrillic&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* the widget's own colours: a dark desktop, its card, its text, its cool-to-hot scale */
+    --desk: #1b2230;
+    --desk-deep: #141a25;
+    --card: #1c212b;
+    --line: #2c3340;
+    --ink: #e8eaef;
+    --mute: #8b93a3;
+    --cool: #2ec4b6;
+    --mild: #9ccc65;
+    --warm: #f2b33d;
+    --hot: #f27a3d;
+    --max: #e8445a;
+    --taskbar: #16161a;
+    --measure: 64ch;
+    --wide: 1160px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--desk-deep);
+    color: var(--ink);
+    font: 400 17px/1.6 "Fira Sans", "Segoe UI", sans-serif;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--cool); }
+  a:hover { color: #6fe0d5; }
+  a:focus-visible, .button:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--warm); outline-offset: 3px;
+  }
+  h1, h2, h3 { font-family: "Fira Sans Condensed", "Bahnschrift", sans-serif; font-weight: 600; line-height: 1.05; margin: 0; }
+
+  .lang { position: absolute; top: 18px; right: 24px; z-index: 2; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 1; color: var(--ink); opacity: .75; text-decoration: none; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; padding: 7px 14px; }
+  .lang:hover { opacity: 1; color: var(--ink); border-color: rgba(255,255,255,.4); }
+
+  /* --- hero: a desktop with the widget pinned on it and the taskbar along the bottom --- */
+  .desktop {
+    position: relative;
+    background:
+      radial-gradient(1200px 640px at 80% 28%, #2a3550 0%, transparent 60%),
+      radial-gradient(900px 520px at 8% 92%, #1f2a3d 0%, transparent 65%),
+      var(--desk);
+    padding: 64px 24px 0;
+    overflow: hidden;
+  }
+  .desktop-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 56px;
+    align-items: center;
+  }
+  .pitch h1 { font-size: clamp(60px, 9.5vw, 116px); letter-spacing: -0.015em; }
+  .pitch h1 .logo { width: 0.78em; height: 0.78em; vertical-align: -0.07em; margin-right: 0.16em; }
+  .pitch p.lead { font-size: clamp(20px, 2.3vw, 25px); line-height: 1.4; max-width: 26ch; margin: 18px 0 32px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .button {
+    display: inline-block;
+    padding: 15px 26px;
+    border-radius: 10px;
+    font: 600 18px/1 "Fira Sans", sans-serif;
+    text-decoration: none;
+    transition: background-color .15s, border-color .15s;
+  }
+  .button.primary { background: var(--cool); color: #0d1a1b; }
+  .button.primary:hover { background: #4fd6c9; color: #0d1a1b; }
+  .button.secondary { color: var(--ink); border: 1px solid var(--line); background: rgba(255,255,255,0.03); }
+  .button.secondary:hover { border-color: var(--mute); color: var(--ink); }
+  .small { color: var(--mute); font-size: 15px; margin: 18px 0 0; }
+  .news {
+    margin: 34px 0 0;
+    max-width: 44ch;
+    padding: 14px 18px;
+    border-left: 3px solid var(--warm);
+    background: rgba(242, 179, 61, 0.06);
+    border-radius: 0 10px 10px 0;
+    font-size: 16px;
+  }
+  .news b { font-weight: 600; }
+  .pinned { justify-self: end; width: 300px; filter: drop-shadow(0 22px 44px rgba(0,0,0,0.5)); }
+  .taskbar {
+    margin: 64px -24px 0;
+    background: var(--taskbar);
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 22px;
+    padding: 0 24px;
+    border-top: 1px solid #23232a;
+  }
+  .taskbar img { height: 40px; width: auto; }
+  .taskbar .clock { color: #d9dade; font-size: 14px; line-height: 1.25; text-align: right; }
+
+  /* --- the meter: the widget's segmented scale, used as the divider between sections --- */
+  .meter { display: flex; gap: 4px; max-width: var(--wide); margin: 0 auto; padding: 0 24px; }
+  .meter i { flex: 1; height: 6px; border-radius: 2px; background: var(--line); }
+  header + .meter { margin-top: 56px; }
+
+  section { max-width: var(--wide); margin: 0 auto; padding: 76px 24px; }
+  section h2 { font-size: clamp(38px, 5.2vw, 56px); margin-bottom: 14px; }
+  section > p, .intro p { max-width: var(--measure); color: var(--mute); margin: 0 0 36px; }
+  .intro p strong { color: var(--ink); font-weight: 500; }
+
+  /* everything at a glance: a piece of the real widget over each list */
+  .groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; align-items: start; }
+  .slice {
+    margin: 0 0 22px;
+    aspect-ratio: 524 / 330;  /* all three as tall as the tallest: the headings below line up */
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 8px 0 2px;
+    overflow: hidden;
+    box-shadow: 0 14px 30px rgba(0,0,0,0.25);
+  }
+  .groups h3 { font-size: 27px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+  .groups h3::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--dot); }
+  .groups ul { margin: 0; padding-left: 18px; color: var(--mute); }
+  .groups li { margin: 6px 0; }
+  .groups li strong { color: var(--ink); font-weight: 500; }
+
+  /* any shape: the widget on a little desktop, its right edge can be dragged */
+  .stage {
+    position: relative;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background:
+      radial-gradient(800px 420px at 85% 20%, #2a3550 0%, transparent 62%),
+      radial-gradient(700px 380px at 5% 100%, #1f2a3d 0%, transparent 65%),
+      var(--desk);
+    padding: 28px;
+    min-height: 640px;
+    overflow: hidden;
+  }
+  .frame {
+    position: relative;
+    width: 264px;
+    max-width: 100%;
+    filter: drop-shadow(0 18px 36px rgba(0,0,0,0.45));
+    transition: width .18s ease-out;
+  }
+  .frame img { width: 100%; }
+  .edge {
+    position: absolute;
+    top: 14px; bottom: 14px; right: -9px;
+    width: 18px;
+    border: 0; padding: 0;
+    background: transparent;
+    cursor: ew-resize;
+    touch-action: none;
+  }
+  .edge::before {
+    content: "";
+    position: absolute; top: 0; bottom: 0; left: 7px;
+    width: 4px; border-radius: 2px;
+    background: var(--mute);
+    opacity: .35;
+    transition: opacity .15s, background-color .15s;
+  }
+  .edge:hover::before, .edge:focus-visible::before, .stage.dragging .edge::before { opacity: 1; background: var(--warm); }
+  .edge::after {
+    content: "";
+    position: absolute; top: 50%; left: 2px;
+    width: 14px; height: 34px; margin-top: -17px;
+    border-radius: 7px;
+    background: var(--warm);
+    box-shadow: 0 0 0 4px rgba(242,179,61,0.18);
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; margin-top: 22px; }
+  .controls label { color: var(--mute); font-size: 15px; display: flex; align-items: center; gap: 14px; }
+  .controls input[type=range] { width: min(320px, 70vw); accent-color: var(--warm); }
+  .readout { font: 600 22px/1 "Fira Sans Condensed", sans-serif; }
+  .readout span { color: var(--mute); font: 400 16px/1 "Fira Sans", sans-serif; margin-left: 8px; }
+
+  /* history */
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+  .split .shot { filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); width: 100%; max-width: min(380px, 100%); justify-self: center; }
+
+  /* in games: a dusk landscape (drawn here, no real game) with the counter in its corner */
+  .scene {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+    background: linear-gradient(180deg, #1d2440 0%, #3b3b63 38%, #a5596b 66%, #f0a35c 82%, #f6c67c 100%);
+    border: 1px solid var(--line);
+  }
+  .scene .sun {
+    position: absolute; left: 62%; top: 52%;
+    width: 16%; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle, #ffe2a8 0%, #ffc56f 45%, rgba(255,197,111,0) 70%);
+  }
+  .scene .ridge { position: absolute; inset: auto 0 0 0; }
+  .scene .far  { height: 46%; background: #574766; clip-path: polygon(0 55%, 12% 30%, 24% 48%, 38% 18%, 52% 44%, 63% 26%, 78% 50%, 90% 22%, 100% 40%, 100% 100%, 0 100%); }
+  .scene .mid  { height: 34%; background: #2f2c45; clip-path: polygon(0 40%, 15% 62%, 30% 28%, 46% 58%, 58% 36%, 74% 66%, 88% 34%, 100% 56%, 100% 100%, 0 100%); }
+  .scene .near { height: 20%; background: #15141f; clip-path: polygon(0 30%, 20% 60%, 34% 38%, 55% 70%, 70% 44%, 86% 64%, 100% 36%, 100% 100%, 0 100%); }
+  .scene .pill {
+    position: absolute; left: 3%; top: 4.5%;
+    width: 46%; max-width: 280px;
+    filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5));
+  }
+  .caption { color: var(--mute); font-size: 15px; margin: 12px 0 0; }
+
+  /* 2.0: the PC Monitor window and pictures as wide as the page */
+  .wide { margin: 0; }
+  .wide img { width: 100%; border-radius: 12px; border: 1px solid var(--line); filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); }
+  .wide.plain img { border: 0; filter: none; }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; margin-top: 28px; }
+  .pair img { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+  .games-pic img { width: 100%; border-radius: 12px; }
+
+  .themes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+  .themes figure { margin: 0; }
+  .themes img { width: 100%; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.35)); }
+  .themes figcaption { color: var(--mute); font-size: 15px; margin-top: 8px; }
+
+  ol.steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; max-width: var(--measure); }
+  ol.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 12px; }
+  ol.steps li::before {
+    content: counter(step);
+    font: 600 28px/1 "Fira Sans Condensed", sans-serif;
+    color: var(--warm);
+    padding-top: 1px;
+  }
+  ol.steps b { font-weight: 600; }
+  ol.steps span { color: var(--mute); display: block; }
+
+  .policy h2 { font-size: clamp(30px, 3.6vw, 38px); }
+  .policy p { font-size: 16px; margin-bottom: 18px; }
+  .policy p strong { color: var(--ink); font-weight: 500; }
+  footer { border-top: 1px solid var(--line); color: var(--mute); font-size: 15px; }
+  footer .inner { max-width: var(--wide); margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }
+
+  @media (max-width: 900px) {
+    .desktop-inner { grid-template-columns: 1fr; gap: 40px; }
+    .pinned { justify-self: start; width: min(300px, 100%); }
+    .groups, .split, .pair { grid-template-columns: 1fr; }
+    .groups { gap: 44px; }
+    .split .shot { justify-self: start; }
+    .themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .taskbar .clock { display: none; }
+    .taskbar { justify-content: flex-start; overflow: hidden; }
+    .stage { min-height: 0; padding: 18px; }
+  }
+  @media (max-width: 440px) {
+    .themes { gap: 12px; }
+    .themes figcaption { font-size: 14px; }
+    section { padding: 60px 16px; }
+    .desktop { padding: 48px 16px 0; }
+    .taskbar { margin: 48px -16px 0; }
+    .meter { padding: 0 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .frame, .edge::before, .button { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="desktop">
+  <a class="lang" href="index.html" hreflang="en" lang="en">English</a>
+  <div class="desktop-inner">
+    <div class="pitch">
+      <h1><img class="logo" src="img/logo-256.png" width="256" height="256" alt="">PC Monitor</h1>
+      <p class="lead">Нагрузка, температуры и FPS твоего ПК — в своём окне, на рабочем столе, на панели задач и поверх игры.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor-Setup.exe">Скачать для Windows</a>
+        <a class="button secondary" href="https://github.com/vladZah403/pc-widget/releases/latest/download/PC-Monitor.zip">Портативный zip</a>
+      </div>
+      <p class="small">Windows 10 и 11. Бесплатно и с открытым кодом. Обновления ставятся в один клик.</p>
+      <p class="news"><b>Новое: PC Monitor 2.0.</b> Переписан с нуля — около 15 МБ памяти вместо 80+, полноценное окно с историей за 30 дней, отчёт о каждой игровой сессии, новый вид виджета и трея. 1.8 обновится сам и сохранит настройки. <a href="https://github.com/vladZah403/pc-widget/releases/latest">Все изменения</a></p>
+    </div>
+    <div class="pinned">
+      <img src="img/widget-hero.png" width="560" height="648" alt="Виджет PC Monitor: процессор, видеокарта, память и диск C: — кольца с нагрузкой и коротким графиком, скорость сети и пинг">
+    </div>
+  </div>
+  <div class="taskbar" aria-label="Мини-панель на панели задач">
+    <img src="img/taskbar.png" width="503" height="80" alt="Мини-панель: CPU 45%, RAM 40%, скорость загрузки и отдачи, пинг 24 мс, температура процессора и видеокарты">
+    <div class="clock">22:57<br>21.11.2026</div>
+  </div>
+</header>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>Окно PC Monitor</h2>
+    <p>Процессор, видеокарта, память и диск одним взглядом, график нагрузки от минуты до суток, температуры и вентиляторы, сеть и пинг, самые прожорливые программы и игра, в которую ты играешь. Рядом: <strong>История</strong> за 30 дней, <strong>Игры</strong>, <strong>Процессы</strong>, <strong>Оборудование</strong> и <strong>Настройки</strong> — в светлой или тёмной теме. Закроешь окно — виджет, значки в трее и мини-панель продолжат работать.</p>
+  </div>
+  <figure class="wide"><img src="img/window.png" width="1280" height="800" alt="Окно PC Monitor: процессор 21%, видеокарта 35%, память 42%, диск C: занят на 76%, график нагрузки, температуры, сеть, прожорливые программы и записываемая игровая сессия"></figure>
+  <div class="pair">
+    <img src="img/window-light.png" width="1280" height="800" alt="То же окно в светлой теме">
+    <img src="img/history-page.png" width="1280" height="800" alt="История: средние и пиковые значения за последний час, графики нагрузки процессора и видеокарты, температур, памяти и сети">
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>Виджет — если хочешь</h2>
+    <p>Включается в Настройках или клавишами <strong>Ctrl+Alt+W</strong>. Новый вид <strong>«Карточки»</strong>, тёмный или светлый, или компактный список — или <strong>«Классический»</strong> виджет из 1.8 со всем, что в нём было (ниже).</p>
+  </div>
+  <figure class="wide plain"><img src="img/widget-cards.png" width="1380" height="558" alt="Виджет в виде «Карточки», тёмный и светлый, и его компактный список"></figure>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>Всё одним взглядом</h2>
+    <p>Каждое значение окрашено по одной шкале — от спокойного к горячему, так что красная цифра значит «посмотри сюда», что бы она ни измеряла. Классический виджет показывает всё сразу:</p>
+  </div>
+  <div class="groups">
+    <div style="--dot: var(--cool)">
+      <figure class="slice"><img src="img/glance-load.png" width="524" height="308" alt="Строки виджета: ядра, память, видеокарта и диски"></figure>
+      <h3>Нагрузка</h3>
+      <ul>
+        <li><strong>Процессор</strong> с гистограммой за минуту, частотой и мощностью</li>
+        <li><strong>Каждое ядро</strong> — отдельной полоской</li>
+        <li><strong>Память, видеокарта, диски</strong> — флешки появляются сами</li>
+        <li><strong>Самые прожорливые программы</strong>: нажми на блок процессора и закрой лишнюю прямо там</li>
+      </ul>
+    </div>
+    <div style="--dot: var(--warm)">
+      <figure class="slice"><img src="img/glance-sensors.png" width="524" height="276" alt="Строки виджета: температуры, батарея и SSD"></figure>
+      <h3>Датчики</h3>
+      <ul>
+        <li><strong>Температура процессора, видеокарты и SSD</strong></li>
+        <li><strong>Здоровье SSD</strong>: износ и объём записи, без прав администратора</li>
+        <li><strong>Батарея</strong>: сколько осталось, износ, расход</li>
+        <li><strong>Вентиляторы</strong>, если ПК о них сообщает</li>
+      </ul>
+    </div>
+    <div style="--dot: var(--max)">
+      <figure class="slice"><img src="img/glance-network.png" width="524" height="188" alt="Строки виджета: график сети, пинг и активность диска"></figure>
+      <h3>Сеть</h3>
+      <ul>
+        <li><strong>Загрузка и отдача</strong> с графиком за минуту</li>
+        <li><strong>Пинг</strong> до 1.1.1.1, 8.8.8.8, 9.9.9.9 или твоего игрового сервера</li>
+        <li><strong>Активность диска</strong>: скорость чтения и записи</li>
+        <li><strong>Предупреждения</strong>, когда процессор перегревается, кончается память или место на диске, изнашивается SSD или садится батарея — никогда поверх игры</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section aria-labelledby="shape-title">
+  <div class="intro">
+    <h2 id="shape-title">Любая форма</h2>
+    <p>Тяни виджет за правый край, нижний край или угол. Выше — растут графики, шире — значения раскладываются в <strong>две или три колонки</strong>. Ctrl + колёсико мыши увеличивает или уменьшает всё вместе с текстом. Попробуй прямо здесь: потяни полоску на краю виджета.</p>
+  </div>
+  <div class="stage" id="stage">
+    <div class="frame" id="frame">
+      <img id="shape" src="img/shape-264.png" width="528" height="1140" alt="Виджет шириной 264 px: одна колонка">
+      <button class="edge" id="edge" type="button" aria-label="Потяни, чтобы сделать виджет шире или уже"></button>
+    </div>
+  </div>
+  <div class="controls">
+    <label>Ширина <input type="range" id="width" min="0" max="5" step="1" value="0" aria-describedby="readout"></label>
+    <div class="readout" id="readout" aria-live="polite">264 px<span>одна колонка</span></div>
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>Трей и панель задач</h2>
+    <p>До трёх цифр в трее на цветных квадратах — процессор, температура, память, видеокарта. Наведи — появится карточка с подробностями, нажми — откроется окно. Мини-панель на панели задач показывает такую же карточку.</p>
+  </div>
+  <figure class="wide plain"><img src="img/tray-card.png" width="1118" height="330" alt="Значки в трее 12, 42, 97 и 66 градусов и карточка процессора в тёмной и светлой теме: нагрузка, температура, частота, самая прожорливая программа"></figure>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>В играх</h2>
+    <p>В углу игры — небольшая панель: FPS, 1% low, график времени кадра, где каждое подтормаживание видно красным, нагрузка и температура процессора и видеокарты, видеопамять, частота видеокарты и пинг. Карточка или одна строка, нужные строки, любой угол и размер; <strong>Ctrl+Alt+F</strong> её прячет. Считаются игры на DirectX 9–12, OpenGL и Vulkan, а клики проходят сквозь панель.</p>
+    <p>Каждая игра записывается. После неё — <strong>отчёт</strong>: средний FPS и просадки, подтормаживания, нагрузка и температуры по времени, что ограничивало FPS, твоя заметка, сравнение с другой сессией и CSV с каждым кадром.</p>
+  </div>
+  <div class="games-pic">
+    <img src="img/fps-looks.png" width="1689" height="444" alt="FPS-панель поверх игры: карточкой в левом верхнем углу и одной строкой внизу">
+    <p class="caption">Включи оконный режим или «окно без рамки»: поверх эксклюзивного полноэкранного режима Windows не даёт ничего рисовать.</p>
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <figure class="wide"><img src="img/report.png" width="1280" height="800" alt="Отчёт об игровой сессии: средний FPS 52, 1% low 37, подтормаживаний меньше 0,1%, графики FPS и времени кадра и что ограничивает FPS — видеокарта"></figure>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <div class="intro">
+    <h2>Под себя</h2>
+    <p>Светлое или тёмное окно. Для виджета: «Карточки» или «Классический», три палитры или два своих цвета, любой размер от 80 до 200%, компактный режим, любая прозрачность; закрепи его на рабочем столе или держи поверх окон. Два профиля, «Работа» и «Игра», у каждого свой вид — «Игра» включается сама, пока ты играешь. Интерфейс на русском, английском, украинском и немецком.</p>
+  </div>
+  <div class="themes">
+    <figure><img src="img/theme-heat.png" width="528" height="356" alt="Компактный виджет, палитра «Тепло»"><figcaption>Тепло</figcaption></figure>
+    <figure><img src="img/theme-neon.png" width="528" height="356" alt="Компактный виджет, палитра «Неон»"><figcaption>Неон</figcaption></figure>
+    <figure><img src="img/theme-ice.png" width="528" height="356" alt="Компактный виджет, палитра «Лёд»"><figcaption>Лёд</figcaption></figure>
+    <figure><img src="img/theme-custom.png" width="528" height="356" alt="Компактный виджет, свои цвета"><figcaption>Свои цвета</figcaption></figure>
+  </div>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section>
+  <h2>Установка</h2>
+  <ol class="steps">
+    <li><div><b>Скачай PC-Monitor-Setup.exe</b><span>Ставится только для твоего пользователя — права администратора не нужны. Стоит 1.8? Он сам обновится до 2.0 и сохранит настройки.</span></div></li>
+    <li><div><b>Запусти.</b><span>Программа пока без цифровой подписи (см. <a href="#code-signing-policy">политику подписи</a>), поэтому Windows может написать «Система Windows защитила ваш компьютер»: нажми «Подробнее», затем «Выполнить в любом случае». На свежей Windows 11 «Интеллектуальное управление приложениями» может заблокировать её совсем, пока релизы не подписаны. Весь исходный код — на GitHub.</span></div></li>
+    <li><div><b>Включи температуры, если нужны.</b><span>PC Monitor → Настройки → «Запуск и закрытие» → «Права администратора (температуры)»: температуру процессора Windows отдаёт только программам с правами администратора. На некоторых ПК процессору нужен ещё бесплатный драйвер PawnIO.</span></div></li>
+  </ol>
+</section>
+
+<div class="meter" aria-hidden="true"></div>
+
+<section class="policy" id="code-signing-policy">
+  <h2>Политика подписи кода</h2>
+  <p>Релизы пока не подписаны цифровой подписью, поэтому Windows SmartScreen может о них предупреждать, а «Интеллектуальное управление приложениями» на свежей Windows 11 — блокировать. Каждый релиз собирает GitHub Actions из помеченного тегом коммита открытого репозитория — ничего не собирается и не подписывается вручную. Авторы изменений, ревьюеры и утверждающие: <a href="https://github.com/vladZah403">vladZah403</a>.</p>
+  <p><strong>Конфиденциальность.</strong> PC Monitor никуда не отправляет ничего о тебе и твоём ПК. В интернет он выходит только чтобы спросить у GitHub, нет ли новой версии (раз в 6 часов, можно выключить), скачать её, когда ты нажмёшь «обновить», и пинговать выбранный адрес (по умолчанию 1.1.1.1). Настройки, история и игровые сессии остаются на твоём ПК. Обновления ставятся, только если у них есть подпись релиза.</p>
+</section>
+
+<footer>
+  <div class="inner">
+    <span>У PC Monitor открытый код: <a href="https://github.com/vladZah403/pc-widget">github.com/vladZah403/pc-widget</a></span>
+    <span>Датчики — через <a href="https://github.com/LibreHardwareMonitor/LibreHardwareMonitor">LibreHardwareMonitorLib</a> (MPL-2.0)</span>
+  </div>
+</footer>
+
+<script>
+  // the section dividers: 24 segments coloured along the widget's cool-to-hot scale
+  const stops = ["#2ec4b6", "#9ccc65", "#f2b33d", "#f27a3d", "#e8445a"];
+  const mix = (a, b, t) => {
+    const p = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+    const [x, y] = [p(a), p(b)];
+    return "rgb(" + x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(",") + ")";
+  };
+  const scale = t => {
+    const n = stops.length - 1, i = Math.min(Math.floor(t * n), n - 1);
+    return mix(stops[i], stops[i + 1], t * n - i);
+  };
+  document.querySelectorAll(".meter").forEach((m, k) => {
+    const lit = [16, 9, 20, 13, 18, 11][k % 6];  // each divider shows a different "load"
+    for (let i = 0; i < 24; i++) {
+      const seg = document.createElement("i");
+      if (i < lit) seg.style.background = scale(i / 23);
+      m.appendChild(seg);
+    }
+  });
+
+  // "Any shape": the real widget rendered at six widths; dragging its edge (or the
+  // slider) picks the one that fits, so the readings jump into 2 and 3 columns
+  const widths = [264, 352, 440, 528, 660, 792];
+  const words = ["одна колонка", "одна колонка", "одна колонка", "две колонки", "две колонки", "три колонки"];
+  const stage = document.getElementById("stage"), frame = document.getElementById("frame");
+  const img = document.getElementById("shape"), edge = document.getElementById("edge");
+  const range = document.getElementById("width"), readout = document.getElementById("readout");
+  widths.forEach(w => { const pre = new Image(); pre.src = `img/shape-${w}.png`; });
+  let step = 0, touched = false;
+  const show = i => {
+    step = Math.max(0, Math.min(widths.length - 1, i));
+    const w = widths[step];
+    img.src = `img/shape-${w}.png`;
+    img.alt = `Виджет шириной ${w} px: ${words[step]}`;
+    frame.style.width = w + "px";
+    range.value = step;
+    readout.innerHTML = `${w} px<span>${words[step]}</span>`;
+  };
+  const nearest = px => widths.reduce((best, w, i) => (w <= px ? i : best), 0);
+  const room = () => {
+    const cs = getComputedStyle(stage);
+    return stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  };
+  // the mouse's distance from the widget's left side, in the widget's own px; on a
+  // screen narrower than 792 px the six widths are spread over the room there is
+  const widgetPx = x => {
+    const px = x - frame.getBoundingClientRect().left, avail = room();
+    const lo = widths[0], hi = widths[widths.length - 1];
+    if (avail >= hi) return px;
+    const d0 = Math.min(lo, avail);
+    return lo + (px - d0) / Math.max(1, avail - d0) * (hi - lo);
+  };
+  let dragging = false;
+  edge.addEventListener("pointerdown", e => {
+    touched = dragging = true;
+    edge.setPointerCapture(e.pointerId);
+    stage.classList.add("dragging");
+  });
+  edge.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    const i = nearest(widgetPx(e.clientX));
+    if (i !== step) show(i);
+  });
+  const stop = () => { dragging = false; stage.classList.remove("dragging"); };
+  edge.addEventListener("pointerup", stop);
+  edge.addEventListener("pointercancel", stop);
+  edge.addEventListener("keydown", e => {
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") { touched = true; show(step + 1); e.preventDefault(); }
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") { touched = true; show(step - 1); e.preventDefault(); }
+  });
+  range.addEventListener("input", () => { touched = true; show(+range.value); });
+
+  // once, when the demo first comes into view: widen it to three columns and back,
+  // so it's clear what dragging does (not with reduced motion, not after a touch)
+  const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!calm && "IntersectionObserver" in window) {
+    const seen = new IntersectionObserver(entries => {
+      if (!entries.some(e => e.isIntersecting)) return;
+      seen.disconnect();
+      [1, 2, 3, 4, 5, 5, 3, 0].forEach((i, k) => setTimeout(() => { if (!touched) show(i); }, 500 + k * 420));
+    }, { threshold: 0.6 });
+    seen.observe(stage);
+  }
+</script>
+</body>
+</html>

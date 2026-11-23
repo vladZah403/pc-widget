@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PC Monitor — load, temperatures and FPS for Windows</title>
 <meta name="description" content="CPU, memory and GPU load, temperatures, network, battery and FPS in games — in its own window, a desktop widget, the tray, the taskbar and over your game, with a report of every game session. Free and open source.">
+<link rel="alternate" hreflang="en" href="index.html">
+<link rel="alternate" hreflang="ru" href="ru.html">
 <link rel="icon" href="img/logo-64.png">
 <link rel="apple-touch-icon" href="img/logo-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,6 +45,9 @@
     outline: 2px solid var(--warm); outline-offset: 3px;
   }
   h1, h2, h3 { font-family: "Barlow Condensed", "Bahnschrift", sans-serif; font-weight: 600; line-height: 1.05; margin: 0; }
+
+  .lang { position: absolute; top: 18px; right: 24px; z-index: 2; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 1; color: var(--ink); opacity: .75; text-decoration: none; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; padding: 7px 14px; }
+  .lang:hover { opacity: 1; color: var(--ink); border-color: rgba(255,255,255,.4); }
 
   /* --- hero: a desktop with the widget pinned on it and the taskbar along the bottom --- */
   .desktop {
@@ -271,6 +276,7 @@
 <body>
 
 <header class="desktop">
+  <a class="lang" href="ru.html" hreflang="ru" lang="ru">Русский</a>
   <div class="desktop-inner">
     <div class="pitch">
       <h1><img class="logo" src="img/logo-256.png" width="256" height="256" alt="">PC Monitor</h1>
