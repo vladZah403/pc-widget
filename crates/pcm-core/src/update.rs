@@ -133,6 +133,21 @@ pub fn verify_signature(zip: &[u8], minisig: &[u8], public_key: &str) -> Result<
     key.verify(zip, &sig, false).map_err(|e| format!("signature: {e}"))
 }
 
+/// The release's zip and signature, and that the signature is for this
+/// version: its trusted comment (signed too) is "PC Monitor <version>", as
+/// the release flow writes it. So an older signed zip can't be passed off
+/// as the new one (a downgrade to a version with a known flaw).
+pub fn verify_release(zip: &[u8], minisig: &[u8], public_key: &str, version: &str) -> Result<(), String> {
+    verify_signature(zip, minisig, public_key)?;
+    let text = std::str::from_utf8(minisig).map_err(|_| "the signature is not text".to_string())?;
+    let sig = minisign_verify::Signature::decode(text).map_err(|e| format!("signature: {e}"))?;
+    let want = format!("PC Monitor {version}");
+    if sig.trusted_comment().trim() != want {
+        return Err(format!("the signature is for \"{}\", not \"{want}\"", sig.trusted_comment().trim()));
+    }
+    Ok(())
+}
+
 /// Unpack the files under PC-Monitor/ of the release zip into `staging`
 /// (emptied first), never anywhere outside it. It must hold PC-Monitor.exe
 /// and _internal. The setup's uninstaller (unins000.exe/.dat) in `app_dir`
@@ -269,6 +284,17 @@ mod tests {
         let mut changed = file.to_vec();
         changed[0] ^= 1;
         assert!(verify_signature(&changed, sig, PUBLIC_KEY).is_err());
+        // its trusted comment is "release key check": no release version matches it
+        assert!(verify_release(file, sig, PUBLIC_KEY, "2.0.1").is_err());
+    }
+
+    #[test]
+    fn the_signature_names_the_version() {
+        // the real 2.0.0 signature: right for 2.0.0, refused for any other version
+        let sig = include_bytes!("../../../signatures/v2.0.0.minisig");
+        let text = std::str::from_utf8(sig).unwrap();
+        let decoded = minisign_verify::Signature::decode(text).unwrap();
+        assert_eq!(decoded.trusted_comment(), "PC Monitor 2.0.0");
     }
 
     fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {

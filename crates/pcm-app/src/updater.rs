@@ -134,6 +134,7 @@ impl Updater {
     /// Download, check and unpack `release` into the staging folder.
     pub fn start(release: &Release, (app_dir, staging): (PathBuf, PathBuf), hwnd: isize) -> Option<Updater> {
         let (zip, sig) = (release.zip.clone()?, release.sig.clone()?);
+        let version = release.version.clone();
         let stage = Arc::new(Mutex::new(Stage::Download(0.0)));
         let (st, app, stg) = (stage.clone(), app_dir.clone(), staging.clone());
         let set = move |s: Stage| {
@@ -165,7 +166,7 @@ impl Updater {
                     if pcm_win::http::sha256_hex(&minisig) != sig.sha256 {
                         return Err(tr("контрольная сумма не совпала"));
                     }
-                    update::verify_signature(&data, &minisig, update::PUBLIC_KEY)
+                    update::verify_release(&data, &minisig, update::PUBLIC_KEY, &version)
                         .map_err(|_| tr("подпись не прошла проверку"))?;
                     set(Stage::Install);
                     update::unpack(&data, &stg, &app).map_err(|_| tr("в архиве нет программы"))
