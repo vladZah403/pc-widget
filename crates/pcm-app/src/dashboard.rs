@@ -196,6 +196,8 @@ struct Dashboard {
     look: Option<bool>,
     /// The logo is on the window (title bar, taskbar).
     icon: bool,
+    /// The logo in the top bar, drawn for the screen's scale (scale, texture).
+    logo: Option<(f32, egui::TextureHandle)>,
     /// Closing the window quits PC Monitor (not in the offscreen test runs).
     quit_on_close: bool,
     /// `--screenshot FILE`: save the window's own pixels once fed, then close.
@@ -219,6 +221,7 @@ impl Dashboard {
             own_read: (0, None, None),
             look: None,
             icon: false,
+            logo: None,
             quit_on_close: false,
             shot: None,
         }
@@ -253,9 +256,23 @@ impl Dashboard {
         let r = ui.max_rect();
         let p = ui.painter().clone();
         let y = r.center().y;
-        let x = r.left() + 22.0;
-        p.text(pos2(x, y), Align2::LEFT_CENTER, icon::LOGO, icon_font(20.0), pal().accent);
-        let name = p.text(pos2(x + 32.0, y), Align2::LEFT_CENTER, "PC Monitor", bold(16.0), pal().text);
+        let x = r.left() + 20.0;
+        // the app's logo, drawn at the screen's pixels (sharp at any scale)
+        const LOGO_PT: f32 = 26.0;
+        let ppp = ui.ctx().pixels_per_point();
+        if self.logo.as_ref().is_none_or(|(s, _)| *s != ppp) {
+            let px = (LOGO_PT * ppp).round() as u32;
+            self.logo = pcm_render::logo::logo(px).map(|pm| {
+                let img = egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pm.data());
+                (ppp, ui.ctx().load_texture("logo", img, egui::TextureOptions::LINEAR))
+            });
+        }
+        if let Some((_, t)) = &self.logo {
+            let at = egui::Rect::from_min_size(pos2(x, y - LOGO_PT / 2.0), vec2(LOGO_PT, LOGO_PT));
+            p.image(t.id(), at, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+        let name =
+            p.text(pos2(x + LOGO_PT + 10.0, y), Align2::LEFT_CENTER, "PC Monitor", bold(16.0), pal().text);
         let version = crate::APP_VERSION.split('.').take(2).collect::<Vec<_>>().join(".");
         p.text(pos2(name.right() + 8.0, y + 1.0), Align2::LEFT_CENTER, version, text_font(12.5), pal().dim);
 

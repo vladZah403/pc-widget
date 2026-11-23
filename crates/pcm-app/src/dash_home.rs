@@ -103,7 +103,6 @@ const SESSIONS_RELOAD: Duration = Duration::from_secs(15);
 
 /// Icons from Segoe MDL2 Assets (the "icons" font family).
 pub mod icon {
-    pub const LOGO: &str = "\u{E9D9}";
     pub const HOME: &str = "\u{E80F}";
     pub const HISTORY: &str = "\u{E81C}";
     pub const GAME: &str = "\u{E7FC}";
