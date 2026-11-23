@@ -20,6 +20,7 @@ pub mod processes;
 pub mod sensors_helper;
 pub mod smbios;
 pub mod system;
+pub mod taskbar;
 pub mod thermal;
 
 /// A NUL-terminated UTF-16 copy of `s` for the W functions.

@@ -1721,6 +1721,7 @@ version = "2.0.1"
 dependencies = [
  "pcm-core",
  "serde_json",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

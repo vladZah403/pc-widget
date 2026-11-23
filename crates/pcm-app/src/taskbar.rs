@@ -1,10 +1,15 @@
 //! The mini panel on the taskbar, left of the tray icons (1.8's TaskbarPanel,
 //! the TrafficMonitor way): a topmost window owned by the taskbar, and the
 //! task button area (MSTaskSwWClass) narrowed to make room — given back on
-//! exit. Hidden for a vertical or auto-hidden taskbar, during fullscreen
-//! games and on the new Windows 11 taskbar, whose tray area has no size.
+//! exit. Windows 11 draws its taskbar buttons itself and they can't be
+//! narrowed: there the panel takes the room right of them (UI Automation
+//! says where they end) and leaves columns out when it's short. Hidden for a
+//! vertical or auto-hidden taskbar, during fullscreen games and on the
+//! Windows 11 taskbars whose tray area has no size.
 
 use std::ptr::{null, null_mut};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
@@ -64,6 +69,37 @@ fn find() -> (HWND, HWND, HWND, HWND) {
     }
 }
 
+/// For --diag: the taskbar, its tray and where its buttons end.
+pub fn describe() -> String {
+    let (bar, notify, tasks, _) = find();
+    if bar.is_null() {
+        return "none".into();
+    }
+    let (b, n) = (rect(bar), rect(notify));
+    let mut s = format!(
+        "{}x{} at {},{}; tray from x {} ({} px); task buttons window {}",
+        b.right - b.left,
+        b.bottom - b.top,
+        b.left,
+        b.top,
+        n.left,
+        n.right - n.left,
+        if tasks.is_null() { "none" } else { "yes" }
+    );
+    match pcm_win::taskbar::TaskbarButtons::new().and_then(|t| t.list(bar)) {
+        Some(list) => {
+            let edge = pcm_win::taskbar::right_edge(&list, n.left, b.top, b.bottom);
+            s += &format!(
+                "; {} buttons, they end at x {}",
+                list.len(),
+                edge.map_or("-".into(), |e| e.to_string())
+            );
+        }
+        None => s += "; buttons: UI Automation failed",
+    }
+    s
+}
+
 /// Resize a child so its right edge is at `right` (screen px); never blocks
 /// on explorer.exe.
 fn set_child_right(child: HWND, parent: HWND, right: i32) {
@@ -83,6 +119,72 @@ fn set_child_right(child: HWND, parent: HWND, right: i32) {
     }
 }
 
+/// What the buttons thread has found out.
+#[derive(Clone, Copy, PartialEq)]
+enum Answer {
+    /// Not yet.
+    Unknown,
+    /// UI Automation can't be used or didn't answer.
+    Failed,
+    /// The right edge of the rightmost button (None: there's none).
+    Edge(Option<i32>),
+}
+
+/// Windows 11: where the taskbar's buttons end, read by UI Automation on a
+/// thread of its own (explorer.exe answers, sometimes slowly) about once a
+/// second while the panel is on. They move when a program opens or closes.
+struct Buttons {
+    shared: Arc<Mutex<(Option<Ask>, Answer)>>,
+}
+
+/// The taskbar (HWND as isize), its tray's left edge, its top and bottom.
+type Ask = (isize, i32, i32, i32);
+
+impl Buttons {
+    fn start() -> Buttons {
+        let shared = Arc::new(Mutex::new((None, Answer::Unknown)));
+        let mine = Arc::clone(&shared);
+        let set = |s: &Arc<Mutex<(Option<Ask>, Answer)>>, a: Answer| {
+            if let Ok(mut g) = s.lock() {
+                g.1 = a;
+            }
+        };
+        let spawned = std::thread::Builder::new().name("taskbar buttons".into()).spawn(move || {
+            let Some(uia) = pcm_win::taskbar::TaskbarButtons::new() else {
+                return set(&mine, Answer::Failed);
+            };
+            // the panel is gone: so is this thread
+            while Arc::strong_count(&mine) > 1 {
+                let ask = mine.lock().ok().and_then(|g| g.0);
+                if let Some((bar, tray_left, top, bottom)) = ask {
+                    let list = uia.list(bar as HWND);
+                    let a = match list {
+                        Some(l) => Answer::Edge(pcm_win::taskbar::right_edge(&l, tray_left, top, bottom)),
+                        None => Answer::Failed,
+                    };
+                    set(&mine, a);
+                }
+                std::thread::sleep(Duration::from_millis(700));
+            }
+        });
+        if spawned.is_err() {
+            set(&shared, Answer::Failed);
+        }
+        Buttons { shared }
+    }
+
+    /// Keep reading for this taskbar (None: stop) and give the last answer.
+    fn ask(&self, ask: Option<Ask>) -> Answer {
+        match self.shared.lock() {
+            Ok(mut g) => {
+                g.0 = ask;
+                g.1
+            }
+            Err(_) => Answer::Failed,
+        }
+    }
+}
+
 pub struct Panel {
     pub hwnd: HWND,
     surface: Option<Surface>,
@@ -92,6 +194,9 @@ pub struct Panel {
     narrowed: Option<(HWND, HWND)>,
     light: bool,
     checked_theme: std::time::Instant,
+    /// Windows 11's taskbar (buttons it draws itself)?
+    win11: bool,
+    buttons: Option<Buttons>,
 }
 
 impl Panel {
@@ -104,10 +209,21 @@ impl Panel {
             narrowed: None,
             light: light_taskbar(),
             checked_theme: std::time::Instant::now(),
+            win11: pcm_win::system::is_windows_11(),
+            buttons: None,
         }
     }
 
+    /// Off: hidden, and the buttons no longer read.
     pub fn hide(&mut self) {
+        if let Some(b) = &self.buttons {
+            b.ask(None);
+        }
+        self.hide_window();
+    }
+
+    /// Hidden for now (no room, no answer yet).
+    fn hide_window(&mut self) {
         if self.shown {
             unsafe { ShowWindow(self.hwnd, SW_HIDE) };
             self.shown = false;
@@ -143,15 +259,28 @@ impl Panel {
         if n.right - n.left <= 0 || b.right - b.left <= h || (visible as f32) < h as f32 * 0.8 || busy {
             return self.hide();
         }
-        let Some(pm) = taskbar_panel(fonts, scale, data, theme, self.light, h as u32) else { return };
         let gap = (6.0 * scale).round() as i32;
+        // Windows 11: only the room between its buttons and the tray
+        let room = if self.win11 {
+            let buttons = self.buttons.get_or_insert_with(Buttons::start);
+            match buttons.ask(Some((bar as isize, n.left, b.top, b.bottom))) {
+                // nothing to go by yet, or ever: not over the buttons
+                Answer::Unknown | Answer::Failed => return self.hide_window(),
+                Answer::Edge(edge) => Some((n.left - gap - edge.unwrap_or(b.left) - 2 * gap).max(0) as u32),
+            }
+        } else {
+            None
+        };
+        let Some(pm) = taskbar_panel(fonts, scale, data, theme, self.light, h as u32, room) else {
+            return self.hide_window();
+        };
         let w = pm.width() as i32;
         let x = n.left - gap - w;
         if self.owner != bar {
             unsafe { SetWindowLongPtrW(self.hwnd, GWLP_HWNDPARENT, bar as isize) };
             self.owner = bar;
         }
-        if !tasks.is_null() && !rebar.is_null() {
+        if !self.win11 && !tasks.is_null() && !rebar.is_null() {
             let limit = x - gap;
             let t = rect(tasks);
             if t.left < limit && (t.right - limit).abs() > 1 {

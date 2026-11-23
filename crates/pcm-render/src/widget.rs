@@ -1548,6 +1548,9 @@ pub fn alert_card(fonts: &mut Fonts, scale: f32, title: &str, body: &str, accent
 /// network speed, ping and, when there are any, CPU/GPU temperatures.
 /// `height` = the taskbar's height (physical px); the background stays
 /// transparent (alpha 1, so the mouse still reaches the window).
+/// `max_width` (physical px, Windows 11's taskbar buttons leave only so
+/// much): columns are left out, ping first, then network and load, the
+/// temperatures last; None when not even one fits.
 pub fn taskbar_panel(
     fonts: &mut Fonts,
     scale: f32,
@@ -1555,6 +1558,7 @@ pub fn taskbar_panel(
     theme: &Theme,
     light: bool,
     height: u32,
+    max_width: Option<u32>,
 ) -> Option<Pixmap> {
     let sc = theme.scale();
     let probe = Canvas::new(1, 1, scale)?;
@@ -1566,10 +1570,39 @@ pub fn taskbar_panel(
     let col_d = w(fonts, &tr("пинг"), T).max(w(fonts, &trf("{v} мс", &[("v", "999".into())]), SB));
     let gap = 14.0;
     let temps = d.temp_cpu.is_some() || d.temp_gpu.is_some();
-    let x_b = col_a + gap;
-    let x_d = x_b + col_b + gap;
-    let x_c = x_d + col_d + gap;
-    let width = if temps { x_c + col_c } else { x_d + col_d } + 2.0;
+    // shown columns, left to right: load, network, ping, temperatures
+    let mut show = [true, true, true, temps];
+    let widths = [col_a, col_b, col_d, col_c];
+    let total = |show: &[bool; 4]| {
+        let cols = widths.iter().zip(show).filter(|(_, s)| **s).map(|(w, _)| *w);
+        let n = show.iter().filter(|s| **s).count();
+        cols.sum::<f32>() + gap * n.saturating_sub(1) as f32 + 2.0
+    };
+    if let Some(max) = max_width {
+        let max = max as f32 / scale;
+        for drop in [2, 1, 0, 3] {
+            if total(&show) <= max {
+                break;
+            }
+            if show.iter().filter(|s| **s).count() == 1 {
+                return None;
+            }
+            show[drop] = false;
+        }
+        if total(&show) > max {
+            return None;
+        }
+    }
+    let mut xs = [0.0f32; 4];
+    let mut x = 0.0;
+    for i in 0..4 {
+        if show[i] {
+            xs[i] = x;
+            x += widths[i] + gap;
+        }
+    }
+    let [x_a, x_b, x_d, x_c] = xs;
+    let width = total(&show);
     let hl = height as f32 / scale;
     let mut c = Canvas::new((width * scale).ceil() as u32, height, scale)?;
     // almost transparent: clicks still land on the window
@@ -1583,36 +1616,42 @@ pub fn taskbar_panel(
     let right = |c: &mut Canvas, fonts: &mut Fonts, x: f32, y: f32, parts: &[Part]| {
         c.rich(fonts, x, y, parts, Align::Right)
     };
-    for (y, name, pct) in [(rows[0], "CPU", d.cpu), (rows[1], "RAM", d.ram_pct)] {
-        c.text(fonts, 0.0, y, name, T, 12.0, label);
-        right(&mut c, fonts, col_a, y, &[part(format!("{pct:.0}%"), SB, 12.0, tone(pct / 100.0))]);
-    }
-    for (y, arrow, color, speed) in
-        [(rows[0], "↓", tone(0.0), d.net_down), (rows[1], "↑", tone(0.75), d.net_up)]
-    {
-        c.text(fonts, x_b, y, arrow, T, 12.0, color);
-        right(&mut c, fonts, x_b + col_b, y, &[part(fmt_speed(speed), T, 12.0, text)]);
-    }
-    right(&mut c, fonts, x_d + col_d, rows[0], &[part(tr("пинг"), T, 12.0, label)]);
-    let (value, color) = if !d.ping_ready {
-        ("…".to_string(), label)
-    } else {
-        match d.ping {
-            None => (tr("нет"), tone(1.0)),
-            Some(ms) => {
-                let t = if ms < 50 {
-                    0.05
-                } else if ms < 100 {
-                    0.55
-                } else {
-                    0.95
-                };
-                (trf("{v} мс", &[("v", ms.to_string())]), tone(t))
-            }
+    if show[0] {
+        for (y, name, pct) in [(rows[0], "CPU", d.cpu), (rows[1], "RAM", d.ram_pct)] {
+            c.text(fonts, x_a, y, name, T, 12.0, label);
+            right(&mut c, fonts, x_a + col_a, y, &[part(format!("{pct:.0}%"), SB, 12.0, tone(pct / 100.0))]);
         }
-    };
-    right(&mut c, fonts, x_d + col_d, rows[1], &[part(value, SB, 12.0, color)]);
-    if temps {
+    }
+    if show[1] {
+        for (y, arrow, color, speed) in
+            [(rows[0], "↓", tone(0.0), d.net_down), (rows[1], "↑", tone(0.75), d.net_up)]
+        {
+            c.text(fonts, x_b, y, arrow, T, 12.0, color);
+            right(&mut c, fonts, x_b + col_b, y, &[part(fmt_speed(speed), T, 12.0, text)]);
+        }
+    }
+    if show[2] {
+        right(&mut c, fonts, x_d + col_d, rows[0], &[part(tr("пинг"), T, 12.0, label)]);
+        let (value, color) = if !d.ping_ready {
+            ("…".to_string(), label)
+        } else {
+            match d.ping {
+                None => (tr("нет"), tone(1.0)),
+                Some(ms) => {
+                    let t = if ms < 50 {
+                        0.05
+                    } else if ms < 100 {
+                        0.55
+                    } else {
+                        0.95
+                    };
+                    (trf("{v} мс", &[("v", ms.to_string())]), tone(t))
+                }
+            }
+        };
+        right(&mut c, fonts, x_d + col_d, rows[1], &[part(value, SB, 12.0, color)]);
+    }
+    if show[3] {
         let shared = d.gpu_shared && d.temp_gpu.is_none() && d.temp_cpu.is_some();
         let gpu = if shared { d.temp_cpu } else { d.temp_gpu };
         for (y, name, t, approx) in
@@ -1667,12 +1706,47 @@ pub(crate) mod tests {
     fn taskbar_panel_has_the_bar_height() {
         let mut fonts = Fonts::system();
         let d = sample_data();
-        let with = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, true, 40).unwrap();
-        let without =
-            taskbar_panel(&mut fonts, 1.0, &Data { temp_cpu: None, ..d.clone() }, &Theme::Heat, false, 40)
-                .unwrap();
+        let with = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, true, 40, None).unwrap();
+        let without = taskbar_panel(
+            &mut fonts,
+            1.0,
+            &Data { temp_cpu: None, ..d.clone() },
+            &Theme::Heat,
+            false,
+            40,
+            None,
+        )
+        .unwrap();
         assert_eq!(with.height(), 40);
         assert!(with.width() > without.width(), "the temperature column only with temperatures");
+    }
+
+    #[test]
+    fn taskbar_panel_narrows_to_its_room() {
+        let mut fonts = Fonts::system();
+        let d = Data { temp_cpu: Some(61.0), ..sample_data() };
+        let full = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, false, 48, None).unwrap().width();
+        // the room it needs: the same width
+        let room = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, false, 48, Some(full)).unwrap();
+        assert_eq!(room.width(), full);
+        // less room: fewer columns, never wider than the room
+        let mut last = full;
+        for max in [full - 1, full * 3 / 4, full / 2, full / 4] {
+            let Some(pm) = taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, false, 48, Some(max)) else {
+                break;
+            };
+            assert!(pm.width() <= max && pm.width() <= last, "{max}: {}", pm.width());
+            last = pm.width();
+        }
+        // the temperatures alone are the last ones
+        assert!(last < full / 3);
+        // not even them: none
+        assert!(taskbar_panel(&mut fonts, 1.0, &d, &Theme::Heat, false, 48, Some(10)).is_none());
+        // twice the scale needs twice the room
+        assert!(
+            taskbar_panel(&mut fonts, 2.0, &d, &Theme::Heat, false, 96, Some(full)).unwrap().width()
+                < full * 2
+        );
     }
 
     #[test]

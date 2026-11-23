@@ -294,6 +294,7 @@ pub fn run(args: &[String]) -> i32 {
     for d in &s.displays {
         let _ = writeln!(w, "display: {} {}x{} @ {} Hz", d.name, d.width, d.height, d.refresh_hz);
     }
+    let _ = writeln!(w, "taskbar: {}", crate::taskbar::describe());
     match &fps {
         Ok(f) => {
             // the first events arrive 2-3 s after the session starts
