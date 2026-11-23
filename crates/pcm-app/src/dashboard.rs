@@ -99,6 +99,9 @@ pub fn send(msg: &FromDashboard) {
 }
 
 /// The pages, in the order of the list on the left (`--tab N`).
+/// The PawnIO driver's site (the status bar's link when it's missing).
+const PAWNIO_SITE: &str = "https://pawnio.eu/";
+
 pub const TAB_HOME: usize = 0;
 pub const TAB_HISTORY: usize = 1;
 pub const TAB_GAMES: usize = 2;
@@ -526,11 +529,45 @@ impl Dashboard {
             (d.pawnio, tr("PawnIO установлен"), tr("PawnIO не установлен")),
         ];
         let all_good = parts.iter().all(|(ok, _, _)| *ok);
-        let text =
-            parts.iter().map(|(ok, yes, no)| if *ok { yes.clone() } else { no.clone() }).collect::<Vec<_>>();
         let dot = if all_good { pal().good } else { pal().warn };
         p.circle_filled(pos2(r.left() + 24.0, y), 4.0, dot);
-        p.text(pos2(r.left() + 36.0, y), Align2::LEFT_CENTER, text.join(" · "), text_font(12.0), pal().dim);
+        // what's missing is a link: to where it is explained or switched on
+        let mut x = r.left() + 36.0;
+        for (i, (ok, yes, no)) in parts.iter().enumerate() {
+            if i > 0 {
+                x = p.text(pos2(x, y), Align2::LEFT_CENTER, " · ", text_font(12.0), pal().dim).right();
+            }
+            if *ok {
+                x = p.text(pos2(x, y), Align2::LEFT_CENTER, yes, text_font(12.0), pal().dim).right();
+                continue;
+            }
+            let t = p.text(pos2(x, y), Align2::LEFT_CENTER, no, text_font(12.0), pal().accent);
+            x = t.right();
+            let resp = ui.interact(t.expand(3.0), ui.scope_id().with(("status", i)), Sense::click());
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                p.hline(t.x_range(), t.bottom(), Stroke::new(1.0, pal().accent));
+            }
+            let tip = match i {
+                0 => d.sensor_hint.clone().unwrap_or_else(|| tr("Подробности — на странице «Оборудование»")),
+                1 => tr(
+                    "Температуры процессора Windows даёт только с правами администратора. Нажми — откроется эта настройка",
+                ),
+                _ => tr(
+                    "Бесплатный драйвер: на некоторых ПК без него нет температур процессора. Нажми — откроется его сайт",
+                ),
+            };
+            if resp.on_hover_text(tip).clicked() {
+                match i {
+                    0 => self.tab = TAB_DEVICES,
+                    1 => {
+                        self.tab = TAB_SETTINGS;
+                        crate::dash_settings::jump_to(tr("Запуск и закрытие"));
+                    }
+                    _ => pcm_win::autostart::open(PAWNIO_SITE),
+                }
+            }
+        }
 
         // the widget's own cost plus this window's
         if self.own_read.0 != seq {

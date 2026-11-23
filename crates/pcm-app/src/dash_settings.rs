@@ -78,9 +78,24 @@ fn rgb_of(hex: &str) -> [u8; 3] {
 
 // ---- the pieces ---------------------------------------------------------------------------
 
+/// How long a card that was jumped to stays outlined.
+const JUMP_GLOW: Duration = Duration::from_millis(1600);
+
+thread_local! {
+    /// The card to bring into view (its title), when that was asked, and
+    /// whether it has been scrolled to.
+    static JUMP: std::cell::RefCell<Option<(String, Instant, bool)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Open the settings at the card titled `title` (translated, as the card
+/// shows it): it is scrolled to and outlined for a moment.
+pub fn jump_to(title: String) {
+    JUMP.with(|j| *j.borrow_mut() = Some((title, Instant::now(), false)));
+}
+
 /// A card: the icon in its box, the title and a line under it, then the rows.
 fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
-    egui::Frame::new()
+    let shown = egui::Frame::new()
         .fill(pal().card)
         .stroke(Stroke::new(1.0, pal().border))
         .corner_radius(egui::CornerRadius::same(12))
@@ -109,6 +124,32 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, add: impl FnOnce(&mut 
             ui.add_space(8.0);
             add(ui);
         });
+    // asked to jump here: into view, then the outline fades
+    let jump = JUMP.with(|j| {
+        let mut j = j.borrow_mut();
+        let (_, at, scrolled) = j.as_mut().filter(|(t, _, _)| t == title)?;
+        let first = !*scrolled;
+        *scrolled = true;
+        let left = JUMP_GLOW.saturating_sub(at.elapsed());
+        if left.is_zero() {
+            *j = None;
+        }
+        Some((first, left))
+    });
+    if let Some((first, left)) = jump {
+        let r = shown.response.rect;
+        if first {
+            ui.scroll_to_rect(r, Some(egui::Align::TOP));
+        }
+        let a = (left.as_secs_f32() / JUMP_GLOW.as_secs_f32()).clamp(0.0, 1.0);
+        ui.painter().rect_stroke(
+            r,
+            12.0,
+            Stroke::new(2.0, pal().accent.gamma_multiply(a)),
+            egui::StrokeKind::Inside,
+        );
+        ui.ctx().request_repaint();
+    }
 }
 
 /// A thin line between rows.
