@@ -46,6 +46,9 @@ pub enum ToDashboard {
     },
     /// "Открыть PC Monitor" again: come to the front.
     Focus,
+    /// A game session's report (the "Игровая сессия записана" card, the
+    /// menu's "Отчёт о последней игре"): come to the front on its page.
+    OpenSession(std::path::PathBuf),
 }
 
 /// How PC Monitor starts (not in the settings file: Windows keeps it).
@@ -130,6 +133,8 @@ struct Feed {
     /// When the last feed came, "14:32:18".
     when: String,
     focus: bool,
+    /// A session to show the report of (ToDashboard::OpenSession).
+    open_session: Option<std::path::PathBuf>,
     /// The widget has gone: the window closes without asking it to quit.
     gone: bool,
 }
@@ -670,7 +675,14 @@ impl eframe::App for Dashboard {
             self.set_look(&ctx, light);
         }
         self.screenshot(&ctx);
-        let focus = std::mem::take(&mut self.feed.lock().unwrap_or_else(|e| e.into_inner()).focus);
+        let (focus, session) = {
+            let mut f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+            (std::mem::take(&mut f.focus), f.open_session.take())
+        };
+        if let Some(path) = session {
+            self.sessions.open_path(&path, false);
+            self.tab = TAB_GAMES;
+        }
         if focus {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -756,6 +768,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                                 f.seq += 1;
                             }
                             ToDashboard::Focus => f.focus = true,
+                            ToDashboard::OpenSession(path) => {
+                                f.open_session = Some(path);
+                                f.focus = true;
+                            }
                         }
                     }
                     if let Some(ctx) = ctx_slot.lock().ok().and_then(|c| c.clone()) {
@@ -841,6 +857,10 @@ mod tests {
             Ok(ToDashboard::Feed { game: Some(g), .. }) if g.game == "stalzonew" && g.fps == Some(144.0)
         ));
         assert_eq!(serde_json::to_string(&ToDashboard::Focus).unwrap(), "\"Focus\"");
+        let p = std::path::PathBuf::from(r"C:\Users\Влад\AppData\Roaming\PC-Monitor\sessions\a.pcms");
+        let open = serde_json::to_string(&ToDashboard::OpenSession(p.clone())).unwrap();
+        assert!(!open.contains('\n'));
+        assert!(matches!(serde_json::from_str(&open), Ok(ToDashboard::OpenSession(q)) if q == p));
         let ask = serde_json::to_string(&FromDashboard::EndProgram("chrome".into())).unwrap();
         assert_eq!(ask, r#"{"EndProgram":"chrome"}"#);
         assert!(matches!(serde_json::from_str(r#"{"WantProcs":true}"#), Ok(FromDashboard::WantProcs(true))));

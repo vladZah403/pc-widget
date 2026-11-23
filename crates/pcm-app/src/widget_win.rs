@@ -1484,7 +1484,7 @@ impl App {
     /// The alert card was clicked: a session's card opens its report.
     fn toast_clicked(&mut self) {
         if let Some(path) = self.toast_session.take() {
-            self.open_report(&path);
+            self.open_session_page(&path);
         }
         match self.toast_link.take() {
             Some(ToastLink::Update) => self.update_clicked(),
@@ -1611,6 +1611,19 @@ impl App {
             self.cfg.check_updates = true;
             self.save();
             self.checker.set_enabled(true);
+        }
+    }
+
+    /// A session's report on the PC Monitor window's Games page; the report
+    /// window of stage 4 only when the PC Monitor window can't start.
+    fn open_session_page(&mut self, path: &std::path::Path) {
+        self.open_dashboard(Some(crate::dashboard::TAB_GAMES));
+        let sent = self
+            .dashboard
+            .as_mut()
+            .is_some_and(|d| d.alive() && d.send(&ToDashboard::OpenSession(path.to_path_buf())));
+        if !sent {
+            self.open_report(path);
         }
     }
 
@@ -1889,7 +1902,7 @@ impl App {
                 }
                 LAST_SESSION => {
                     if let Some(p) = last {
-                        self.open_report(&p);
+                        self.open_session_page(&p);
                     }
                     return;
                 }
