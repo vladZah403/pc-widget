@@ -49,6 +49,8 @@ pub enum ToDashboard {
     /// A game session's report (the "Игровая сессия записана" card, the
     /// menu's "Отчёт о последней игре"): come to the front on its page.
     OpenSession(std::path::PathBuf),
+    /// "Итоги недели" was clicked: History for the week.
+    HistoryWeek,
 }
 
 /// How PC Monitor starts (not in the settings file: Windows keeps it).
@@ -135,6 +137,8 @@ struct Feed {
     focus: bool,
     /// A session to show the report of (ToDashboard::OpenSession).
     open_session: Option<std::path::PathBuf>,
+    /// Show History for the week (ToDashboard::HistoryWeek).
+    history_week: bool,
     /// The widget has gone: the window closes without asking it to quit.
     gone: bool,
 }
@@ -675,10 +679,14 @@ impl eframe::App for Dashboard {
             self.set_look(&ctx, light);
         }
         self.screenshot(&ctx);
-        let (focus, session) = {
+        let (focus, session, week) = {
             let mut f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-            (std::mem::take(&mut f.focus), f.open_session.take())
+            (std::mem::take(&mut f.focus), f.open_session.take(), std::mem::take(&mut f.history_week))
         };
+        if week {
+            self.history.show_week();
+            self.tab = TAB_HISTORY;
+        }
         if let Some(path) = session {
             self.sessions.open_path(&path, false);
             self.tab = TAB_GAMES;
@@ -770,6 +778,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                             ToDashboard::Focus => f.focus = true,
                             ToDashboard::OpenSession(path) => {
                                 f.open_session = Some(path);
+                                f.focus = true;
+                            }
+                            ToDashboard::HistoryWeek => {
+                                f.history_week = true;
                                 f.focus = true;
                             }
                         }

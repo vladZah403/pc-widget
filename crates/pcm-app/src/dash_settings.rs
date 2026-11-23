@@ -792,6 +792,13 @@ fn alerts(ui: &mut Ui, c: &mut Config) {
             toggle(ui, &tr("Показывать предупреждения"), "", &mut c.alerts);
             sep(ui);
             toggle(ui, &tr("Во время игры — показать после неё"), "", &mut c.quiet_games);
+            sep(ui);
+            toggle(
+                ui,
+                &tr("Итоги недели"),
+                &tr("Раз в неделю: сколько ПК работал, во что ты играл и с каким FPS"),
+                &mut c.weekly,
+            );
             ui.add_enabled_ui(c.alerts, |ui| {
                 let limits: [(String, &mut u32, [u32; 4], &str, &str); 4] = [
                     (tr("Перегрев CPU от"), &mut c.alert_temp, [80, 85, 90, 95], "°", "alert-temp"),

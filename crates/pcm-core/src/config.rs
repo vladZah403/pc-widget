@@ -173,6 +173,10 @@ pub struct Config {
     pub check_updates: bool,
     /// The newest version the user has been told about.
     pub update_seen: String,
+    /// "Итоги недели": a card once a week with the PC's and the games' time.
+    pub weekly: bool,
+    /// When the last one came (unix s; 0: not yet counting).
+    pub weekly_last: i64,
     /// The saved look of each profile (last: TOML puts tables after values).
     pub profiles: BTreeMap<String, ProfileView>,
 }
@@ -221,6 +225,8 @@ impl Default for Config {
             window_light: false,
             check_updates: true,
             update_seen: String::new(),
+            weekly: true,
+            weekly_last: 0,
             profiles: BTreeMap::new(),
         }
     }

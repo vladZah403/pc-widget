@@ -332,6 +332,8 @@ struct App {
 enum ToastLink {
     Update,
     Page(String),
+    /// "Итоги недели": the window's History for the week.
+    Week,
 }
 
 thread_local! {
@@ -950,6 +952,60 @@ impl App {
         }
     }
 
+    /// "Итоги недели": once in 7 days (counted from the first run), not over a
+    /// game, if the PC ran an hour or more: the week's PC and game time.
+    fn check_weekly(&mut self) {
+        use pcm_core::week;
+        if !self.cfg.weekly || self.busy {
+            return;
+        }
+        let now = pcm_win::system::unix_now();
+        if self.cfg.weekly_last <= 0 {
+            self.cfg.weekly_last = now;
+            self.save();
+            return;
+        }
+        if now - self.cfg.weekly_last < week::EVERY_S {
+            return;
+        }
+        self.cfg.weekly_last = now;
+        self.save();
+        let from = now - week::EVERY_S;
+        let points = self.history.as_ref().and_then(|h| h.range(from, now).ok()).unwrap_or_default();
+        let dir = session_rec::sessions_dir(&data_dir());
+        let infos: Vec<pcm_core::session::SessionInfo> = std::fs::read_dir(&dir)
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.extension().is_some_and(|e| e == pcm_core::session::EXTENSION))
+            .filter_map(|p| pcm_core::session::Session::load_info(&p).ok())
+            .collect();
+        let w = week::summarize(&points, week::since(&infos, &pcm_win::system::local_time_of(from)));
+        if w.on_s < week::MIN_ON_S {
+            return;
+        }
+        let mut body = trf("За компьютером: {time}.", &[("time", fmt_play_time(w.on_s))]);
+        if let Some(g) = w.games.first() {
+            body += " ";
+            body += &trf(
+                "В играх: {time}, больше всего — {game} ({fps} FPS).",
+                &[
+                    ("time", fmt_play_time(w.play_s)),
+                    ("game", g.name.clone()),
+                    ("fps", format!("{:.0}", g.avg_fps)),
+                ],
+            );
+        }
+        if let Some(t) = w.cpu_t_max {
+            body += " ";
+            body += &trf("Процессор — до {t}°.", &[("t", format!("{t:.0}"))]);
+        }
+        body += " ";
+        body += &tr("Нажми, чтобы открыть историю за неделю.");
+        self.show_toast(&Alert { title: tr("Итоги недели"), body, hot: false });
+        self.toast_link = Some(ToastLink::Week);
+    }
+
     /// The alert card in the bottom-right corner of the work area; a click closes it.
     fn show_toast(&mut self, a: &Alert) {
         self.toast_session = None;
@@ -1298,6 +1354,7 @@ impl App {
         c.window_light = new.window_light;
         c.widget_style = new.widget_style;
         c.check_updates = new.check_updates;
+        c.weekly = new.weekly;
         c.sanitize();
         self.cfg = c;
         self.save();
@@ -1489,6 +1546,12 @@ impl App {
         match self.toast_link.take() {
             Some(ToastLink::Update) => self.update_clicked(),
             Some(ToastLink::Page(url)) => updater::open_in_browser(&url),
+            Some(ToastLink::Week) => {
+                self.open_dashboard(Some(crate::dashboard::TAB_HISTORY));
+                if let Some(d) = &self.dashboard {
+                    d.send(&ToDashboard::HistoryWeek);
+                }
+            }
             None => {}
         }
     }
@@ -2061,6 +2124,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     a.hover_draw(false);
                 }
                 a.check_alerts();
+                a.check_weekly();
                 a.feed_dashboard();
                 a.record_history();
             });

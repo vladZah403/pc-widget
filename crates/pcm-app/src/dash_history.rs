@@ -4,7 +4,8 @@
 //!
 //! Beta 2: in the home page's style: the range as a segmented switch, tiles
 //! with the period's numbers, charts painted with egui (the mouse shows
-//! the values).
+//! the values). Then the games of the period (the "Итоги недели" card
+//! opens this page for the week).
 
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use pcm_core::history::{Column, FILE, History, Point, STEP_S, buckets, to_csv};
 use pcm_render::format::{dec, fmt_speed, tr, trf};
 use pcm_render::theme::Theme;
 
-use crate::dash_home::{pal, rgb, segments};
+use crate::dash_home::{bold, fit, pal, panel, rgb, segments, text_font};
 use crate::dash_kit::{GAP, Series, Tile, TimeChart, button, grid_cells, stat_tiles, time_chart};
 
 const RANGES: [(&str, i64); 4] =
@@ -33,6 +34,9 @@ pub struct HistoryTab {
     span: (i64, i64),
     loaded: Option<Instant>,
     note: Option<String>,
+    /// The game sessions' headers, read again only when the files change.
+    sessions: Vec<pcm_core::session::SessionInfo>,
+    session_files: Vec<std::path::PathBuf>,
 }
 
 /// "13:05" for an hour or a day, "22.11" for longer.
@@ -49,6 +53,16 @@ fn time_label(t: i64, long: bool) -> String {
 fn when_label(t: i64) -> String {
     let s = pcm_win::system::local_time_of(t);
     format!("{}.{} {}", s.get(8..10).unwrap_or(""), s.get(5..7).unwrap_or(""), s.get(11..16).unwrap_or(""))
+}
+
+/// "45 мин", "6 ч 10 мин"
+fn play_time(s: f64) -> String {
+    let m = (s / 60.0).round() as u64;
+    if m < 60 {
+        trf("{m} мин", &[("m", m.to_string())])
+    } else {
+        trf("{h} ч {m} мин", &[("h", (m / 60).to_string()), ("m", format!("{:02}", m % 60))])
+    }
 }
 
 /// "1,2 ГБ" of bytes.
@@ -86,6 +100,76 @@ impl HistoryTab {
         }
         self.span = (from, now);
         self.loaded = Some(Instant::now());
+        self.load_sessions();
+    }
+
+    fn load_sessions(&mut self) {
+        let ext = pcm_core::session::EXTENSION;
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(crate::dash_sessions::dir())
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default();
+        files.retain(|p| p.extension().is_some_and(|e| e == ext));
+        files.sort();
+        if files != self.session_files {
+            self.sessions =
+                files.iter().filter_map(|p| pcm_core::session::Session::load_info(p).ok()).collect();
+            self.session_files = files;
+        }
+    }
+
+    /// "Итоги недели" was clicked: the week.
+    pub fn show_week(&mut self) {
+        self.range = RANGES.iter().position(|(_, s)| *s == 7 * 86400).unwrap_or(0);
+        self.load();
+    }
+
+    /// The period's games: time, sessions and FPS of each, most played first.
+    fn games(&self, ui: &mut egui::Ui, w: f32) {
+        let from = pcm_win::system::local_time_of(self.span.0);
+        let week = pcm_core::week::summarize(&[], pcm_core::week::since(&self.sessions, &from));
+        if week.games.is_empty() {
+            return;
+        }
+        let shown = &week.games[..week.games.len().min(6)];
+        let row_h = 30.0;
+        let (r, _) = ui.allocate_exact_size(vec2(w, 62.0 + shown.len() as f32 * row_h), Sense::hover());
+        let p = ui.painter();
+        panel(p, r);
+        p.text(
+            r.left_top() + vec2(18.0, 16.0),
+            egui::Align2::LEFT_TOP,
+            tr("Игры за период"),
+            bold(15.0),
+            pal().text,
+        );
+        p.text(
+            pos2(r.right() - 18.0, r.top() + 18.0),
+            egui::Align2::RIGHT_TOP,
+            trf("всего {time}", &[("time", play_time(week.play_s))]),
+            text_font(12.5),
+            pal().dim,
+        );
+        let mut y = r.top() + 52.0;
+        for g in shown {
+            let n = g.sessions.to_string();
+            let right = format!(
+                "{} · {} · {}",
+                play_time(g.play_s),
+                trf("сессий: {n}", &[("n", n)]),
+                trf("{v} FPS", &[("v", format!("{:.0}", g.avg_fps))])
+            );
+            let rw = p.layout_no_wrap(right.clone(), text_font(12.5), pal().text).size().x;
+            p.text(
+                pos2(r.left() + 18.0, y),
+                egui::Align2::LEFT_TOP,
+                fit(p, &g.name, &text_font(13.0), r.width() - 54.0 - rw),
+                text_font(13.0),
+                pal().text,
+            );
+            p.text(pos2(r.right() - 18.0, y), egui::Align2::RIGHT_TOP, right, text_font(12.5), pal().dim);
+            y += row_h;
+        }
+        ui.add_space(GAP);
     }
 
     fn save_csv(&self) {
@@ -180,6 +264,7 @@ impl HistoryTab {
             let Some(theme) = theme else { return };
             stat_tiles(ui, w, &self.tiles(theme));
             ui.add_space(GAP);
+            self.games(ui, w);
             let cols = if w >= 1000.0 { 2 } else { 1 };
             let cells = grid_cells(ui, w, 4, cols, 250.0);
             self.charts(ui, &cells);
