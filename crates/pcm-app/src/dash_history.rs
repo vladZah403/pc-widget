@@ -106,8 +106,15 @@ impl HistoryTab {
         let cpu = col(Column::Cpu);
         let ram = col(Column::Ram);
         let cpu_t = col(Column::CpuTemp);
-        let down: f64 = col(Column::Down).iter().sum::<f64>() * STEP_S as f64;
-        let up: f64 = col(Column::Up).iter().sum::<f64>() * STEP_S as f64;
+        // no points → "—" like the other tiles (an empty f64 sum is -0.0, shown as "-0 МБ")
+        let traffic = |c: Column| {
+            let v = col(c);
+            if v.is_empty() {
+                "—".to_string()
+            } else {
+                amount(v.iter().sum::<f64>().max(0.0) * STEP_S as f64)
+            }
+        };
         let pct = |v: Option<f64>| {
             v.map_or(("—".to_string(), pal().text), |v| (format!("{v:.0}"), rgb(sc.at(v as f32 / 100.0))))
         };
@@ -121,8 +128,8 @@ impl HistoryTab {
             (tr("Пик процессора"), m, "%".into(), mc, None),
             (tr("Пик температуры CPU"), t, "°C".into(), tc, None),
             (tr("Память в среднем"), r, "%".into(), rc, None),
-            (tr("Скачано"), amount(down), String::new(), pal().text, None),
-            (tr("Отдано"), amount(up), String::new(), pal().text, None),
+            (tr("Скачано"), traffic(Column::Down), String::new(), pal().text, None),
+            (tr("Отдано"), traffic(Column::Up), String::new(), pal().text, None),
         ]
     }
 
