@@ -319,6 +319,8 @@ struct App {
     history: Option<pcm_core::history::History>,
     history_last: i64,
     history_trimmed: i64,
+    /// Points waiting for the next write (history::WRITE_EVERY at a time).
+    history_buf: Vec<pcm_core::history::Point>,
     /// Starts with Windows (asked once: the admin task takes schtasks.exe).
     autostart: Option<bool>,
     /// The background look for a new version, and the update under way.
@@ -1202,6 +1204,20 @@ impl App {
 
     // --- the history ---
 
+    /// Write the waiting points (every minute, and when the program ends).
+    fn flush_history(&mut self) {
+        if let Some(h) = &self.history
+            && !self.history_buf.is_empty()
+            && h.add_all(&self.history_buf).is_ok()
+        {
+            self.history_buf.clear();
+        }
+        // a database that can't be written: don't pile points up for ever
+        if self.history_buf.len() > 360 {
+            self.history_buf.clear();
+        }
+    }
+
     /// A point every STEP_S seconds: the averages of the last ones (like 1.8).
     fn record_history(&mut self) {
         use pcm_core::history::{Point, STEP_S};
@@ -1209,7 +1225,7 @@ impl App {
         if now - self.history_last < STEP_S {
             return;
         }
-        let (Some(h), Some(d)) = (&self.history, &self.data) else { return };
+        let (Some(_), Some(d)) = (&self.history, &self.data) else { return };
         self.history_last = now;
         let cpu_recent = &d.cpu_hist[d.cpu_hist.len().saturating_sub(STEP_S as usize)..];
         let cpu = if cpu_recent.is_empty() {
@@ -1228,7 +1244,12 @@ impl App {
         let gpu_t = d.temp_gpu.or(if d.gpu_shared { d.temp_cpu } else { None });
         let p =
             Point { t: now, cpu, cpu_t: d.temp_cpu, gpu_t, gpu: d.gpu_load, ram: Some(d.ram_pct), down, up };
-        let _ = h.add(&p);
+        // a minute's points in one write: the disk sees 1/6 of the writes
+        self.history_buf.push(p);
+        if self.history_buf.len() >= pcm_core::history::WRITE_EVERY {
+            self.flush_history();
+        }
+        let Some(h) = &self.history else { return };
         if now - self.history_trimmed >= 3600 {
             self.history_trimmed = now;
             let _ = h.trim(now);
@@ -2423,6 +2444,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DESTROY => {
             with_app(|a| {
+                a.flush_history();
                 if let Some(rec) = a.recorder.stop() {
                     session_rec::finish_now(rec, &session_rec::sessions_dir(&data_dir()));
                 }
@@ -2887,6 +2909,7 @@ pub fn run(report: Option<String>, open: Option<usize>) -> i32 {
                 history: open_history(),
                 history_last: 0,
                 history_trimmed: 0,
+                history_buf: Vec::new(),
                 autostart: None,
                 checker: Checker::start(hwnd as isize, check_updates),
                 updater: None,

@@ -7,6 +7,8 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, params};
 
 pub const STEP_S: i64 = 10;
+/// The widget keeps this many points (a minute) before writing them at once.
+pub const WRITE_EVERY: usize = 6;
 pub const KEEP_DAYS: i64 = 30;
 pub const FILE: &str = "history.db";
 /// 1.8's file, imported into the database the first time.
@@ -95,6 +97,19 @@ impl History {
             params![p.t, p.cpu, p.cpu_t, p.gpu_t, p.gpu, p.ram, finite(p.down), finite(p.up)],
         )?;
         Ok(())
+    }
+
+    /// Several points in one transaction: one write to the disk for all of them
+    /// (each single add rewrites a 4 KB page of the log).
+    pub fn add_all(&self, points: &[Point]) -> rusqlite::Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        for p in points {
+            tx.execute(
+                "INSERT OR REPLACE INTO points VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![p.t, p.cpu, p.cpu_t, p.gpu_t, p.gpu, p.ram, finite(p.down), finite(p.up)],
+            )?;
+        }
+        tx.commit()
     }
 
     /// Forget points older than KEEP_DAYS before `now`. Returns how many went.
@@ -241,6 +256,11 @@ mod tests {
         assert_eq!(r.iter().map(|p| p.cpu).collect::<Vec<_>>(), vec![3.0, 2.0, 1.0, 0.0]);
         h.add(&point(now, 99.0)).unwrap();
         assert_eq!(h.range(now, now).unwrap()[0].cpu, 99.0, "the same second replaced");
+        // a minute's points at once
+        let batch: Vec<Point> = (1..=6).map(|i| point(now + i * 10, 7.0)).collect();
+        h.add_all(&batch).unwrap();
+        assert_eq!(h.range(now + 1, now + 60).unwrap().len(), 6);
+        h.add_all(&[]).unwrap();
     }
 
     #[test]
