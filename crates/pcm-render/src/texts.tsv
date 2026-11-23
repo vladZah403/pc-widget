@@ -535,3 +535,7 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 Аппаратная ошибка (WHEA)	A hardware error (WHEA)	Апаратна помилка (WHEA)	Ein Hardwarefehler (WHEA)
 Процессор, память или шина сообщили об ошибке. Если повторяется — проверь разгон и температуры.	The processor, memory or a bus reported an error. If it repeats, check overclocking and the temperatures.	Процесор, пам'ять або шина повідомили про помилку. Якщо повторюється — перевір розгін і температури.	Prozessor, Speicher oder ein Bus meldeten einen Fehler. Wiederholt es sich, prüfe Übertaktung und Temperaturen.
 и ещё {n}	and {n} more	і ще {n}	und {n} weitere
+Эта игра по сессиям	This game, session by session	Ця гра за сесіями	Dieses Spiel, Sitzung für Sitzung
+FPS как обычно	FPS as usual	FPS як зазвичай	FPS wie üblich
+FPS выше обычного на {v}%	FPS {v}% above usual	FPS вище звичайного на {v}%	FPS {v} % über dem Üblichen
+FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче звичайного на {v}%	FPS {v} % unter dem Üblichen

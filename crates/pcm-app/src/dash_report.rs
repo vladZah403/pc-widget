@@ -275,6 +275,9 @@ impl ReportPage {
             ui.add_space(14.0);
             self.tiles(ui, w, sc);
             ui.add_space(GAP);
+            if self.trend(ui, w, others) {
+                ui.add_space(GAP);
+            }
             let wide = w >= 980.0;
             let charts_w = if wide { w - SIDE_W - GAP } else { w };
             let chart_h = 190.0;
@@ -311,6 +314,87 @@ impl ReportPage {
             self.save_note();
         }
         action
+    }
+
+    /// "Эта игра по сессиям": the average FPS of the game's sessions (the last
+    /// 20, oldest first) as bars, this one in the accent colour, the 1% low as
+    /// a tick, and how this one compares. False: the game has no other session.
+    fn trend(&self, ui: &mut Ui, w: f32, others: &[(PathBuf, SessionInfo)]) -> bool {
+        let me = &self.session.info;
+        let mut list: Vec<&SessionInfo> =
+            others.iter().map(|(_, i)| i).filter(|i| i.game == me.game).collect();
+        if !list.iter().any(|i| i.started == me.started) {
+            list.push(me);
+        }
+        list.sort_by(|a, b| a.started.cmp(&b.started));
+        if list.len() < 2 {
+            return false;
+        }
+        let list = &list[list.len().saturating_sub(20)..];
+        let (r, _) = ui.allocate_exact_size(vec2(w, 200.0), Sense::hover());
+        let p = ui.painter().clone();
+        panel(&p, r);
+        p.text(
+            r.left_top() + vec2(18.0, 16.0),
+            Align2::LEFT_TOP,
+            tr("Эта игра по сессиям"),
+            bold(15.0),
+            pal().text,
+        );
+        let rest: Vec<f64> =
+            list.iter().filter(|i| i.started != me.started).map(|i| i.summary.avg_fps).collect();
+        if let Some((pct, line)) = compared(me.summary.avg_fps, &rest) {
+            let col = if pct.abs() < 5.0 {
+                pal().dim
+            } else if pct > 0.0 {
+                pal().good
+            } else {
+                pal().warn
+            };
+            p.text(pos2(r.right() - 18.0, r.top() + 18.0), Align2::RIGHT_TOP, line, bold(13.0), col);
+        }
+        // the bars
+        let (x0, x1) = (r.left() + 18.0, r.right() - 18.0);
+        let (top, bottom) = (r.top() + 64.0, r.bottom() - 30.0);
+        let n = list.len() as f32;
+        let gap = 10.0;
+        let bw = ((x1 - x0 - gap * (n - 1.0)) / n).min(46.0);
+        let max = list.iter().map(|i| i.summary.avg_fps).fold(1.0, f64::max) * 1.15;
+        let y_of = |v: f64| bottom - ((v / max) as f32).clamp(0.0, 1.0) * (bottom - top);
+        let dates = n <= 12.0;
+        for (k, i) in list.iter().enumerate() {
+            let x = x0 + k as f32 * (bw + gap);
+            let s = &i.summary;
+            let mine = i.started == me.started;
+            let bar = Rect::from_min_max(pos2(x, y_of(s.avg_fps)), pos2(x + bw, bottom));
+            let fill = if mine { pal().accent } else { alpha(pal().dim, 90) };
+            p.rect_filled(bar, 4.0, fill);
+            if s.low1 > 0.0 {
+                let y = y_of(s.low1);
+                p.hline(
+                    (x + 3.0)..=(x + bw - 3.0),
+                    y,
+                    Stroke::new(2.0, if mine { Color32::WHITE } else { pal().text }),
+                );
+            }
+            let value_col = if mine { pal().text } else { pal().dim };
+            p.text(
+                pos2(x + bw / 2.0, bar.top() - 4.0),
+                Align2::CENTER_BOTTOM,
+                format!("{:.0}", s.avg_fps),
+                text_font(11.5),
+                value_col,
+            );
+            if dates {
+                let d = short_when(&i.started);
+                let d = d.split(' ').next().unwrap_or("").to_string();
+                p.text(pos2(x + bw / 2.0, bottom + 6.0), Align2::CENTER_TOP, d, text_font(11.0), pal().faint);
+            }
+            let hover = Rect::from_min_max(pos2(x, top - 16.0), pos2(x + bw, bottom));
+            let tip = format!("{} · {:.0} FPS · 1% low {:.0}", short_when(&i.started), s.avg_fps, s.low1);
+            ui.interact(hover, ui.scope_id().with(("trend", k)), Sense::hover()).on_hover_text(tip);
+        }
+        true
     }
 
     /// "← Все сессии", the game, when and how long; compare, CSV, delete.
@@ -1067,6 +1151,28 @@ fn temp_range(info: &SessionInfo) -> (f32, f32) {
     ((lo / 5.0).floor() * 5.0, (hi / 5.0).ceil() * 5.0)
 }
 
+/// How this session's average FPS compares with the game's others (their
+/// median): (percent, the line to show). None without others.
+pub fn compared(me: f64, others: &[f64]) -> Option<(f64, String)> {
+    let mut v: Vec<f64> = others.iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    if v.is_empty() || me <= 0.0 {
+        return None;
+    }
+    v.sort_by(f64::total_cmp);
+    let mid = v.len() / 2;
+    let median = if v.len() % 2 == 1 { v[mid] } else { (v[mid - 1] + v[mid]) / 2.0 };
+    let pct = (me - median) / median * 100.0;
+    let n = format!("{:.0}", pct.abs());
+    let line = if pct.abs() < 5.0 {
+        tr("FPS как обычно")
+    } else if pct > 0.0 {
+        trf("FPS выше обычного на {v}%", &[("v", n)])
+    } else {
+        trf("FPS ниже обычного на {v}%", &[("v", n)])
+    };
+    Some((pct, line))
+}
+
 /// "22.11 18:52" of "2026-11-22 18:52:34".
 fn short_when(started: &str) -> String {
     match (started.get(5..7), started.get(8..10), started.get(11..16)) {
@@ -1147,6 +1253,16 @@ fn button(ui: &mut Ui, right: f32, y: f32, text: &str, accent: bool, danger: boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compared_with_the_games_median() {
+        assert!(compared(50.0, &[]).is_none());
+        let (pct, line) = compared(60.0, &[50.0, 49.0, 51.0]).unwrap();
+        assert!((pct - 20.0).abs() < 0.01, "{pct}");
+        assert!(line.contains("20"), "{line}");
+        assert!(compared(51.0, &[50.0, 52.0]).unwrap().0.abs() < 5.0, "as usual");
+        assert!(compared(40.0, &[50.0, 50.0]).unwrap().0 < -5.0);
+    }
 
     #[test]
     fn stutters_and_columns() {
