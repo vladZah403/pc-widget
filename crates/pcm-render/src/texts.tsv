@@ -520,3 +520,18 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 Открыть отчёт	Open the report	Відкрити звіт	Bericht öffnen
 {name}: {time}, в среднем {fps} FPS, 1% low {low}.	{name}: {time}, {fps} FPS on average, 1% low {low}.	{name}: {time}, у середньому {fps} FPS, 1% low {low}.	{name}: {time}, im Schnitt {fps} FPS, 1% Low {low}.
 Найти настройку (Ctrl+F)	Find a setting (Ctrl+F)	Знайти налаштування (Ctrl+F)	Einstellung suchen (Strg+F)
+События Windows	Windows events	Події Windows	Windows-Ereignisse
+Сбоев за этот период не было	No trouble in this period	Збоїв за цей період не було	Keine Störungen in diesem Zeitraum
+Вылетела программа: {app}	A program crashed: {app}	Програма аварійно закрилася: {app}	Ein Programm ist abgestürzt: {app}
+Программа зависла и закрыта: {app}	A program hung and was closed: {app}	Програма зависла й закрита: {app}	Ein Programm hing und wurde beendet: {app}
+Синий экран, код {code}	Blue screen, code {code}	Синій екран, код {code}	Bluescreen, Code {code}
+Код помогает найти причину: поищи его в интернете вместе со словом BSOD.	The code helps to find the cause: search for it online with the word BSOD.	Код допомагає знайти причину: пошукай його в інтернеті разом зі словом BSOD.	Der Code hilft, die Ursache zu finden: Suche ihn im Internet zusammen mit dem Wort BSOD.
+Внезапное выключение или перезагрузка	Sudden shutdown or restart	Раптове вимкнення або перезавантаження	Plötzliches Ausschalten oder Neustart
+Пропало питание, ПК завис или его выключили кнопкой. Если часто — проверь блок питания и температуры.	The power went, the PC froze or it was switched off with its button. If it happens often, check the power supply and the temperatures.	Зникло живлення, ПК завис або його вимкнули кнопкою. Якщо часто — перевір блок живлення і температури.	Der Strom fiel aus, der PC hing oder wurde per Taste ausgeschaltet. Passiert es oft, prüfe Netzteil und Temperaturen.
+Сбой видеодрайвера {driver}, восстановлен	The graphics driver {driver} stopped and recovered	Збій відеодрайвера {driver}, відновлено	Grafiktreiber {driver} ausgefallen und wiederhergestellt
+Видеокарта перестала отвечать на пару секунд. Если часто — обнови драйвер, проверь температуры и разгон.	The graphics card stopped responding for a couple of seconds. If it happens often, update the driver and check the temperatures and overclocking.	Відеокарта перестала відповідати на кілька секунд. Якщо часто — онови драйвер, перевір температури й розгін.	Die Grafikkarte reagierte ein paar Sekunden nicht. Passiert es oft, aktualisiere den Treiber und prüfe Temperaturen und Übertaktung.
+Прошивка ограничивала частоту процессора	The firmware held the processor's speed back	Прошивка обмежувала частоту процесора	Die Firmware hat den Prozessortakt begrenzt
+Обычно из-за перегрева или питания: ноутбук на батарее или слабый блок питания.	Usually heat or power: a laptop on battery or a weak power supply.	Зазвичай через перегрів або живлення: ноутбук на батареї чи слабкий блок живлення.	Meist Hitze oder Strom: ein Laptop im Akkubetrieb oder ein schwaches Netzteil.
+Аппаратная ошибка (WHEA)	A hardware error (WHEA)	Апаратна помилка (WHEA)	Ein Hardwarefehler (WHEA)
+Процессор, память или шина сообщили об ошибке. Если повторяется — проверь разгон и температуры.	The processor, memory or a bus reported an error. If it repeats, check overclocking and the temperatures.	Процесор, пам'ять або шина повідомили про помилку. Якщо повторюється — перевір розгін і температури.	Prozessor, Speicher oder ein Bus meldeten einen Fehler. Wiederholt es sich, prüfe Übertaktung und Temperaturen.
+и ещё {n}	and {n} more	і ще {n}	und {n} weitere

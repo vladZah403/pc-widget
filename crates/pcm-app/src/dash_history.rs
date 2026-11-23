@@ -39,6 +39,64 @@ pub struct HistoryTab {
     /// The game sessions' headers, read again only when the files change.
     sessions: Vec<pcm_core::session::SessionInfo>,
     session_files: Vec<std::path::PathBuf>,
+    /// The test hook's scroll was looked at.
+    scrolled: bool,
+    /// Windows' events of the last 30 days (read on a thread, at most once a minute).
+    events: std::sync::Arc<std::sync::Mutex<Events>>,
+}
+
+/// The event logs as last read.
+#[derive(Default)]
+struct Events {
+    read: Option<Instant>,
+    reading: bool,
+    list: Vec<pcm_win::eventlog::Event>,
+}
+
+/// How often the event logs are read again.
+const EVENTS_EVERY: Duration = Duration::from_secs(60);
+/// Rows the events card shows at most.
+const EVENT_ROWS: usize = 12;
+
+/// An event as one line, and what it means (for the tooltip).
+fn event_text(e: &pcm_win::eventlog::Event) -> (String, String, egui::Color32) {
+    use pcm_win::eventlog::Kind;
+    let d = e.detail.clone();
+    match e.kind {
+        Kind::Crash => (trf("Вылетела программа: {app}", &[("app", d)]), String::new(), pal().warn),
+        Kind::Hang => (trf("Программа зависла и закрыта: {app}", &[("app", d)]), String::new(), pal().dim),
+        Kind::BlueScreen => (
+            trf("Синий экран, код {code}", &[("code", d)]),
+            tr("Код помогает найти причину: поищи его в интернете вместе со словом BSOD."),
+            pal().hot,
+        ),
+        Kind::PowerLoss => (
+            tr("Внезапное выключение или перезагрузка"),
+            tr(
+                "Пропало питание, ПК завис или его выключили кнопкой. Если часто — проверь блок питания и температуры.",
+            ),
+            pal().hot,
+        ),
+        Kind::DriverReset => (
+            trf("Сбой видеодрайвера {driver}, восстановлен", &[("driver", d)]),
+            tr(
+                "Видеокарта перестала отвечать на пару секунд. Если часто — обнови драйвер, проверь температуры и разгон.",
+            ),
+            pal().warn,
+        ),
+        Kind::Firmware => (
+            tr("Прошивка ограничивала частоту процессора"),
+            tr("Обычно из-за перегрева или питания: ноутбук на батарее или слабый блок питания."),
+            pal().dim,
+        ),
+        Kind::Hardware => (
+            tr("Аппаратная ошибка (WHEA)"),
+            tr(
+                "Процессор, память или шина сообщили об ошибке. Если повторяется — проверь разгон и температуры.",
+            ),
+            pal().hot,
+        ),
+    }
 }
 
 /// "13:05" for an hour or a day, "22.11" for longer.
@@ -103,6 +161,112 @@ impl HistoryTab {
         self.span = (from, now);
         self.loaded = Some(Instant::now());
         self.load_sessions();
+        self.load_events();
+    }
+
+    /// Read the event logs again on a thread, when it's time.
+    fn load_events(&self) {
+        let Ok(mut e) = self.events.lock() else { return };
+        if e.reading || e.read.is_some_and(|t| t.elapsed() < EVENTS_EVERY) {
+            return;
+        }
+        e.reading = true;
+        let slot = self.events.clone();
+        let spawned = std::thread::Builder::new().name("event logs".into()).spawn(move || {
+            let list = pcm_win::eventlog::recent(30, 300);
+            if let Ok(mut e) = slot.lock() {
+                e.list = list;
+                e.read = Some(Instant::now());
+                e.reading = false;
+            }
+        });
+        if spawned.is_err() {
+            e.reading = false;
+        }
+    }
+
+    /// "События Windows": the period's crashes, blue screens, power losses…
+    fn events(&self, ui: &mut egui::Ui, w: f32) {
+        let (list, read) = match self.events.lock() {
+            Ok(e) => (
+                e.list.iter().filter(|x| x.time >= self.span.0).cloned().collect::<Vec<_>>(),
+                e.read.is_some(),
+            ),
+            Err(_) => return,
+        };
+        if !read {
+            return;
+        }
+        let shown = &list[..list.len().min(EVENT_ROWS)];
+        let row_h = 30.0;
+        let more = list.len() > shown.len();
+        let rows = shown.len().max(1) + usize::from(more);
+        let (r, _) = ui.allocate_exact_size(vec2(w, 62.0 + rows as f32 * row_h), Sense::hover());
+        let p = ui.painter().clone();
+        panel(&p, r);
+        p.text(
+            r.left_top() + vec2(18.0, 16.0),
+            egui::Align2::LEFT_TOP,
+            tr("События Windows"),
+            bold(15.0),
+            pal().text,
+        );
+        let mut y = r.top() + 52.0;
+        if shown.is_empty() {
+            p.text(
+                pos2(r.left() + 18.0, y),
+                egui::Align2::LEFT_TOP,
+                tr("Сбоев за этот период не было"),
+                text_font(13.0),
+                pal().good,
+            );
+            return;
+        }
+        let long = self.span.1 - self.span.0 > 86_400;
+        for (i, e) in shown.iter().enumerate() {
+            let (text, why, col) = event_text(e);
+            let when = {
+                let s = pcm_win::system::local_time_of(e.time);
+                let clock = s.get(11..16).unwrap_or("").to_string();
+                if long {
+                    format!("{}.{} {clock}", s.get(8..10).unwrap_or(""), s.get(5..7).unwrap_or(""))
+                } else {
+                    clock
+                }
+            };
+            let tw = p.layout_no_wrap(when.clone(), text_font(12.5), pal().dim).size().x;
+            p.circle_filled(pos2(r.left() + 24.0, y + 9.0), 4.0, col);
+            p.text(
+                pos2(r.left() + 38.0, y),
+                egui::Align2::LEFT_TOP,
+                fit(&p, &text, &text_font(13.0), r.width() - 74.0 - tw),
+                text_font(13.0),
+                pal().text,
+            );
+            p.text(
+                pos2(r.right() - 18.0, y + 1.0),
+                egui::Align2::RIGHT_TOP,
+                when,
+                text_font(12.5),
+                pal().dim,
+            );
+            if !why.is_empty() {
+                let row =
+                    egui::Rect::from_min_size(pos2(r.left() + 12.0, y - 6.0), vec2(r.width() - 24.0, row_h));
+                ui.interact(row, ui.scope_id().with(("event", i)), Sense::hover()).on_hover_text(why);
+            }
+            y += row_h;
+        }
+        if more {
+            let n = (list.len() - shown.len()).to_string();
+            p.text(
+                pos2(r.left() + 38.0, y),
+                egui::Align2::LEFT_TOP,
+                trf("и ещё {n}", &[("n", n)]),
+                text_font(12.5),
+                pal().dim,
+            );
+        }
     }
 
     fn load_sessions(&mut self) {
@@ -121,6 +285,11 @@ impl HistoryTab {
                 .collect();
             self.session_files = files;
         }
+    }
+
+    /// History over 30 days (test runs).
+    pub fn show_month(&mut self) {
+        self.range = RANGES.len() - 1;
     }
 
     /// "Итоги недели" was clicked: the week.
@@ -227,7 +396,16 @@ impl HistoryTab {
         if self.loaded.is_none_or(|t| t.elapsed() >= RELOAD) {
             self.load();
         }
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        // test runs: screenshots of the lower part (PCM_HISTORY_SCROLL=px), once
+        if !self.scrolled {
+            // until the events are in: they make the page longer
+            self.scrolled = self.events.lock().is_ok_and(|e| e.read.is_some());
+            if let Some(o) = std::env::var("PCM_HISTORY_SCROLL").ok().and_then(|v| v.parse().ok()) {
+                area = area.vertical_scroll_offset(o);
+            }
+        }
+        area.show(ui, |ui| {
             let w = ui.available_width();
             // the range on the left, the points and CSV on the right
             let (bar_r, _) = ui.allocate_exact_size(vec2(w, 38.0), Sense::hover());
@@ -285,6 +463,8 @@ impl HistoryTab {
             let cols = if w >= 1000.0 { 2 } else { 1 };
             let cells = grid_cells(ui, w, 4, cols, 250.0);
             self.charts(ui, &cells);
+            ui.add_space(GAP);
+            self.events(ui, w);
             ui.add_space(8.0);
         });
         ui.ctx().request_repaint_after(RELOAD);

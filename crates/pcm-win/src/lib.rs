@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod cpu;
 pub mod disk;
 pub mod display;
+pub mod eventlog;
 pub mod frames;
 pub mod gpu;
 pub mod http;
