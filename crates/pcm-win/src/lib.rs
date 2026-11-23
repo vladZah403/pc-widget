@@ -11,6 +11,7 @@ pub mod display;
 pub mod frames;
 pub mod gpu;
 pub mod http;
+pub mod icons;
 pub mod memory;
 pub mod net;
 pub mod nvme;

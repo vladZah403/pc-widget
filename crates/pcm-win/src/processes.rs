@@ -160,6 +160,13 @@ impl OwnUsage {
 /// The program file's name of a process, lower case without ".exe"
 /// ("civilizationvi_dx12"); None when it can't be opened.
 pub fn image_name(pid: u32) -> Option<String> {
+    let path = image_path(pid)?.to_string_lossy().to_lowercase();
+    let file = path.rsplit('\\').next().unwrap_or("");
+    Some(file.strip_suffix(".exe").unwrap_or(file).to_string())
+}
+
+/// The program file of a process; None when it can't be opened.
+pub fn image_path(pid: u32) -> Option<std::path::PathBuf> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -173,12 +180,7 @@ pub fn image_name(pid: u32) -> Option<String> {
         let mut len = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
         CloseHandle(h);
-        if !ok {
-            return None;
-        }
-        let path = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
-        let file = path.rsplit('\\').next().unwrap_or("");
-        Some(file.strip_suffix(".exe").unwrap_or(file).to_string())
+        ok.then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
     }
 }
 

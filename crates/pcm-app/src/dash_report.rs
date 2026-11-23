@@ -212,6 +212,8 @@ pub struct ReportPage {
     share_now: bool,
     /// What it did, shown under the buttons for a while: text, good, since.
     share_note: Option<(String, bool, Instant)>,
+    /// The game's icon (the Games tab sets it).
+    pub icon: Option<egui::TextureId>,
 }
 
 impl ReportPage {
@@ -231,7 +233,13 @@ impl ReportPage {
             start_offset: std::env::var("PCM_REPORT_SCROLL").ok().and_then(|v| v.parse().ok()),
             share_now: false,
             share_note: None,
+            icon: None,
         })
+    }
+
+    /// The program the session was recorded for ("stalzonew").
+    pub fn game(&self) -> &str {
+        &self.session.info.game
     }
 
     fn save_note(&mut self) {
@@ -334,10 +342,20 @@ impl ReportPage {
                 .sum::<f32>()
                 + 24.0
         };
+        // the game's icon before the title
+        let tx = match self.icon {
+            Some(t) => {
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                let at = Rect::from_min_size(pos2(r.left(), r.top() + 20.0), vec2(28.0, 28.0));
+                p.image(t, at, uv, Color32::WHITE);
+                r.left() + 38.0
+            }
+            None => r.left(),
+        };
         p.text(
-            pos2(r.left(), r.top() + 20.0),
+            pos2(tx, r.top() + 20.0),
             Align2::LEFT_TOP,
-            fit(&p, &title, &bold(22.0), w - right_room),
+            fit(&p, &title, &bold(22.0), w - right_room - (tx - r.left())),
             bold(22.0),
             pal().text,
         );

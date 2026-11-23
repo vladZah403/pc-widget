@@ -26,6 +26,8 @@ pub struct SessionsTab {
     listed: Option<Instant>,
     page: Option<ReportPage>,
     note: Option<String>,
+    /// Each game's icon (None: no file yet, looked for again at a reload).
+    icons: std::collections::HashMap<String, Option<egui::TextureHandle>>,
 }
 
 /// What the tab asks of the window.
@@ -76,7 +78,20 @@ impl SessionsTab {
         }
     }
 
+    /// The game's icon, loaded once from sessions\icons.
+    fn icon(&mut self, ctx: &egui::Context, game: &str) -> Option<egui::TextureId> {
+        let slot = self.icons.entry(game.to_string()).or_insert_with(|| {
+            let pm = tiny_skia::Pixmap::load_png(crate::session_rec::icon_file(game)).ok()?;
+            let size = [pm.width() as usize, pm.height() as usize];
+            let img = egui::ColorImage::from_rgba_premultiplied(size, pm.data());
+            Some(ctx.load_texture(format!("game-icon-{game}"), img, egui::TextureOptions::LINEAR))
+        });
+        slot.as_ref().map(|t| t.id())
+    }
+
     fn reload(&mut self) {
+        // games without an icon yet: look again (it's saved when one starts)
+        self.icons.retain(|_, t| t.is_some());
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir())
             .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
             .unwrap_or_default();
@@ -106,7 +121,10 @@ impl SessionsTab {
         if self.listed.is_none_or(|t| t.elapsed() >= RELOAD) {
             self.reload();
         }
+        let report_game = self.page.as_ref().map(|p| p.game().to_string());
+        let report_icon = report_game.and_then(|g| self.icon(ui.ctx(), &g));
         if let Some(page) = &mut self.page {
+            page.icon = report_icon;
             let Some(theme) = theme else {
                 ui.label(RichText::new(tr("Жду цвета от виджета…")).color(pal().faint));
                 return None;
@@ -141,6 +159,8 @@ impl SessionsTab {
             return on.then_some(SessionsAction::GameModeOn);
         }
         let mut open: Option<PathBuf> = None;
+        let games: Vec<String> = self.list.iter().map(|(_, i)| i.game.clone()).collect();
+        let icons: Vec<Option<egui::TextureId>> = games.iter().map(|g| self.icon(ui.ctx(), g)).collect();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             let w = ui.available_width();
             stat_tiles(ui, w, &summary_tiles(&self.list));
@@ -167,7 +187,7 @@ impl SessionsTab {
                 if i > 0 {
                     p.hline((r.left() + 18.0)..=(r.right() - 18.0), r.top(), Stroke::new(1.0, pal().grid));
                 }
-                session_row(&p, r, info);
+                session_row(&p, r, info, icons.get(i).copied().flatten());
             }
         });
         if let Some(p) = open {
@@ -211,12 +231,21 @@ fn short_date(started: &str) -> String {
 }
 
 /// A session's row: the icon, the game and when, its FPS line, the numbers, "Отчёт ›".
-fn session_row(p: &Painter, r: Rect, info: &SessionInfo) {
+fn session_row(p: &Painter, r: Rect, info: &SessionInfo, game_icon: Option<egui::TextureId>) {
     let s = &info.summary;
     let left = r.left() + 18.0;
     let ib = Rect::from_min_size(pos2(left, r.center().y - 17.0), vec2(34.0, 34.0));
     p.rect_filled(ib, 9.0, pal().card_hi);
-    p.text(ib.center(), Align2::CENTER_CENTER, icon::GAME, icon_font(16.0), pal().dim);
+    match game_icon {
+        // the game's own icon, else the gamepad
+        Some(t) => {
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            p.image(t, Rect::from_center_size(ib.center(), vec2(26.0, 26.0)), uv, egui::Color32::WHITE);
+        }
+        None => {
+            p.text(ib.center(), Align2::CENTER_CENTER, icon::GAME, icon_font(16.0), pal().dim);
+        }
+    }
     let name = if info.title.trim().is_empty() { info.game.clone() } else { info.title.clone() };
     let right = r.right() - 18.0;
     let link_w = 74.0;

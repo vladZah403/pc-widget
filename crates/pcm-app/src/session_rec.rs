@@ -123,6 +123,7 @@ impl Recorder {
             windows: pcm_win::system::windows_build().map(|b| format!("build {b}")).unwrap_or_default(),
             ..SessionInfo::default()
         };
+        save_icon(g.pid, &g.name);
         let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, g.pid) };
         let process = (!h.is_null()).then(|| unsafe { OwnedHandle::from_raw_handle(h as _) });
         self.rec = Some(Recording {
@@ -244,6 +245,42 @@ fn per_second(times: &[f64], now: f64, n: usize) -> Vec<f32> {
 
 pub fn sessions_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("sessions")
+}
+
+/// The pixels of a game's saved icon.
+pub const ICON_PX: u32 = 64;
+
+/// Where a game's icon is kept: sessions\icons\<game>.png.
+pub fn icon_file(game: &str) -> PathBuf {
+    let safe: String =
+        game.chars().map(|c| if c.is_alphanumeric() || "-_.".contains(c) { c } else { '_' }).collect();
+    sessions_dir(&crate::widget_win::data_dir()).join("icons").join(format!("{safe}.png"))
+}
+
+/// The game's icon for the Games page, from its exe, once per game (off
+/// the window's thread).
+fn save_icon(pid: u32, game: &str) {
+    let file = icon_file(game);
+    if file.exists() {
+        return;
+    }
+    let Some(exe) = pcm_win::processes::image_path(pid) else { return };
+    let _ = std::thread::Builder::new().name("game icon".into()).spawn(move || {
+        let Some(mut px) = pcm_win::icons::exe_icon(&exe, ICON_PX) else { return };
+        // tiny-skia keeps premultiplied colour
+        for p in px.as_chunks_mut::<4>().0.iter_mut() {
+            let a = p[3] as u16;
+            for c in &mut p[..3] {
+                *c = ((*c as u16 * a + 127) / 255) as u8;
+            }
+        }
+        let Some(size) = tiny_skia::IntSize::from_wh(ICON_PX, ICON_PX) else { return };
+        let Some(pm) = tiny_skia::Pixmap::from_vec(px, size) else { return };
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = pm.save_png(&file);
+    });
 }
 
 /// Build and save the session off the window's thread, then tell the window
