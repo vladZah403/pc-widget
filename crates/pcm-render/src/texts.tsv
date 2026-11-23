@@ -565,3 +565,4 @@ FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче зв
 Показать на графике	Show on the chart	Показати на графіку	Im Diagramm zeigen
 Диск: чтение и запись	Drive: reads and writes	Диск: читання і запис	Laufwerk: Lesen und Schreiben
 Чтение и запись	Reads and writes	Читання і запис	Lesen und Schreiben
+С запуска PC Monitor: мин {lo} · среднее {avg} · макс {hi}	Since PC Monitor started: min {lo} · average {avg} · max {hi}	З запуску PC Monitor: мін {lo} · середнє {avg} · макс {hi}	Seit dem Start von PC Monitor: min {lo} · Mittel {avg} · max {hi}

@@ -109,6 +109,8 @@ fn run(shared: Arc<Shared>) {
     let mut ram_hist = VecDeque::new();
     let mut io_hist = VecDeque::new();
     let mut cpu_hist = VecDeque::new();
+    // each temperature's lowest, average and highest since the start
+    let mut spans = pcm_core::span::Spans::default();
     let mut net_hist = VecDeque::new();
     let mut volumes = Vec::new();
     let mut drives = Vec::new();
@@ -245,6 +247,13 @@ fn run(shared: Arc<Shared>) {
         let gpu_temp = g.and_then(|g| g.temp);
         let (ping_ready, ping_ms, ping_host) = ping.lock().map(|p| p.clone()).unwrap_or_default();
         let ssd_temp = s.drives.iter().filter_map(|d| d.temp).reduce(f32::max);
+        spans.add("cpu", s.cpu.temp.map(|t| t.celsius));
+        spans.add("gpu", gpu_temp.filter(|t| !t.approx).map(|t| t.celsius));
+        for d in &s.drives {
+            if let Some(l) = d.letters.first() {
+                spans.add(l, d.temp);
+            }
+        }
         let data = Data {
             cpu: load,
             cpu_hist: cpu_hist.iter().copied().collect(),
@@ -277,6 +286,7 @@ fn run(shared: Arc<Shared>) {
             temp_cpu: s.cpu.temp.map(|t: Temp| t.celsius),
             temp_cpu_approx: s.cpu.temp.is_some_and(|t| t.approx),
             temp_gpu: gpu_temp.filter(|t| !t.approx).map(|t| t.celsius),
+            temp_stats: spans.all(),
             gpu_shared: gpu_temp.is_some_and(|t| t.approx),
             temp_ssd: ssd_temp,
             gpu_load: g.and_then(|g| g.load),

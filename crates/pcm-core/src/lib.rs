@@ -14,6 +14,7 @@ pub mod rate;
 pub mod sensors;
 pub mod session;
 pub mod smbios;
+pub mod span;
 pub mod throttle;
 pub mod update;
 pub mod week;

@@ -1075,24 +1075,26 @@ impl HomeTab {
         {
             self.fahrenheit = i == 1;
         }
-        let mut rows: Vec<(String, f32, bool)> = Vec::new();
+        // name, now, "≈", and the [min, average, max] since the start
+        let stats = |key: &str| d.temp_stats.iter().find(|(k, _)| k == key).map(|(_, s)| *s);
+        let mut rows: Vec<(String, f32, bool, Option<[f32; 3]>)> = Vec::new();
         if let Some(t) = d.temp_cpu {
-            rows.push((tr("Процессор"), t, d.temp_cpu_approx));
+            rows.push((tr("Процессор"), t, d.temp_cpu_approx, stats("cpu")));
         }
         match (d.temp_gpu, d.gpu_shared) {
-            (Some(t), _) => rows.push((tr("Видеокарта"), t, false)),
+            (Some(t), _) => rows.push((tr("Видеокарта"), t, false, stats("gpu"))),
             (None, true) if d.temp_cpu.is_some() => {
-                rows.push((tr("Видеокарта"), d.temp_cpu.unwrap_or(0.0), true))
+                rows.push((tr("Видеокарта"), d.temp_cpu.unwrap_or(0.0), true, None))
             }
             _ => {}
         }
         for x in &d.drives {
             if let Some(t) = x.temp {
-                let name = match x.letters.first() {
-                    Some(l) => trf("Диск {d}", &[("d", l.clone())]),
-                    None => x.model.clone(),
+                let (name, st) = match x.letters.first() {
+                    Some(l) => (trf("Диск {d}", &[("d", l.clone())]), stats(l)),
+                    None => (x.model.clone(), None),
                 };
-                rows.push((name, t, false));
+                rows.push((name, t, false, st));
             }
         }
         let left = r.left() + 18.0;
@@ -1104,7 +1106,11 @@ impl HomeTab {
             p.galley(pos2(left, y), g, pal().dim);
         }
         let row_h = if rows.len() > 4 { 38.0 } else { 44.0 };
-        for (name, t, approx) in rows.iter().take(6) {
+        let deg = |t: f32| {
+            let v = if self.fahrenheit { t * 9.0 / 5.0 + 32.0 } else { t };
+            format!("{v:.0}°")
+        };
+        for (i, (name, t, approx, st)) in rows.iter().take(6).enumerate() {
             let col = rgb(sc.heat(*t));
             p.text(
                 pos2(left, y),
@@ -1115,7 +1121,7 @@ impl HomeTab {
             );
             let v = if self.fahrenheit { t * 9.0 / 5.0 + 32.0 } else { *t };
             let unit = if self.fahrenheit { "°F" } else { "°C" };
-            p.text(
+            let now = p.text(
                 pos2(right, y),
                 Align2::RIGHT_TOP,
                 format!("{}{v:.0}{unit}", if *approx { "≈" } else { "" }),
@@ -1124,8 +1130,34 @@ impl HomeTab {
             );
             let track = Rect::from_min_size(pos2(left, y + 22.0), vec2(right - left, 5.0));
             p.rect_filled(track, 3.0, pal().grid);
+            let x_of = |t: f32| track.left() + track.width() * ((t - 20.0) / 80.0).clamp(0.0, 1.0);
+            // since the start: the range a lighter band, the highest a tick (HWiNFO's min / max)
+            if let Some([lo, _, hi]) = st {
+                let band = Rect::from_min_max(pos2(x_of(*lo), track.top()), pos2(x_of(*hi), track.bottom()));
+                p.rect_filled(band, 3.0, alpha(rgb(sc.heat(*hi)), 70));
+                p.vline(
+                    x_of(*hi),
+                    (track.top() - 3.0)..=(track.bottom() + 3.0),
+                    Stroke::new(2.0, rgb(sc.heat(*hi))),
+                );
+                p.text(
+                    pos2(now.left() - 10.0, y + 1.0),
+                    Align2::RIGHT_TOP,
+                    format!("↑{}", deg(*hi)),
+                    text_font(12.0),
+                    pal().dim,
+                );
+            }
             let frac = ((t - 20.0) / 80.0).clamp(0.04, 1.0);
             p.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * frac, 5.0)), 3.0, col);
+            if let Some([lo, avg, hi]) = st {
+                let row = Rect::from_min_max(pos2(left, y - 4.0), pos2(right, y + row_h - 8.0));
+                let tip = trf(
+                    "С запуска PC Monitor: мин {lo} · среднее {avg} · макс {hi}",
+                    &[("lo", deg(*lo)), ("avg", deg(*avg)), ("hi", deg(*hi))],
+                );
+                ui.interact(row, ui.scope_id().with(("temp-row", i)), Sense::hover()).on_hover_text(tip);
+            }
             y += row_h;
         }
         // fans, two to a row

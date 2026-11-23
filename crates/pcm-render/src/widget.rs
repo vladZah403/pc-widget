@@ -104,6 +104,10 @@ pub struct Data {
     pub temp_cpu: Option<f32>,
     pub temp_cpu_approx: bool,
     pub temp_gpu: Option<f32>,
+    /// Each temperature's [min, average, max] since PC Monitor started:
+    /// "cpu", "gpu" and the drives by letter ("C:").
+    #[serde(default)]
+    pub temp_stats: Vec<(String, [f32; 3])>,
     /// Integrated graphics without a sensor: shows the CPU's temperature "≈".
     pub gpu_shared: bool,
     pub temp_ssd: Option<f32>,
