@@ -162,18 +162,36 @@ mod tests {
 /// Needs the internet: `cargo test -p pcm-win -- --ignored live`.
 #[cfg(test)]
 mod live {
+    /// GitHub's API answer. Without a token it allows 60 requests an hour per
+    /// address, and CI machines share addresses (the v2.0.0 tag build failed
+    /// on it), so CI passes its GITHUB_TOKEN; a refusal is tried again.
+    fn api(url: &str) -> Vec<u8> {
+        let auth =
+            std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()).map(|t| format!("Bearer {t}"));
+        let mut headers = vec![("Accept", "application/vnd.github+json")];
+        if let Some(a) = &auth {
+            headers.push(("Authorization", a));
+        }
+        let mut last = String::new();
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(20));
+            }
+            match super::get(url, "PC-Monitor/test", &headers, 1 << 20, &mut |_| ()) {
+                Ok(body) => return body,
+                Err(e) => {
+                    eprintln!("{url}: {e}");
+                    last = e;
+                }
+            }
+        }
+        panic!("GitHub doesn't answer: {last}");
+    }
+
     #[test]
     #[ignore]
     fn live_github_latest_release() {
-        let url = "https://api.github.com/repos/vladZah403/pc-widget/releases/latest";
-        let body = super::get(
-            url,
-            "PC-Monitor/test",
-            &[("Accept", "application/vnd.github+json")],
-            1 << 20,
-            &mut |_| (),
-        )
-        .expect("GitHub answers");
+        let body = api("https://api.github.com/repos/vladZah403/pc-widget/releases/latest");
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("\"tag_name\""), "{text}");
         println!("{}", &text[..text.len().min(300)]);
@@ -184,7 +202,7 @@ mod live {
     #[ignore]
     fn live_download_latest_zip() {
         use pcm_core::update;
-        let json = super::get(update::LATEST_API, "PC-Monitor/test", &[], 1 << 20, &mut |_| ()).unwrap();
+        let json = api(update::LATEST_API);
         let info: serde_json::Value = serde_json::from_slice(&json).unwrap();
         let release = update::newer_release(&info, "0.1").expect("a release");
         let zip = release.zip.expect("its zip");

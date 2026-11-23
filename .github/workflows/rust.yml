@@ -165,7 +165,10 @@ jobs:
           if (@($run.PSObject.Properties.Value) -match $exe) { throw "the autostart entry stayed" }
 
       - name: Downloads from GitHub (live)
-        # WinHTTP gets the API answer and the latest release's zip through the redirect
+        # WinHTTP gets the API answer and the latest release's zip through the redirect;
+        # the token lifts the API's 60-an-hour limit for the shared CI machines
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo test -p pcm-win -- --ignored live
 
       - uses: actions/setup-python@v5
