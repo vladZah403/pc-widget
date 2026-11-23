@@ -1377,6 +1377,8 @@ impl App {
         c.widget_style = new.widget_style;
         c.check_updates = new.check_updates;
         c.weekly = new.weekly;
+        c.home_hidden = new.home_hidden;
+        c.home_order = new.home_order;
         c.sanitize();
         self.cfg = c;
         self.save();

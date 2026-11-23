@@ -182,6 +182,11 @@ pub struct Config {
     pub weekly: bool,
     /// When the last one came (unix s; 0: not yet counting).
     pub weekly_last: i64,
+    /// Home page blocks the user hid (HOME_ROWS keys).
+    pub home_hidden: Vec<String>,
+    /// Home page blocks in the user's order (HOME_ROWS keys; the rest after,
+    /// as they come).
+    pub home_order: Vec<String>,
     /// The saved look of each profile (last: TOML puts tables after values).
     pub profiles: BTreeMap<String, ProfileView>,
 }
@@ -233,6 +238,8 @@ impl Default for Config {
             update_seen: String::new(),
             weekly: true,
             weekly_last: 0,
+            home_hidden: Vec::new(),
+            home_order: Vec::new(),
             profiles: BTreeMap::new(),
         }
     }
@@ -262,7 +269,20 @@ pub fn clean_host(text: &str) -> Option<String> {
     ok.then_some(t)
 }
 
+/// The home page's blocks, row by row: the four cards, the chart and the
+/// temperatures, then network, busiest programs and the game.
+pub const HOME_ROWS: [&[&str]; 3] =
+    [&["cpu", "gpu", "ram", "disk"], &["chart", "temps"], &["net", "programs", "game"]];
+
 impl Config {
+    /// A home page row's blocks in the user's order, hidden ones too.
+    pub fn home_row(&self, row: usize) -> Vec<&'static str> {
+        let mut keys: Vec<&'static str> = HOME_ROWS.get(row).map_or(Vec::new(), |r| r.to_vec());
+        // stable: blocks not in the order keep theirs, after the others
+        keys.sort_by_key(|k| self.home_order.iter().position(|o| o == k).unwrap_or(usize::MAX));
+        keys
+    }
+
     /// Every value back into its range; what can't be fixed gets its default.
     pub fn sanitize(&mut self) {
         let d = Config::default();
@@ -309,6 +329,14 @@ impl Config {
         self.alert_battery = self.alert_battery.clamp(5, 50);
         self.alert_disk = self.alert_disk.clamp(1, 50);
         self.hidden.dedup();
+        for list in [&mut self.home_hidden, &mut self.home_order] {
+            let mut seen: Vec<String> = Vec::new();
+            list.retain(|k| {
+                let ok = HOME_ROWS.iter().any(|r| r.contains(&k.as_str())) && !seen.contains(k);
+                seen.push(k.clone());
+                ok
+            });
+        }
         self.ping_host = clean_host(&self.ping_host).unwrap_or(d.ping_host);
         if !FPS_CORNERS.contains(&self.fps_corner.as_str()) {
             self.fps_corner = d.fps_corner.clone();
@@ -478,6 +506,22 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_rows_in_the_users_order() {
+        let mut c = Config::default();
+        assert_eq!(c.home_row(0), ["cpu", "gpu", "ram", "disk"]);
+        c.home_order = vec!["disk".into(), "cpu".into(), "game".into(), "net".into()];
+        // the ordered first, the rest after in their own order
+        assert_eq!(c.home_row(0), ["disk", "cpu", "gpu", "ram"]);
+        assert_eq!(c.home_row(2), ["game", "net", "programs"]);
+        // unknown and repeated keys go
+        c.home_hidden = vec!["gpu".into(), "nope".into(), "gpu".into()];
+        c.home_order.push("disk".into());
+        c.sanitize();
+        assert_eq!(c.home_hidden, ["gpu"]);
+        assert_eq!(c.home_order, ["disk", "cpu", "game", "net"]);
+    }
 
     #[test]
     fn round_trip_and_defaults() {

@@ -632,16 +632,28 @@ impl Dashboard {
         }
         match self.tab {
             TAB_HOME => {
-                let (data, theme, game, seq) = {
+                let (data, theme, game, seq, cfg) = {
                     let f = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-                    (f.data.clone(), f.theme.clone(), f.game.clone(), f.seq)
+                    (f.data.clone(), f.theme.clone(), f.game.clone(), f.seq, f.cfg.clone())
                 };
+                let cfg = cfg.unwrap_or_default();
                 let sc = theme.map(|t| t.scale());
                 let input = match (&data, &sc) {
-                    (Some(data), Some(sc)) => Some(HomeInput { data, sc, game: game.as_ref(), seq }),
+                    (Some(data), Some(sc)) => Some(HomeInput {
+                        data,
+                        sc,
+                        game: game.as_ref(),
+                        seq,
+                        hidden: &cfg.home_hidden,
+                        rows: [cfg.home_row(0), cfg.home_row(1), cfg.home_row(2)],
+                    }),
                     _ => None,
                 };
                 match self.home.ui(ui, input) {
+                    Some(HomeAction::Layout(hidden, order)) => self.change_config(|c| {
+                        c.home_hidden = hidden;
+                        c.home_order = order;
+                    }),
                     Some(HomeAction::Tab(t)) => self.tab = t,
                     Some(HomeAction::Session(path)) => {
                         self.sessions.open_path(&path, true);
@@ -957,6 +969,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                 d.tab = TAB_GAMES;
             }
             d.settings.start_offset = scroll;
+            // test runs: the home page in its edit mode (PCM_HOME_EDIT=1)
+            if std::env::var_os("PCM_HOME_EDIT").is_some() {
+                d.home.start_editing();
+            }
             d.quit_on_close = !offscreen && screenshot.is_none();
             d.shot = screenshot.map(|p| (p, None));
             Ok(Box::new(d))

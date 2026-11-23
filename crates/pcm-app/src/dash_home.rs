@@ -266,6 +266,64 @@ pub enum HomeAction {
     Tab(usize),
     /// Show this session's report in the games tab.
     Session(PathBuf),
+    /// The blocks were hidden, shown or moved ("Настроить"): hidden, order.
+    Layout(Vec<String>, Vec<String>),
+}
+
+/// A change made in the page's edit mode.
+enum Edit {
+    Hide(&'static str),
+    Show(String),
+    /// A block one place left (-1) or right (+1) in its row.
+    Move(&'static str, i32),
+}
+
+/// A block's name, as the edit mode lists it.
+fn block_name(key: &str) -> String {
+    tr(match key {
+        "cpu" => "Процессор",
+        "gpu" => "Видеокарта",
+        "ram" => "Память",
+        "disk" => "Диск",
+        "chart" => "Нагрузка",
+        "temps" => "Температуры",
+        "net" => "Сеть",
+        "programs" => "Больше всего нагружают",
+        _ => "Игровая сессия",
+    })
+}
+
+/// Edit mode over a block: dimmed, outlined, and in its middle ← "Скрыть" →
+/// (the arrows move it within its row).
+fn edit_controls(ui: &mut Ui, r: Rect, key: &'static str, row: &[&'static str]) -> Option<Edit> {
+    let p = ui.painter().clone();
+    let at = row.iter().position(|k| *k == key)?;
+    // over the block's own controls, so they can't be clicked meanwhile
+    ui.interact(r, ui.scope_id().with(("edit-cover", key)), Sense::click());
+    p.rect_filled(r, 12.0, alpha(pal().bg, 150));
+    p.rect_stroke(r, 12.0, Stroke::new(1.5, alpha(pal().accent, 220)), egui::StrokeKind::Inside);
+    let hide = tr("Скрыть");
+    let hw = p.layout_no_wrap(hide.clone(), bold(13.0), pal().text).size().x + 28.0;
+    let (h, aw, gap) = (32.0, 36.0, 8.0);
+    let total = aw + gap + hw + gap + aw;
+    let x0 = r.center().x - total / 2.0;
+    let y = r.center().y - h / 2.0;
+    let mut edit = None;
+    let left = Rect::from_min_size(pos2(x0, y), vec2(aw, h));
+    let mid = Rect::from_min_size(pos2(x0 + aw + gap, y), vec2(hw, h));
+    let right = Rect::from_min_size(pos2(mid.right() + gap, y), vec2(aw, h));
+    if at > 0 && crate::dash_kit::button_at(ui, left, "←", false, false, &format!("move-{key}-l")) {
+        edit = Some(Edit::Move(key, -1));
+    }
+    if crate::dash_kit::button_at(ui, mid, &hide, false, false, &format!("hide-{key}")) {
+        edit = Some(Edit::Hide(key));
+    }
+    if at + 1 < row.len()
+        && crate::dash_kit::button_at(ui, right, "→", false, false, &format!("move-{key}-r"))
+    {
+        edit = Some(Edit::Move(key, 1));
+    }
+    edit
 }
 
 /// What the page needs from the feed.
@@ -275,10 +333,15 @@ pub struct HomeInput<'a> {
     pub game: Option<&'a LiveGame>,
     /// Bumped with every new feed.
     pub seq: u64,
+    /// The settings' hidden blocks and each row in its order (Config::home_row).
+    pub hidden: &'a [String],
+    pub rows: [Vec<&'static str>; 3],
 }
 
 #[derive(Default)]
 pub struct HomeTab {
+    /// "Настроить": blocks can be hidden, shown and moved.
+    editing: bool,
     range: usize,
     fahrenheit: bool,
     /// CPU, GPU, RAM load and disk bytes/s each second, oldest first.
@@ -363,67 +426,179 @@ impl HomeTab {
             self.read_sessions();
         }
         let mut action = None;
+        let mut edits: Vec<Edit> = Vec::new();
         let view_h = ui.available_height();
+        let shown = |row: usize| -> Vec<&'static str> {
+            input.rows[row].iter().copied().filter(|k| !input.hidden.iter().any(|h| h == k)).collect()
+        };
+        let (top, middle, bottom) = (shown(0), shown(1), shown(2));
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let w = ui.available_width();
             self.header(ui, w, input.sc);
             ui.add_space(14.0);
-            self.summary_row(ui, w, &input);
-            ui.add_space(GAP);
-            let wide = w >= 1000.0;
-            if wide {
-                // the chart takes what the window has left: no scrolling on a laptop
-                let rest = view_h - HEADER_H - 14.0 - CARDS_H - 2.0 * GAP - BOTTOM_H - 16.0;
-                let (r, _) = ui.allocate_exact_size(vec2(w, rest.clamp(280.0, 420.0)), Sense::hover());
-                let temps_w = 380.0;
-                let chart = Rect::from_min_size(r.min, vec2(w - temps_w - GAP, r.height()));
-                let temps =
-                    Rect::from_min_size(pos2(chart.right() + GAP, r.top()), vec2(temps_w, r.height()));
-                self.load_chart(ui, chart, &input);
-                self.temps(ui, temps, input.data, input.sc);
-            } else {
-                let (chart, _) = ui.allocate_exact_size(vec2(w, 300.0), Sense::hover());
-                self.load_chart(ui, chart, &input);
+            if self.editing {
+                edits.extend(self.hidden_strip(ui, w, input.hidden));
                 ui.add_space(GAP);
-                let (temps, _) = ui.allocate_exact_size(vec2(w, 300.0), Sense::hover());
-                self.temps(ui, temps, input.data, input.sc);
             }
-            ui.add_space(GAP);
-            let h = BOTTOM_H;
-            let cells: Vec<Rect> = if wide {
-                let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-                let cw = (w - 2.0 * GAP) / 3.0;
-                (0..3)
-                    .map(|i| {
-                        Rect::from_min_size(pos2(r.left() + i as f32 * (cw + GAP), r.top()), vec2(cw, h))
-                    })
-                    .collect()
-            } else {
-                (0..3)
-                    .map(|i| {
+            if !top.is_empty() {
+                edits.extend(self.summary_row(ui, w, &input, &top));
+                ui.add_space(GAP);
+            }
+            let wide = w >= 1000.0;
+            let mut cells: Vec<(&'static str, Rect)> = Vec::new();
+            if !middle.is_empty() {
+                if wide {
+                    // the chart takes what the window has left: no scrolling on a laptop
+                    let rest = view_h - HEADER_H - 14.0 - CARDS_H - 2.0 * GAP - BOTTOM_H - 16.0;
+                    let (r, _) = ui.allocate_exact_size(vec2(w, rest.clamp(280.0, 420.0)), Sense::hover());
+                    let temps_w = 380.0;
+                    let mut x = r.left();
+                    for k in middle.iter().copied() {
+                        let width = if middle.len() == 1 {
+                            w
+                        } else if k == "temps" {
+                            temps_w
+                        } else {
+                            w - temps_w - GAP
+                        };
+                        cells.push((k, Rect::from_min_size(pos2(x, r.top()), vec2(width, r.height()))));
+                        x += width + GAP;
+                    }
+                } else {
+                    for (i, k) in middle.iter().copied().enumerate() {
                         if i > 0 {
                             ui.add_space(GAP);
                         }
-                        ui.allocate_exact_size(vec2(w, h), Sense::hover()).0
-                    })
-                    .collect()
-            };
-            self.network(ui, cells[0], input.data, input.sc);
-            if let Some(a) = self.programs(ui, cells[1], input.data, input.sc) {
-                action = Some(a);
+                        cells.push((k, ui.allocate_exact_size(vec2(w, 300.0), Sense::hover()).0));
+                    }
+                }
+                ui.add_space(GAP);
             }
-            if let Some(a) = self.game(ui, cells[2], input.game, input.sc) {
-                action = Some(a);
+            if !bottom.is_empty() {
+                let h = BOTTOM_H;
+                let n = bottom.len();
+                if wide {
+                    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+                    let cw = (w - GAP * (n - 1) as f32) / n as f32;
+                    for (i, k) in bottom.iter().copied().enumerate() {
+                        let at = pos2(r.left() + i as f32 * (cw + GAP), r.top());
+                        cells.push((k, Rect::from_min_size(at, vec2(cw, h))));
+                    }
+                } else {
+                    for (i, k) in bottom.iter().copied().enumerate() {
+                        if i > 0 {
+                            ui.add_space(GAP);
+                        }
+                        cells.push((k, ui.allocate_exact_size(vec2(w, h), Sense::hover()).0));
+                    }
+                }
+            }
+            for (k, r) in cells {
+                let a = match k {
+                    "chart" => {
+                        self.load_chart(ui, r, &input);
+                        None
+                    }
+                    "temps" => {
+                        self.temps(ui, r, input.data, input.sc);
+                        None
+                    }
+                    "net" => {
+                        self.network(ui, r, input.data, input.sc);
+                        None
+                    }
+                    "programs" => self.programs(ui, r, input.data, input.sc),
+                    _ => self.game(ui, r, input.game, input.sc),
+                };
+                if a.is_some() {
+                    action = a;
+                }
+                if self.editing {
+                    let row = if middle.contains(&k) { &middle } else { &bottom };
+                    edits.extend(edit_controls(ui, r, k, row));
+                }
             }
             ui.add_space(4.0);
         });
+        if !edits.is_empty() {
+            action = Some(self.apply(edits, &input));
+        }
         action
     }
 
-    /// "Главная", what the colours mean, the scale 0..100.
-    fn header(&self, ui: &mut Ui, w: f32, sc: &Scale) {
+    /// The edit mode on ("Настроить").
+    pub fn start_editing(&mut self) {
+        self.editing = true;
+    }
+
+    /// The edits as the settings' new hidden list and order.
+    fn apply(&self, edits: Vec<Edit>, input: &HomeInput) -> HomeAction {
+        let mut hidden: Vec<String> = input.hidden.to_vec();
+        let mut rows = input.rows.clone();
+        for e in edits {
+            match e {
+                Edit::Hide(k) => hidden.push(k.to_string()),
+                Edit::Show(k) => hidden.retain(|h| *h != k),
+                Edit::Move(k, dir) => {
+                    // within the row's shown blocks: swap with the next shown one
+                    for row in rows.iter_mut() {
+                        let shown: Vec<usize> =
+                            (0..row.len()).filter(|i| !hidden.iter().any(|h| h == row[*i])).collect();
+                        if let Some(p) = shown.iter().position(|i| row[*i] == k) {
+                            let q = p as i32 + dir;
+                            if q >= 0 && (q as usize) < shown.len() {
+                                row.swap(shown[p], shown[q as usize]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let order = rows.iter().flatten().map(|k| k.to_string()).collect();
+        HomeAction::Layout(hidden, order)
+    }
+
+    /// Edit mode: the hidden blocks, each a pill that shows it again.
+    fn hidden_strip(&self, ui: &mut Ui, w: f32, hidden: &[String]) -> Vec<Edit> {
+        let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+        let p = ui.painter().clone();
+        let mut out = Vec::new();
+        if hidden.is_empty() {
+            let t = tr("«Скрыть» убирает блок, стрелки двигают его в ряду. Скрытые появятся здесь");
+            p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, t, text_font(13.0), pal().dim);
+            return out;
+        }
+        let label = p.text(
+            pos2(r.left(), r.center().y),
+            Align2::LEFT_CENTER,
+            tr("Скрытые:"),
+            text_font(13.0),
+            pal().dim,
+        );
+        let mut x = label.right() + 12.0;
+        for k in hidden {
+            let text = format!("+ {}", block_name(k));
+            let bw = p.layout_no_wrap(text.clone(), bold(12.0), pal().text).size().x + 24.0;
+            let b = Rect::from_min_size(pos2(x, r.top() + 3.0), vec2(bw, 28.0));
+            if crate::dash_kit::button_at(ui, b, &text, false, false, &format!("show-{k}")) {
+                out.push(Edit::Show(k.clone()));
+            }
+            x += bw + 8.0;
+        }
+        out
+    }
+
+    /// "Главная", what the colours mean, the scale 0..100, "Настроить".
+    fn header(&mut self, ui: &mut Ui, w: f32, sc: &Scale) {
         let (r, _) = ui.allocate_exact_size(vec2(w, HEADER_H), Sense::hover());
+        // "Настроить" / "Готово" left of the scale
+        let label = if self.editing { tr("Готово") } else { tr("Настроить") };
+        let bw = ui.painter().layout_no_wrap(label.clone(), bold(13.0), pal().text).size().x + 32.0;
+        let b = Rect::from_min_size(pos2(r.right() - 190.0 - 40.0 - bw, r.top()), vec2(bw, 32.0));
+        if crate::dash_kit::button_at(ui, b, &label, self.editing, false, "home-edit") {
+            self.editing = !self.editing;
+        }
         let p = ui.painter();
         p.text(r.left_top(), Align2::LEFT_TOP, tr("Главная"), bold(22.0), pal().text);
         p.text(
@@ -460,13 +635,11 @@ impl HomeTab {
         );
     }
 
-    fn summary_row(&self, ui: &mut Ui, w: f32, input: &HomeInput) {
+    fn summary_row(&self, ui: &mut Ui, w: f32, input: &HomeInput, shown: &[&'static str]) -> Vec<Edit> {
         let d = input.data;
         let sc = input.sc;
-        let cols = if w >= 880.0 { 4 } else { 2 };
-        let cw = (w - GAP * (cols - 1) as f32) / cols as f32;
         let h = CARDS_H;
-        let mut cards: Vec<Card> = Vec::new();
+        let mut cards: Vec<(&'static str, Card)> = Vec::new();
 
         // the processor
         let mut sub = d.cpu_name.clone();
@@ -496,17 +669,20 @@ impl HomeTab {
             };
             line.push((text, col));
         }
-        cards.push(Card {
-            icon: icon::CPU,
-            title: tr("Процессор"),
-            sub,
-            value: format!("{:.0}", d.cpu),
-            unit: "%".into(),
-            color: rgb(sc.at(d.cpu / 100.0)),
-            line,
-            spark: self.column(0, 60),
-            spark_max: 100.0,
-        });
+        cards.push((
+            "cpu",
+            Card {
+                icon: icon::CPU,
+                title: tr("Процессор"),
+                sub,
+                value: format!("{:.0}", d.cpu),
+                unit: "%".into(),
+                color: rgb(sc.at(d.cpu / 100.0)),
+                line,
+                spark: self.column(0, 60),
+                spark_max: 100.0,
+            },
+        ));
 
         // the graphics card
         let mut sub = d.gpu_name.clone().unwrap_or_else(|| tr("Видеокарта"));
@@ -529,17 +705,20 @@ impl HomeTab {
             line.push((format!("{}{t:.0}°C", if approx { "≈" } else { "" }), rgb(sc.heat(t))));
         }
         let g = d.gpu_load.unwrap_or(0.0);
-        cards.push(Card {
-            icon: icon::GPU,
-            title: tr("Видеокарта"),
-            sub,
-            value: d.gpu_load.map_or("—".into(), |l| format!("{l:.0}")),
-            unit: if d.gpu_load.is_some() { "%".into() } else { String::new() },
-            color: rgb(sc.at(g / 100.0)),
-            line,
-            spark: self.column(1, 60),
-            spark_max: 100.0,
-        });
+        cards.push((
+            "gpu",
+            Card {
+                icon: icon::GPU,
+                title: tr("Видеокарта"),
+                sub,
+                value: d.gpu_load.map_or("—".into(), |l| format!("{l:.0}")),
+                unit: if d.gpu_load.is_some() { "%".into() } else { String::new() },
+                color: rgb(sc.at(g / 100.0)),
+                line,
+                spark: self.column(1, 60),
+                spark_max: 100.0,
+            },
+        ));
 
         // memory
         let gb = |b: u64| dec(format!("{:.1}", b as f64 / (1u64 << 30) as f64));
@@ -567,17 +746,20 @@ impl HomeTab {
             (trf("{used} из {total} ГБ", &[("used", gb(d.ram_used)), ("total", gb(d.ram_total))]), pal().dim),
             (trf("свободно {v} ГБ", &[("v", gb(d.ram_total.saturating_sub(d.ram_used)))]), rgb(sc.at(0.05))),
         ];
-        cards.push(Card {
-            icon: icon::RAM,
-            title: tr("Память"),
-            sub,
-            value: format!("{:.0}", d.ram_pct),
-            unit: "%".into(),
-            color: rgb(sc.at(d.ram_pct / 100.0)),
-            line,
-            spark: self.column(2, 60),
-            spark_max: 100.0,
-        });
+        cards.push((
+            "ram",
+            Card {
+                icon: icon::RAM,
+                title: tr("Память"),
+                sub,
+                value: format!("{:.0}", d.ram_pct),
+                unit: "%".into(),
+                color: rgb(sc.at(d.ram_pct / 100.0)),
+                line,
+                spark: self.column(2, 60),
+                spark_max: 100.0,
+            },
+        ));
 
         // the system drive (else the first)
         let disk = d.disks.iter().find(|x| x.0.eq_ignore_ascii_case("C:")).or(d.disks.first());
@@ -597,29 +779,49 @@ impl HomeTab {
             let io = self.column(3, 60);
             // a little headroom, and a floor so an idle disk stays low
             let io_max = io.iter().copied().fold(10.0 * 1024.0 * 1024.0, f32::max) * 1.25;
-            cards.push(Card {
-                icon: icon::DISK,
-                title: trf("Диск {d}", &[("d", letter.clone())]),
-                sub,
-                value: format!("{pct:.0}"),
-                unit: tr("% занято"),
-                color: rgb(sc.at(pct / 100.0)),
-                line,
-                spark: io,
-                spark_max: io_max,
-            });
+            cards.push((
+                "disk",
+                Card {
+                    icon: icon::DISK,
+                    title: trf("Диск {d}", &[("d", letter.clone())]),
+                    sub,
+                    value: format!("{pct:.0}"),
+                    unit: tr("% занято"),
+                    color: rgb(sc.at(pct / 100.0)),
+                    line,
+                    spark: io,
+                    spark_max: io_max,
+                },
+            ));
         }
 
-        for row in cards.chunks(cols) {
+        // the shown cards in the user's order
+        let cards: Vec<(&'static str, Card)> = shown
+            .iter()
+            .filter_map(|k| cards.iter().position(|(c, _)| c == k).map(|i| cards.swap_remove(i)))
+            .collect();
+        let mut edits = Vec::new();
+        if cards.is_empty() {
+            return edits;
+        }
+        let cols = if w >= 880.0 { cards.len().min(4) } else { cards.len().min(2) };
+        let cw = (w - GAP * (cols - 1) as f32) / cols as f32;
+        let keys: Vec<&'static str> = cards.iter().map(|(k, _)| *k).collect();
+        let rows: Vec<&[(&'static str, Card)]> = cards.chunks(cols).collect();
+        for (n, row) in rows.iter().enumerate() {
             let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-            for (i, c) in row.iter().enumerate() {
+            for (i, (k, c)) in row.iter().enumerate() {
                 let cr = Rect::from_min_size(pos2(r.left() + i as f32 * (cw + GAP), r.top()), vec2(cw, h));
                 c.paint(ui.painter(), cr);
+                if self.editing {
+                    edits.extend(edit_controls(ui, cr, k, &keys));
+                }
             }
-            if cols < 4 {
+            if n + 1 < rows.len() {
                 ui.add_space(GAP);
             }
         }
+        edits
     }
 
     /// "Нагрузка": the CPU solid and the GPU dashed over the chosen range.

@@ -512,3 +512,7 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 Запись игр выключена	Game recording is off	Запис ігор вимкнено	Spielaufzeichnung ist aus
 Включи «Игровой режим», и каждая игра запишется сама: FPS, просадки, нагрузка и температуры по секундам.	Turn on Game mode, and every game is recorded by itself: FPS, drops, load and temperatures second by second.	Увімкни «Ігровий режим», і кожна гра запишеться сама: FPS, просідання, навантаження і температури посекундно.	Schalte den Spielmodus ein, und jedes Spiel wird von selbst aufgezeichnet: FPS, Einbrüche, Last und Temperaturen sekundengenau.
 Включить игровой режим	Turn on Game mode	Увімкнути ігровий режим	Spielmodus einschalten
+Готово	Done	Готово	Fertig
+Скрыть	Hide	Сховати	Ausblenden
+Скрытые:	Hidden:	Сховані:	Ausgeblendet:
+«Скрыть» убирает блок, стрелки двигают его в ряду. Скрытые появятся здесь	“Hide” removes a block, the arrows move it along its row. Hidden ones show up here	«Сховати» прибирає блок, стрілки рухають його в ряду. Сховані з'являться тут	„Ausblenden“ entfernt einen Block, die Pfeile verschieben ihn in seiner Reihe. Ausgeblendete erscheinen hier
