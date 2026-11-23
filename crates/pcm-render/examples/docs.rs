@@ -3,7 +3,7 @@
 //! (the PC Monitor window's pages come from `PC-Monitor.exe --dashboard
 //! --offscreen --screenshot`).
 
-use pcm_render::format::{set_language, tr};
+use pcm_render::format::{dec, set_language, tr, trf};
 use pcm_render::overlay::{Look, preview, sample_game};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{DARK_INK, LIGHT_INK, Theme};
@@ -76,8 +76,8 @@ fn main() {
         let rows = vec![
             (tr("Нагрузка"), "12%".to_string(), sc.at(0.12)),
             (tr("Температура"), "42°C".to_string(), sc.heat(42.0)),
-            (tr("Частота"), "3.84 GHz".to_string(), text),
-            (tr("Больше всего"), "chrome · 1.6%".to_string(), text),
+            (tr("Частота"), trf("{v} ГГц", &[("v", dec("3.84".to_string()))]), text),
+            (tr("Больше всего"), format!("chrome · {}%", dec("1.6".to_string())), text),
         ];
         pics.push(
             hover_card(&mut fonts, s, &tr("Процессор"), &rows, &tr("Клик — открыть PC Monitor"), light)
@@ -100,4 +100,72 @@ fn main() {
     }
     pics.push(icons);
     save(&row(&pics, s), "tray");
+
+    // the classic widget at twice the size: its rows in three groups (the
+    // hero cut off), six widths, the four palettes, and the taskbar panel
+    let mut r = Renderer::new(&mut fonts);
+    // the processor's name as a real one reads (the sample's is a placeholder)
+    let d = pcm_render::widget::Data { cpu_name: "Ryzen 5 5500U".into(), ..d.clone() };
+    const ALL: [&str; 13] = [
+        "cores",
+        "ram",
+        "gpu",
+        "disks",
+        "temps",
+        "battery",
+        "ssd",
+        "fans",
+        "net",
+        "net_graph",
+        "ping",
+        "disk_io",
+        "uptime",
+    ];
+    let only =
+        |keep: &[&str]| ALL.iter().filter(|k| !keep.contains(k)).map(|k| k.to_string()).collect::<Vec<_>>();
+    for (name, keep) in [
+        ("glance-load", &["cores", "ram", "gpu", "disks"][..]),
+        ("glance-sensors", &["temps", "battery", "ssd"][..]),
+        ("glance-network", &["net", "net_graph", "ping", "disk_io"][..]),
+    ] {
+        let pm =
+            r.render(&d, &View { scale: 2.0, hidden: only(keep), ..View::default() }).expect("render").pm;
+        save(&rows_only(&pm, 2.0), name);
+    }
+    for w in [264.0f32, 352.0, 440.0, 528.0, 660.0, 792.0] {
+        let pm = r.render(&d, &View { scale: 2.0, width: w, ..View::default() }).expect("render").pm;
+        save(&pm, &format!("shape-{}", w as u32));
+    }
+    for (name, theme) in [
+        ("theme-heat", Theme::Heat),
+        ("theme-neon", Theme::Neon),
+        ("theme-ice", Theme::Ice),
+        ("theme-custom", Theme::Custom((90, 120, 255), (255, 80, 160))),
+    ] {
+        let pm =
+            r.render(&d, &View { scale: 2.0, compact: true, theme, ..View::default() }).expect("render").pm;
+        save(&pm, name);
+    }
+    let bar =
+        pcm_render::widget::taskbar_panel(&mut fonts, 2.0, &d, &Theme::Heat, false, 80, None).expect("panel");
+    save(&bar, "taskbar");
+}
+
+/// The rows of a classic widget, without its top (the big number) and its
+/// rounded frame: what the website shows of each group.
+fn rows_only(pm: &Pixmap, scale: f32) -> Pixmap {
+    let top = (pcm_render::widget::HERO_H * scale) as u32;
+    let side = (8.0 * scale) as u32;
+    let w = pm.width() - 2 * side;
+    let h = pm.height().saturating_sub(top + side);
+    let mut out = Pixmap::new(w, h).unwrap();
+    out.draw_pixmap(
+        -(side as i32),
+        -(top as i32),
+        pm.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    out
 }
