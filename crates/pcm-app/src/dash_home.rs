@@ -338,10 +338,25 @@ pub struct HomeInput<'a> {
     pub rows: [Vec<&'static str>; 3],
 }
 
+/// What the big chart shows: a click on a card on top picks it (the way
+/// Task Manager's list picks its graph).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Focus {
+    /// The processor and the graphics card.
+    #[default]
+    Load,
+    Memory,
+    /// The system drive's reads and writes (kept for 5 minutes only).
+    Disk,
+}
+
 #[derive(Default)]
 pub struct HomeTab {
     /// "Настроить": blocks can be hidden, shown and moved.
     editing: bool,
+    /// What the big chart shows, and a card clicked this frame.
+    focus: Focus,
+    picked: std::cell::Cell<Option<Focus>>,
     range: usize,
     fahrenheit: bool,
     /// CPU, GPU, RAM load and disk bytes/s each second, oldest first.
@@ -525,6 +540,15 @@ impl HomeTab {
             action = Some(self.apply(edits, &input));
         }
         action
+    }
+
+    /// The big chart on memory ("ram") or the drive ("disk"): test runs.
+    pub fn focus_on(&mut self, key: &str) {
+        self.focus = match key {
+            "ram" => Focus::Memory,
+            "disk" => Focus::Disk,
+            _ => Focus::Load,
+        };
     }
 
     /// The edit mode on ("Настроить").
@@ -815,6 +839,30 @@ impl HomeTab {
                 c.paint(ui.painter(), cr);
                 if self.editing {
                     edits.extend(edit_controls(ui, cr, k, &keys));
+                    continue;
+                }
+                // a click shows this card's reading on the big chart
+                let focus = match *k {
+                    "ram" => Focus::Memory,
+                    "disk" => Focus::Disk,
+                    _ => Focus::Load,
+                };
+                let resp = ui.interact(cr, ui.scope_id().with(("card-focus", *k)), Sense::click());
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                }
+                if self.focus == focus {
+                    ui.painter().rect_stroke(
+                        cr,
+                        12.0,
+                        Stroke::new(1.5, alpha(pal().accent, 170)),
+                        StrokeKind::Inside,
+                    );
+                } else if resp.hovered() {
+                    ui.painter().rect_stroke(cr, 12.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
+                }
+                if resp.on_hover_text(tr("Показать на графике")).clicked() {
+                    self.picked.set(Some(focus));
                 }
             }
             if n + 1 < rows.len() {
@@ -826,22 +874,38 @@ impl HomeTab {
 
     /// "Нагрузка": the CPU solid and the GPU dashed over the chosen range.
     fn load_chart(&mut self, ui: &mut Ui, r: Rect, input: &HomeInput) {
+        if let Some(f) = self.picked.take() {
+            self.focus = f;
+        }
         let p = ui.painter().clone();
         panel(&p, r);
-        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, tr("Нагрузка"), bold(15.0), pal().text);
-        let names: Vec<String> = RANGES.iter().map(|(n, _)| tr(n)).collect();
-        if let Some(i) = segments(ui, r.right_top() + vec2(-14.0, 12.0), &names, self.range, "range") {
+        let title = match self.focus {
+            Focus::Load => tr("Нагрузка"),
+            Focus::Memory => tr("Память"),
+            Focus::Disk => tr("Диск: чтение и запись"),
+        };
+        p.text(r.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, title, bold(15.0), pal().text);
+        // the drive's activity is kept for five minutes only
+        let ranges: &[(&str, i64)] = if self.focus == Focus::Disk { &RANGES[..2] } else { &RANGES };
+        let names: Vec<String> = ranges.iter().map(|(n, _)| tr(n)).collect();
+        let range = self.range.min(ranges.len() - 1);
+        if let Some(i) = segments(ui, r.right_top() + vec2(-14.0, 12.0), &names, range, "range") {
             self.range = i;
         }
-        let span = RANGES[self.range].1;
+        let span = ranges[range].1;
         // the series: from memory for a minute or five, from the database for longer
+        let (k0, k1, c0, c1) = match self.focus {
+            Focus::Load => (0, Some(1), Column::Cpu, Some(Column::Gpu)),
+            Focus::Memory => (2, None, Column::Ram, None),
+            Focus::Disk => (3, None, Column::Cpu, None),
+        };
         let (cpu, gpu): (Vec<Option<f32>>, Vec<Option<f32>>) = if span <= 300 {
             let n = span as usize;
-            let c = self.column(0, n);
-            let g = self.column(1, n);
+            let c = self.column(k0, n);
+            let g = k1.map(|k| self.column(k, n)).unwrap_or_default();
             let pad = n.saturating_sub(c.len());
             let fill = |v: Vec<f32>| std::iter::repeat_n(None, pad).chain(v.into_iter().map(Some)).collect();
-            (fill(c), fill(g))
+            (fill(c), if k1.is_some() { fill(g) } else { Vec::new() })
         } else {
             self.load_db(span);
             let now = pcm_win::system::unix_now();
@@ -852,16 +916,28 @@ impl HomeTab {
                     .map(|b| b.map(|(avg, _)| avg as f32))
                     .collect::<Vec<_>>()
             };
-            (get(Column::Cpu), get(Column::Gpu))
+            (get(c0), c1.map(get).unwrap_or_default())
         };
+        // the scale: percent, or bytes/s for the drive (its busiest second, at least 1 MB/s)
+        let bytes = self.focus == Focus::Disk;
+        let top =
+            if bytes { cpu.iter().flatten().fold(1048576.0f32, |a, v| a.max(*v)) * 1.15 } else { 100.0 };
+        let fmt_v = |v: f32| if bytes { fmt_speed(v as f64) } else { format!("{v:.0}%") };
         let last = |v: &[Option<f32>]| v.iter().rev().find_map(|x| *x);
         // the legend with the latest values
         let ly = r.top() + 58.0;
         let mut x = r.left() + 18.0;
-        for (name, col, dashed, v) in [
-            (tr("Процессор"), pal().cpu_line, false, last(&cpu).or(Some(input.data.cpu))),
-            (tr("Видеокарта"), pal().gpu_line, true, last(&gpu).or(input.data.gpu_load)),
-        ] {
+        let legend = match self.focus {
+            Focus::Load => vec![
+                (tr("Процессор"), pal().cpu_line, false, last(&cpu).or(Some(input.data.cpu))),
+                (tr("Видеокарта"), pal().gpu_line, true, last(&gpu).or(input.data.gpu_load)),
+            ],
+            Focus::Memory => {
+                vec![(tr("Память"), pal().gpu_line, false, last(&cpu).or(Some(input.data.ram_pct)))]
+            }
+            Focus::Disk => vec![(tr("Чтение и запись"), pal().cpu_line, false, last(&cpu))],
+        };
+        for (name, col, dashed, v) in legend {
             let y = ly + 8.0;
             if dashed {
                 for k in 0..3 {
@@ -877,7 +953,7 @@ impl HomeTab {
                 pos2(x, ly),
                 &[
                     (format!("{name}  "), text_font(13.0), pal().dim),
-                    (v.map_or("—".into(), |v| format!("{v:.0}%")), bold(13.0), pal().text),
+                    (v.map_or("—".into(), fmt_v), bold(13.0), pal().text),
                 ],
             ) + 26.0;
         }
@@ -887,25 +963,20 @@ impl HomeTab {
             pos2(r.right() - 20.0, r.bottom() - 40.0),
         );
         for k in 0..=4 {
-            let v = k as f32 * 25.0;
-            let y = plot.bottom() - plot.height() * v / 100.0;
+            let v = k as f32 * 0.25 * top;
+            let y = plot.bottom() - plot.height() * v / top;
             p.hline(plot.x_range(), y, Stroke::new(1.0, pal().grid));
-            p.text(
-                pos2(plot.left() - 12.0, y),
-                Align2::RIGHT_CENTER,
-                format!("{v:.0}%"),
-                text_font(11.5),
-                pal().faint,
-            );
+            p.text(pos2(plot.left() - 12.0, y), Align2::RIGHT_CENTER, fmt_v(v), text_font(11.5), pal().faint);
         }
         let n = cpu.len().max(2);
         let xy = |i: usize, v: f32| {
             pos2(
                 plot.left() + plot.width() * i as f32 / (n - 1) as f32,
-                plot.bottom() - plot.height() * (v / 100.0).clamp(0.0, 1.0),
+                plot.bottom() - plot.height() * (v / top).clamp(0.0, 1.0),
             )
         };
-        for (series, col, dashed) in [(&gpu, pal().gpu_line, true), (&cpu, pal().cpu_line, false)] {
+        let main_col = if self.focus == Focus::Memory { pal().gpu_line } else { pal().cpu_line };
+        for (series, col, dashed) in [(&gpu, pal().gpu_line, true), (&cpu, main_col, false)] {
             // a line per stretch without gaps
             let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
             for (i, v) in series.iter().enumerate() {
@@ -957,11 +1028,16 @@ impl HomeTab {
             let ago = ((n - 1 - i) as f32 / (n - 1) as f32 * span as f32).round() as i64;
             let when = clock(pcm_win::system::unix_now() - ago, span <= 300);
             let mut rows = vec![(when, None::<Color32>)];
-            for (name, series, col) in [("CPU", &cpu, pal().cpu_line), ("GPU", &gpu, pal().gpu_line)] {
+            let main_name = match self.focus {
+                Focus::Load => "CPU",
+                Focus::Memory => "RAM",
+                Focus::Disk => "C:",
+            };
+            for (name, series, col) in [(main_name, &cpu, main_col), ("GPU", &gpu, pal().gpu_line)] {
                 if let Some(v) = series.get(i).copied().flatten() {
                     p.circle_filled(xy(i, v), 4.0, col);
                     p.circle_stroke(xy(i, v), 4.0, Stroke::new(1.5, pal().card));
-                    rows.push((format!("{name}  {v:.0}%"), Some(col)));
+                    rows.push((format!("{name}  {}", fmt_v(v)), Some(col)));
                 }
             }
             let bw = 118.0;

@@ -998,6 +998,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
             if std::env::var_os("PCM_HOME_EDIT").is_some() {
                 d.home.start_editing();
             }
+            // and its chart on memory or the drive (PCM_HOME_FOCUS=ram|disk)
+            if let Ok(k) = std::env::var("PCM_HOME_FOCUS") {
+                d.home.focus_on(&k);
+            }
             // History over 30 days (PCM_HISTORY_MONTH=1)
             if std::env::var_os("PCM_HISTORY_MONTH").is_some() {
                 d.history.show_month();
