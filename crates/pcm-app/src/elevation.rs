@@ -81,6 +81,17 @@ fn installed_exe() -> Option<PathBuf> {
     Some(install_dir().join(EXE_NAME)).filter(|p| p.is_file())
 }
 
+/// Do we run from the program's own folder ("PC-Monitor" per user, or the
+/// admin copy), not from a 2.0 beta's "PC-Monitor 2" that updated itself?
+fn is_main_install() -> bool {
+    app_dir().is_none_or(|d| is_main_dir(&d))
+}
+
+fn is_main_dir(dir: &Path) -> bool {
+    same_path(dir, &install_dir())
+        || dir.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(INSTALL_FOLDER))
+}
+
 /// The same file or folder, whatever the case of the letters.
 fn same_path(a: &Path, b: &Path) -> bool {
     let norm = |p: &Path| {
@@ -438,6 +449,18 @@ pub fn sync_uninstall_version() {
 /// Program Files) too. That needs admin rights: Windows asks only when
 /// there is something to remove.
 pub fn cleanup() -> i32 {
+    // A 2.0 beta ("PC-Monitor 2", its own names) that updated itself to this
+    // release runs under 1.8's names from the beta's folder: its uninstaller
+    // must not take away the real install's autostart, task and admin copy.
+    if !is_main_install() {
+        let mine = this_exe().map(|e| e.display().to_string().to_lowercase());
+        if let (Some(cmd), Some(mine)) = (os::run_entry(RUN_NAME), mine)
+            && cmd.to_lowercase().contains(&mine)
+        {
+            os::set_run_entry(RUN_NAME, None);
+        }
+        return 0;
+    }
     os::set_run_entry(RUN_NAME, None);
     let dir = install_dir();
     // only a folder that holds our program is ever removed
@@ -515,6 +538,17 @@ mod tests {
         ));
         let d = with_suffix(Path::new(r"C:\Program Files\PC-Monitor 2"), ".new");
         assert_eq!(d, PathBuf::from(r"C:\Program Files\PC-Monitor 2.new"));
+    }
+
+    #[test]
+    fn main_install_or_a_beta_folder() {
+        let user = |f: &str| PathBuf::from(r"C:\Users\x\AppData\Local\Programs").join(f);
+        assert!(is_main_dir(&user(INSTALL_FOLDER)));
+        assert!(is_main_dir(&user(&INSTALL_FOLDER.to_lowercase())));
+        assert!(is_main_dir(&install_dir()));
+        if !BESIDE_1_8 {
+            assert!(!is_main_dir(&user("PC-Monitor 2")), "a 2.0 beta's folder");
+        }
     }
 
     #[test]
