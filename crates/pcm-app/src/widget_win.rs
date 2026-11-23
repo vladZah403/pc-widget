@@ -1055,7 +1055,9 @@ impl App {
         unsafe {
             ShowWindow(self.toast, SW_SHOWNOACTIVATE);
             SetWindowPos(self.toast, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            SetTimer(self.hwnd, TIMER_TOAST, TOAST_MS, None);
+            // a card with buttons stays longer: there's something to choose
+            let ms = if self.toast_buttons.is_empty() { TOAST_MS } else { TOAST_MS * 2 };
+            SetTimer(self.hwnd, TIMER_TOAST, ms, None);
         }
     }
 
