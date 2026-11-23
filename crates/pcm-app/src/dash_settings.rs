@@ -645,6 +645,14 @@ fn widget(ui: &mut Ui, c: &mut Config, env: &mut Env) {
             sep(ui);
             toggle(ui, &tr("Светлая тема (окно и виджет «Карточки»)"), "", &mut c.window_light);
             sep(ui);
+            let zooms = [0.9f32, 1.0, 1.1, 1.25, 1.5];
+            let at = zooms.iter().position(|z| (z - c.window_zoom).abs() < 0.01);
+            let items: Vec<String> = zooms.iter().map(|z| format!("{:.0}%", z * 100.0)).collect();
+            let hint = tr("Или Ctrl+плюс и Ctrl+минус");
+            if let Some(i) = choice(ui, &tr("Масштаб окна"), &hint, &items, at, "zoom") {
+                c.window_zoom = zooms[i];
+            }
+            sep(ui);
             toggle(ui, &tr("Закрепить на рабочем столе"), "", &mut c.pinned);
             sep(ui);
             ui.add_enabled_ui(!c.pinned, |ui| toggle(ui, &tr("Поверх всех окон"), "", &mut c.topmost));

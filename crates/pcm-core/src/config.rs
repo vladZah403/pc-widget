@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The PC Monitor window's zoom range (Ctrl+plus / Ctrl+minus, Settings).
+pub const WINDOW_ZOOM_MIN: f32 = 0.7;
+pub const WINDOW_ZOOM_MAX: f32 = 2.0;
 pub const SIZE_MIN: u32 = 80;
 pub const SIZE_MAX: u32 = 200;
 pub const SIZE_STEP: u32 = 5;
@@ -169,6 +172,8 @@ pub struct Config {
     pub close_quits: bool,
     /// The PC Monitor window in light colours ("Светлая тема"); off: dark.
     pub window_light: bool,
+    /// The PC Monitor window's zoom (1 = 100%; Ctrl+plus / Ctrl+minus).
+    pub window_zoom: f32,
     /// Look for a new version every 6 hours.
     pub check_updates: bool,
     /// The newest version the user has been told about.
@@ -223,6 +228,7 @@ impl Default for Config {
             run_as_admin: false,
             close_quits: false,
             window_light: false,
+            window_zoom: 1.0,
             check_updates: true,
             update_seen: String::new(),
             weekly: true,
@@ -281,6 +287,11 @@ impl Config {
         self.width = self.width.clamp(WIDTH_STD, WIDTH_MAX);
         self.stretch = self.stretch.min(STRETCH_MAX);
         self.alpha = if self.alpha.is_finite() { self.alpha.clamp(0.3, 1.0) } else { 1.0 };
+        self.window_zoom = if self.window_zoom.is_finite() {
+            self.window_zoom.clamp(WINDOW_ZOOM_MIN, WINDOW_ZOOM_MAX)
+        } else {
+            1.0
+        };
         self.hidden.retain(|h| SECTIONS.iter().any(|(k, _)| k == h));
         if !IN_GAMES.contains(&self.in_games.as_str()) {
             self.in_games = d.in_games.clone();

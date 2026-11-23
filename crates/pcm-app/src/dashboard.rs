@@ -196,6 +196,8 @@ struct Dashboard {
     look: Option<bool>,
     /// The logo is on the window (title bar, taskbar).
     icon: bool,
+    /// The zoom last applied or saved (Ctrl+plus / Ctrl+minus change it).
+    zoom: Option<f32>,
     /// The logo in the top bar, drawn for the screen's scale (scale, texture).
     logo: Option<(f32, egui::TextureHandle)>,
     /// Closing the window quits PC Monitor (not in the offscreen test runs).
@@ -222,6 +224,7 @@ impl Dashboard {
             look: None,
             icon: false,
             logo: None,
+            zoom: None,
             quit_on_close: false,
             shot: None,
         }
@@ -248,6 +251,58 @@ impl Dashboard {
         if let Some(c) = f.cfg.as_mut() {
             edit(c);
             send(&FromDashboard::SetConfig(Box::new(c.clone())));
+        }
+    }
+
+    /// Shortcuts: Ctrl+1…6 the pages, Ctrl+Tab / Ctrl+Shift+Tab the next and
+    /// previous, Ctrl+F the program search. Ctrl+plus / minus / 0 (egui's
+    /// zoom) is kept in the settings, and a zoom set there comes here.
+    fn keys(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        const NUMS: [Key; 6] = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6];
+        let (page, step, find) = ctx.input_mut(|i| {
+            let page = NUMS.iter().position(|k| i.consume_key(Modifiers::COMMAND, *k));
+            let step = if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab) {
+                TABS.len() - 1
+            } else if i.consume_key(Modifiers::COMMAND, Key::Tab) {
+                1
+            } else {
+                0
+            };
+            (page, step, i.consume_key(Modifiers::COMMAND, Key::F))
+        });
+        if let Some(p) = page {
+            self.tab = p;
+        }
+        if step > 0 {
+            self.tab = (self.tab + step) % TABS.len();
+        }
+        if find {
+            self.tab = TAB_PROCS;
+            self.procs.focus_search = true;
+        }
+        let saved = self.feed.lock().ok().and_then(|f| f.cfg.as_ref().map(|c| c.window_zoom));
+        let Some(saved) = saved else { return };
+        let now = ctx.zoom_factor();
+        match self.zoom {
+            // first: the saved zoom
+            None => {
+                ctx.set_zoom_factor(saved);
+                self.zoom = Some(saved);
+            }
+            // the keys changed it: save
+            Some(z) if (now - z).abs() > 0.001 => {
+                let now = now.clamp(pcm_core::config::WINDOW_ZOOM_MIN, pcm_core::config::WINDOW_ZOOM_MAX);
+                ctx.set_zoom_factor(now);
+                self.zoom = Some(now);
+                self.change_config(|c| c.window_zoom = now);
+            }
+            // the settings changed it
+            Some(z) if (saved - z).abs() > 0.001 => {
+                ctx.set_zoom_factor(saved);
+                self.zoom = Some(saved);
+            }
+            _ => {}
         }
     }
 
@@ -363,7 +418,7 @@ impl Dashboard {
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             }
-            if resp.clicked() {
+            if resp.on_hover_text(format!("Ctrl+{}", i + 1)).clicked() {
                 self.tab = i;
             }
             y += 48.0;
@@ -702,6 +757,7 @@ impl eframe::App for Dashboard {
             crate::icon::set_on_this_thread();
             self.icon = true;
         }
+        self.keys(&ctx);
         self.screenshot(&ctx);
         let (focus, session, week) = {
             let mut f = self.feed.lock().unwrap_or_else(|e| e.into_inner());

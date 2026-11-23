@@ -38,6 +38,8 @@ pub struct ProcsTab {
     /// Told the widget to sample processes.
     asked: bool,
     search: String,
+    /// Ctrl+F: the search gets the keyboard on the next frame.
+    pub focus_search: bool,
 }
 
 impl ProcsTab {
@@ -91,12 +93,19 @@ impl ProcsTab {
             ui.add_space(GAP);
             // the search
             ui.horizontal(|ui| {
-                ui.add_sized(
+                let field = ui.add_sized(
                     vec2(280.0, 30.0),
                     egui::TextEdit::singleline(&mut self.search)
-                        .hint_text(tr("Найти программу"))
+                        .hint_text(tr("Найти программу (Ctrl+F)"))
                         .margin(vec2(10.0, 7.0)),
                 );
+                if std::mem::take(&mut self.focus_search) {
+                    field.request_focus();
+                }
+                // Esc in the search empties it
+                if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.search.clear();
+                }
                 if !self.search.is_empty() && ui.button("✕").clicked() {
                     self.search.clear();
                 }

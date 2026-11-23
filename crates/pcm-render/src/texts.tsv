@@ -497,3 +497,6 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 всего {time}	{time} in all	усього {time}	insgesamt {time}
 сессий: {n}	sessions: {n}	сесій: {n}	Sitzungen: {n}
 {v} FPS	{v} FPS	{v} FPS	{v} FPS
+Найти программу (Ctrl+F)	Find a program (Ctrl+F)	Знайти програму (Ctrl+F)	Programm suchen (Strg+F)
+Масштаб окна	Window zoom	Масштаб вікна	Fenstergröße
+Или Ctrl+плюс и Ctrl+минус	Or Ctrl+plus and Ctrl+minus	Або Ctrl+плюс і Ctrl+мінус	Oder Strg+Plus und Strg+Minus
