@@ -1,16 +1,24 @@
-//! The "Настройки" tab of the PC Monitor window: 1.8's settings window in
-//! one scrolling page. The tab edits a copy of the widget's settings and
-//! sends it back whole after each change; the widget takes what can be set
-//! here and applies it (and feeds the result back a second later).
+//! The "Настройки" tab of the PC Monitor window (beta 2, in the home page's
+//! style): the settings as cards in two columns — general, the widget, what
+//! it shows, the tray, startup | games, the FPS panel, alerts, ping, updates —
+//! with switches, segmented choices and pills. The tab edits a copy of the
+//! widget's settings and sends it back whole after each change; the widget
+//! takes what can be set here and applies it (and feeds the result back a
+//! second later).
 
+use std::ops::RangeInclusive;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-
-use crate::dash_home::pal;
-use egui::{Color32, RichText};
+use egui::{
+    Align, Align2, CursorIcon, Galley, Layout, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui,
+    UiBuilder, pos2, vec2,
+};
 use pcm_core::config::{self, Config, FPS_ROWS, SECTIONS, TRAY_KINDS, TRAY_MAX};
 
+use crate::dash_home::{alpha, bold, fit, icon, icon_font, pal, text_font, text_w};
+use crate::dash_kit::{GAP, button_at, switch};
 use crate::dashboard::{FromDashboard, StartInfo, send};
 use pcm_render::format::{tr, trf};
 use pcm_render::overlay::{Look, preview, sample_game};
@@ -18,11 +26,31 @@ use pcm_render::text::Fonts;
 use pcm_render::theme::Theme;
 use pcm_render::widget::{Data, UpdateState};
 
-const TEAL: Color32 = Color32::from_rgb(38, 140, 130);
 /// After a change here, the widget's copy (a feed behind) is not taken for this long.
 const SETTLE: Duration = Duration::from_secs(3);
 const PING_PRESETS: [(&str, &str); 3] =
     [("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google"), ("9.9.9.9", "Quad9")];
+/// From this width the cards stand in two columns.
+const TWO_COLUMNS: f32 = 900.0;
+const MAX_W: f32 = 1240.0;
+/// A row's least height: a label and its control.
+const ROW_H: f32 = 42.0;
+const SLIDER_W: f32 = 170.0;
+/// A slider row's right part: the rail, its value and room for "100%".
+const SLIDER_ROW_W: f32 = SLIDER_W + 8.0 + 46.0 + 8.0 + 58.0;
+
+/// The cards' icons (Segoe MDL2 Assets) that the other pages don't have.
+mod glyph {
+    pub const GLOBE: &str = "\u{E774}";
+    pub const WIDGET: &str = "\u{E8A9}";
+    pub const EYE: &str = "\u{E890}";
+    pub const TRAY: &str = "\u{E7C4}";
+    pub const FPS: &str = "\u{E9D2}";
+    pub const ALERT: &str = "\u{E7BA}";
+    pub const START: &str = "\u{E7E8}";
+    pub const UPDATE: &str = "\u{E895}";
+    pub const CHECK: &str = "\u{E73E}";
+}
 
 #[derive(Default)]
 pub struct SettingsTab {
@@ -37,25 +65,307 @@ pub struct SettingsTab {
     preview_key: String,
 }
 
-fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(14.0);
-    ui.label(RichText::new(text).size(15.0).color(pal().text).strong());
-    ui.add_space(4.0);
-}
-
-fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.0).color(pal().faint));
+/// What the cards read besides the settings, and what a button asks for.
+struct Env<'a> {
+    start: Option<&'a StartInfo>,
+    data: Option<&'a Data>,
+    action: Option<FromDashboard>,
 }
 
 fn rgb_of(hex: &str) -> [u8; 3] {
     pcm_render::theme::hex(hex).map_or([128, 128, 128], |c| [c.0, c.1, c.2])
 }
 
+// ---- the pieces ---------------------------------------------------------------------------
+
+/// A card: the icon in its box, the title and a line under it, then the rows.
+fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .fill(pal().card)
+        .stroke(Stroke::new(1.0, pal().border))
+        .corner_radius(egui::CornerRadius::same(12))
+        .inner_margin(egui::Margin { left: 18, right: 18, top: 16, bottom: 8 })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
+            let p = ui.painter();
+            let ib = Rect::from_min_size(r.left_top(), vec2(34.0, 34.0));
+            p.rect_filled(ib, 9.0, pal().card_hi);
+            p.text(ib.center(), Align2::CENTER_CENTER, glyph, icon_font(16.0), pal().dim);
+            let tx = ib.right() + 12.0;
+            let room = r.right() - tx;
+            p.text(
+                pos2(tx, r.top()),
+                Align2::LEFT_TOP,
+                fit(p, title, &bold(14.5), room),
+                bold(14.5),
+                pal().text,
+            );
+            if !sub.is_empty() {
+                let f = text_font(12.0);
+                p.text(pos2(tx, r.top() + 20.0), Align2::LEFT_TOP, fit(p, sub, &f, room), f, pal().dim);
+            }
+            ui.add_space(8.0);
+            add(ui);
+        });
+}
+
+/// A thin line between rows.
+fn sep(ui: &mut Ui) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal().grid));
+}
+
+fn texts(ui: &Ui, label: &str, hint: &str, w: f32) -> (Arc<Galley>, Option<Arc<Galley>>, f32) {
+    let p = ui.painter();
+    let lg = p.layout(label.to_string(), text_font(13.5), pal().text, w);
+    let hg = (!hint.is_empty()).then(|| p.layout(hint.to_string(), text_font(12.0), pal().faint, w));
+    let h = lg.size().y + hg.as_ref().map_or(0.0, |g| g.size().y + 2.0);
+    (lg, hg, h)
+}
+
+/// A row: the label (and a hint under it) on the left, `cw` px for the control on
+/// the right. A clickable row lights up under the mouse. The row and the control's rect.
+fn row(ui: &mut Ui, label: &str, hint: &str, cw: f32, sense: Sense) -> (Response, Rect) {
+    let w = ui.available_width();
+    let lw = if cw > 0.0 { (w - cw - 16.0).max(60.0) } else { w };
+    let (lg, hg, text_h) = texts(ui, label, hint, lw);
+    let h = (text_h + 18.0).max(ROW_H);
+    let (r, resp) = ui.allocate_exact_size(vec2(w, h), sense);
+    let p = ui.painter();
+    if sense.senses_click() && resp.hovered() && ui.is_enabled() {
+        p.rect_filled(r.expand2(vec2(10.0, -2.0)), 8.0, alpha(pal().card_hi, 130));
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    let mut y = r.center().y - text_h / 2.0;
+    let lh = lg.size().y;
+    p.galley(pos2(r.left(), y), lg, pal().text);
+    y += lh + 2.0;
+    if let Some(g) = hg {
+        p.galley(pos2(r.left(), y), g, pal().faint);
+    }
+    (resp, Rect::from_min_max(pos2(r.right() - cw, r.top()), r.max))
+}
+
+/// Widgets in `r`, laid out from the right.
+fn place<R>(ui: &mut Ui, r: Rect, id: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let mut child =
+        ui.new_child(UiBuilder::new().id_salt(id).max_rect(r).layout(Layout::right_to_left(Align::Center)));
+    child.spacing_mut().item_spacing = vec2(8.0, 0.0);
+    add(&mut child)
+}
+
+/// An on/off row: a click anywhere on it flips the switch. True when flipped.
+fn toggle(ui: &mut Ui, label: &str, hint: &str, on: &mut bool) -> bool {
+    let active = ui.is_enabled();
+    let (resp, ctrl) = row(ui, label, hint, 44.0, if active { Sense::click() } else { Sense::hover() });
+    let flipped = active && resp.clicked();
+    if flipped {
+        *on = !*on;
+    }
+    let sw = Rect::from_center_size(pos2(ctrl.right() - 20.0, ctrl.center().y), vec2(40.0, 22.0));
+    switch(ui, ui.painter(), sw, *on, resp.id);
+    flipped
+}
+
+fn seg_widths(ui: &Ui, items: &[String]) -> (Vec<f32>, f32) {
+    let widths: Vec<f32> = items.iter().map(|t| text_w(ui.painter(), t, bold(12.5)) + 22.0).collect();
+    let total = widths.iter().sum::<f32>() + 6.0;
+    (widths, total)
+}
+
+/// A segmented switch where the layout puts it; the clicked item.
+fn seg(ui: &mut Ui, items: &[String], selected: Option<usize>, id: &str) -> Option<usize> {
+    let (widths, total) = seg_widths(ui, items);
+    let (outer, _) = ui.allocate_exact_size(vec2(total, 30.0), Sense::hover());
+    let active = ui.is_enabled();
+    let p = ui.painter().clone();
+    p.rect_filled(outer, 8.0, pal().bg);
+    p.rect_stroke(outer, 8.0, Stroke::new(1.0, pal().border), StrokeKind::Inside);
+    let mut x = outer.left() + 3.0;
+    let mut clicked = None;
+    for (i, (t, w)) in items.iter().zip(&widths).enumerate() {
+        let r = Rect::from_min_size(pos2(x, outer.top() + 3.0), vec2(*w, 24.0));
+        let sense = if active { Sense::click() } else { Sense::hover() };
+        let resp = ui.interact(r, ui.scope_id().with((id, i)), sense);
+        let on = selected == Some(i);
+        if on {
+            p.rect_filled(r, 6.0, pal().card_hi);
+            p.rect_stroke(r, 6.0, Stroke::new(1.0, alpha(pal().accent, 110)), StrokeKind::Inside);
+        } else if active && resp.hovered() {
+            p.rect_filled(r, 6.0, alpha(pal().card_hi, 120));
+        }
+        let (col, f) = if on { (pal().text, bold(12.5)) } else { (pal().dim, text_font(12.5)) };
+        p.text(r.center(), Align2::CENTER_CENTER, t, f, col);
+        if active && resp.clicked() {
+            clicked = Some(i);
+        }
+        if active && resp.hovered() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        x += w;
+    }
+    clicked
+}
+
+/// One of a few: the switch beside the label when both fit, under it when not,
+/// and as pills on a window too narrow for the switch. The clicked item.
+fn choice(
+    ui: &mut Ui,
+    label: &str,
+    hint: &str,
+    items: &[String],
+    selected: Option<usize>,
+    id: &str,
+) -> Option<usize> {
+    let (_, sw) = seg_widths(ui, items);
+    let w = ui.available_width();
+    let label_w = text_w(ui.painter(), label, text_font(13.5));
+    if w - sw - 16.0 >= label_w.min(170.0) {
+        let (_, ctrl) = row(ui, label, hint, sw, Sense::hover());
+        return place(ui, ctrl, id, |ui| seg(ui, items, selected, id));
+    }
+    let (lg, hg, text_h) = texts(ui, label, hint, w);
+    let (r, _) = ui.allocate_exact_size(vec2(w, text_h + 18.0), Sense::hover());
+    let p = ui.painter();
+    let lh = lg.size().y;
+    p.galley(pos2(r.left(), r.top() + 12.0), lg, pal().text);
+    if let Some(g) = hg {
+        p.galley(pos2(r.left(), r.top() + 14.0 + lh), g, pal().faint);
+    }
+    let picked = if sw <= w {
+        let (r, _) = ui.allocate_exact_size(vec2(w, 30.0), Sense::hover());
+        let r = Rect::from_min_size(r.min, vec2(sw, 30.0));
+        place(ui, r, id, |ui| seg(ui, items, selected, id))
+    } else {
+        let pills: Vec<(String, bool, bool)> =
+            items.iter().enumerate().map(|(i, t)| (t.clone(), selected == Some(i), true)).collect();
+        chips(ui, &pills, id)
+    };
+    ui.add_space(12.0);
+    picked
+}
+
+/// Pills that turn on and off, wrapping: (text, on, can be clicked). The clicked one.
+fn chips(ui: &mut Ui, items: &[(String, bool, bool)], id: &str) -> Option<usize> {
+    let mut clicked = None;
+    let active = ui.is_enabled();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        for (i, (t, on, can)) in items.iter().enumerate() {
+            let live = active && *can;
+            let tw = text_w(ui.painter(), t, text_font(12.5));
+            let w = tw + if *on { 42.0 } else { 26.0 };
+            let (r, _) = ui.allocate_exact_size(vec2(w, 30.0), Sense::hover());
+            let resp = ui.interact(
+                r,
+                ui.scope_id().with((id, i)),
+                if live { Sense::click() } else { Sense::hover() },
+            );
+            let hover = live && resp.hovered();
+            let (fill, stroke, fg) = match (*on, *can) {
+                (true, true) => {
+                    (alpha(pal().accent, if hover { 56 } else { 36 }), alpha(pal().accent, 150), pal().text)
+                }
+                (true, false) => (alpha(pal().accent, 18), alpha(pal().accent, 70), pal().dim),
+                (false, true) => (if hover { pal().card_hi } else { pal().bg }, pal().border, pal().dim),
+                (false, false) => (pal().bg, pal().grid, pal().faint),
+            };
+            let p = ui.painter();
+            p.rect_filled(r, 15.0, fill);
+            p.rect_stroke(r, 15.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
+            let mut x = r.left() + 13.0;
+            if *on {
+                let c = if *can { pal().accent } else { alpha(pal().accent, 120) };
+                p.text(pos2(x, r.center().y), Align2::LEFT_CENTER, glyph::CHECK, icon_font(11.0), c);
+                x += 16.0;
+            }
+            p.text(pos2(x, r.center().y), Align2::LEFT_CENTER, t, text_font(12.5), fg);
+            if live && resp.clicked() {
+                clicked = Some(i);
+            }
+            if hover {
+                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+            }
+        }
+    });
+    clicked
+}
+
+/// A small text over pills, a hint under a row.
+fn note(ui: &mut Ui, text: &str, top: f32, bottom: f32) {
+    ui.add_space(top);
+    ui.add(egui::Label::new(RichText::new(text).font(text_font(12.0)).color(pal().faint)).wrap());
+    ui.add_space(bottom);
+}
+
+/// A button as wide as its text; true when clicked.
+fn small_button(ui: &mut Ui, text: &str, accent: bool, id: &str) -> bool {
+    let w = text_w(ui.painter(), text, bold(12.0)) + 26.0;
+    let (r, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
+    let clicked = button_at(ui, r, text, accent, false, id);
+    clicked && ui.is_enabled()
+}
+
+/// A slider with its value as "N%"; with `reset`, a "100%" button beside it.
+/// True when the value changed.
+fn slider(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    step: f64,
+    reset: Option<f32>,
+    id: &str,
+) -> bool {
+    let (_, ctrl) = row(ui, label, "", SLIDER_ROW_W, Sense::hover());
+    place(ui, ctrl, id, |ui| {
+        let mut changed = false;
+        match reset {
+            Some(v) => {
+                if small_button(ui, "100%", false, id) && *value != v {
+                    *value = v;
+                    changed = true;
+                }
+            }
+            // the button's room, so the rails stand one under another
+            None => {
+                ui.add_space(text_w(ui.painter(), "100%", bold(12.0)) + 26.0 + ui.spacing().item_spacing.x)
+            }
+        }
+        let t = RichText::new(format!("{:.0}%", value)).font(bold(13.0)).color(pal().text);
+        ui.add_sized(vec2(46.0, 20.0), egui::Label::new(t));
+        ui.spacing_mut().slider_width = SLIDER_W;
+        ui.spacing_mut().slider_rail_height = 6.0;
+        // the rail up to the handle in the accent colour
+        ui.visuals_mut().selection.bg_fill = pal().accent;
+        let s = egui::Slider::new(value, range).step_by(step).show_value(false).trailing_fill(true);
+        changed |= ui.add(s).changed();
+        changed
+    })
+}
+
+/// Turns `key` on or off in a list of keys.
+fn flip(list: &mut Vec<String>, key: &str) {
+    if list.iter().any(|k| k == key) {
+        list.retain(|k| k != key);
+    } else {
+        list.push(key.to_string());
+    }
+}
+
+fn strings(items: &[&str]) -> Vec<String> {
+    items.iter().map(|t| tr(t)).collect()
+}
+
+// ---- the page -----------------------------------------------------------------------------
+
 impl SettingsTab {
     #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
-        ui: &mut egui::Ui,
+        ui: &mut Ui,
         from_widget: Option<&Config>,
         start: Option<&StartInfo>,
         data: Option<&Data>,
@@ -81,323 +391,43 @@ impl SettingsTab {
             return;
         };
         let before = c.clone();
-        let mut action: Option<FromDashboard> = None;
+        let mut env = Env { start, data, action: None };
         let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         if let Some(o) = self.start_offset.take() {
             area = area.vertical_scroll_offset(o);
         }
         area.show(ui, |ui| {
-            ui.set_max_width(640.0);
-
-            ui.spacing_mut().slider_width = 240.0;
-            heading(ui, "Язык / Language");
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(&mut c.lang, "auto".to_string(), tr("Как в Windows"));
-                for (code, name) in pcm_render::format::LANGS {
-                    ui.radio_value(&mut c.lang, code.to_string(), name);
-                }
-            });
-            heading(ui, &tr("Виджет"));
-            ui.checkbox(&mut c.widget, tr("Показывать виджет (Ctrl+Alt+W)"));
-            ui.horizontal(|ui| {
-                ui.label(tr("Вид"));
-                ui.radio_value(&mut c.widget_style, "cards".to_string(), tr("Карточки"));
-                ui.radio_value(&mut c.widget_style, "classic".to_string(), tr("Классический (как в 1.8)"));
-            });
-            ui.checkbox(&mut c.window_light, tr("Светлая тема (окно и виджет «Карточки»)"));
-            ui.checkbox(&mut c.pinned, tr("Закрепить на рабочем столе"));
-            ui.add_enabled(!c.pinned, egui::Checkbox::new(&mut c.topmost, tr("Поверх всех окон")));
-            ui.checkbox(&mut c.compact, tr("Компактный режим"));
-            ui.horizontal(|ui| {
-                ui.label(tr("Размер"));
-                let mut size = c.size as f32;
-                let s = egui::Slider::new(&mut size, config::SIZE_MIN as f32..=config::SIZE_MAX as f32)
-                    .step_by(config::SIZE_STEP as f64)
-                    .fixed_decimals(0)
-                    .suffix("%");
-                if ui.add(s).changed() {
-                    c.size = size as u32;
-                }
-                if ui.button("100%").clicked() {
-                    c.size = 100;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr("Непрозрачность"));
-                let mut a = (c.alpha * 100.0).round();
-                if ui
-                    .add(egui::Slider::new(&mut a, 30.0..=100.0).step_by(5.0).fixed_decimals(0).suffix("%"))
-                    .changed()
-                {
-                    c.alpha = a / 100.0;
-                }
-            });
-            ui.horizontal(|ui| {
-                if ui.button(tr("Обычная форма")).clicked() {
-                    action = Some(FromDashboard::ResetShape);
-                }
-                if ui.button(tr("В правый верхний угол")).clicked() {
-                    action = Some(FromDashboard::ResetPosition);
-                }
-            });
-            hint(
-                ui,
-                &tr("Размер — ещё Ctrl + колёсико над виджетом. Форма — тяни виджет за правый или нижний край."),
-            );
-
-            heading(ui, &tr("Цвета"));
-            ui.horizontal(|ui| {
-                for (key, name) in [("heat", tr("Тепло")), ("neon", tr("Неон")), ("ice", tr("Лёд")), ("custom", tr("Свои"))]
-                {
-                    ui.radio_value(&mut c.theme, key.to_string(), name);
-                }
-            });
-            if c.theme == "custom" {
-                ui.horizontal(|ui| {
-                    for (i, label) in [tr("Малая нагрузка"), tr("Большая нагрузка")].iter().enumerate()
-                    {
-                        ui.label(label.as_str());
-                        let mut rgb = rgb_of(&c.custom_colors[i]);
-                        if ui.color_edit_button_srgb(&mut rgb).changed() {
-                            c.custom_colors[i] = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
-                        }
-                        ui.add_space(12.0);
-                    }
+            let w = ui.available_width().min(MAX_W);
+            ui.set_max_width(w);
+            ui.spacing_mut().item_spacing = vec2(GAP, GAP);
+            if w >= TWO_COLUMNS {
+                ui.columns(2, |cols| {
+                    let (left, right) = cols.split_at_mut(1);
+                    let (l, r) = (&mut left[0], &mut right[0]);
+                    general(l, &mut c);
+                    widget(l, &mut c, &mut env);
+                    sections(l, &mut c);
+                    tray(l, &mut c);
+                    startup(l, &mut c, &mut env);
+                    games(r, &mut c, &mut env);
+                    self.fps_panel(r, &mut c, fonts, theme, theme_key);
+                    alerts(r, &mut c);
+                    self.ping(r, &mut c);
+                    updates(r, &mut c, &mut env);
                 });
+            } else {
+                general(ui, &mut c);
+                widget(ui, &mut c, &mut env);
+                sections(ui, &mut c);
+                tray(ui, &mut c);
+                games(ui, &mut c, &mut env);
+                self.fps_panel(ui, &mut c, fonts, theme, theme_key);
+                alerts(ui, &mut c);
+                self.ping(ui, &mut c);
+                startup(ui, &mut c, &mut env);
+                updates(ui, &mut c, &mut env);
             }
-
-            heading(ui, &tr("Показывать в виджете"));
-            egui::Grid::new("sections").num_columns(2).spacing([24.0, 4.0]).show(ui, |ui| {
-                for (i, (key, name)) in SECTIONS.iter().enumerate() {
-                    let mut on = !c.hidden.iter().any(|h| h == key);
-                    if ui.checkbox(&mut on, tr(name)).changed() {
-                        if on {
-                            c.hidden.retain(|h| h != key);
-                        } else {
-                            c.hidden.push(key.to_string());
-                        }
-                    }
-                    if i % 2 == 1 {
-                        ui.end_row();
-                    }
-                }
-            });
-
-            heading(ui, &tr("Трей и панель задач"));
-            ui.label(RichText::new(trf("Значки в трее (1–{n}):", &[("n", TRAY_MAX.to_string())])).color(pal().dim));
-            ui.horizontal_wrapped(|ui| {
-                for (key, name) in TRAY_KINDS {
-                    let mut on = c.tray.iter().any(|k| k == key);
-                    let full = !on && c.tray.len() >= TRAY_MAX;
-                    let last = on && c.tray.len() == 1;
-                    if ui.add_enabled(!(full || last), egui::Checkbox::new(&mut on, tr(name))).changed() {
-                        if on {
-                            c.tray.push(key.to_string());
-                        } else {
-                            c.tray.retain(|k| k != key);
-                        }
-                    }
-                }
-            });
-            let mut panel = c.taskbar.unwrap_or_else(|| !pcm_win::system::is_windows_11());
-            if ui.checkbox(&mut panel, tr("Мини-панель на панели задач")).changed() {
-                c.taskbar = Some(panel);
-            }
-
-            heading(ui, &tr("Игры"));
-            ui.label(RichText::new(tr("В играх и видео на весь экран виджет:")).color(pal().dim));
-            ui.horizontal(|ui| {
-                for (key, name) in [("hide", tr("прятать")), ("dim", tr("тускнеть")), ("off", tr("ничего"))]
-                {
-                    ui.radio_value(&mut c.in_games, key.to_string(), name);
-                }
-            });
-            ui.checkbox(&mut c.fps, tr("Считать FPS (панель, запись сессий)"));
-            ui.add_enabled_ui(c.fps, |ui| {
-                ui.checkbox(&mut c.fps_panel, tr("Показывать FPS-панель (Ctrl+Alt+F)"));
-                ui.add_enabled_ui(c.fps_panel, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Вид панели"));
-                        for (key, name) in
-                            [("card", tr("карточка")), ("classic", tr("как в 1.8")), ("line", tr("строка"))]
-                        {
-                            ui.radio_value(&mut c.fps_style, key.to_string(), name);
-                        }
-                    });
-                    ui.label(RichText::new(tr("Кроме FPS показывать:")).color(pal().dim));
-                    ui.horizontal_wrapped(|ui| {
-                        for (key, name) in FPS_ROWS {
-                            let mut on = c.fps_rows.iter().any(|r| r == key);
-                            if ui.checkbox(&mut on, tr(name)).changed() {
-                                if on {
-                                    c.fps_rows.push(key.to_string());
-                                } else {
-                                    c.fps_rows.retain(|r| r != key);
-                                }
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Угол панели"));
-                        for (key, name) in [
-                            ("tl", tr("слева вверху")),
-                            ("tr", tr("справа вверху")),
-                            ("bl", tr("слева внизу")),
-                            ("br", tr("справа внизу")),
-                        ] {
-                            ui.radio_value(&mut c.fps_corner, key.to_string(), name);
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Размер панели"));
-                        let mut size = c.fps_size as f32;
-                        let range = config::FPS_SIZE_MIN as f32..=config::FPS_SIZE_MAX as f32;
-                        let s = egui::Slider::new(&mut size, range).step_by(5.0).fixed_decimals(0).suffix("%");
-                        if ui.add(s).changed() {
-                            c.fps_size = size as u32;
-                        }
-                        if ui.button("100%").clicked() {
-                            c.fps_size = 100;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Фон панели"));
-                        let mut a = (c.fps_bg * 100.0).round();
-                        let range = (config::FPS_BG_MIN * 100.0)..=100.0;
-                        let s = egui::Slider::new(&mut a, range).step_by(5.0).fixed_decimals(0).suffix("%");
-                        if ui.add(s).changed() {
-                            c.fps_bg = a / 100.0;
-                        }
-                    });
-                    hint(ui, &tr("Пример — так панель будет выглядеть поверх игры:"));
-                    self.show_preview(ui, &c, fonts, theme, theme_key);
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr("Профиль"));
-                ui.radio_value(&mut c.profile, "work".to_string(), tr("Работа"));
-                ui.radio_value(&mut c.profile, "game".to_string(), tr("Игра"));
-                if ui.button(tr("Запомнить текущий вид")).clicked() {
-                    action = Some(FromDashboard::SaveProfile);
-                }
-            });
-            ui.checkbox(&mut c.auto_game, tr("Включать «Игру», когда запущена игра"));
-
-            heading(ui, &tr("Предупреждения"));
-            ui.checkbox(&mut c.alerts, tr("Показывать предупреждения"));
-            ui.checkbox(&mut c.quiet_games, tr("Во время игры — показать после неё"));
-            ui.add_enabled_ui(c.alerts, |ui| {
-                let limits: [(&str, &mut u32, [u32; 4], &str); 4] = [
-                    (&tr("Перегрев CPU от"), &mut c.alert_temp, [80, 85, 90, 95], "°"),
-                    (&tr("Память занята от"), &mut c.alert_ram, [80, 85, 90, 95], "%"),
-                    (&tr("Батарея ниже"), &mut c.alert_battery, [10, 15, 20, 30], "%"),
-                    (&tr("Свободно на диске C: меньше"), &mut c.alert_disk, [5, 10, 15, 20], "%"),
-                ];
-                for (title, value, choices, unit) in limits {
-                    ui.horizontal(|ui| {
-                        ui.label(title);
-                        for v in choices {
-                            ui.radio_value(value, v, format!("{v}{unit}"));
-                        }
-                    });
-                }
-            });
-
-            heading(ui, &tr("Пинг"));
-            ui.horizontal(|ui| {
-                for (host, name) in PING_PRESETS {
-                    if ui.radio(c.ping_host == host, format!("{host} ({name})")).clicked() {
-                        c.ping_host = host.to_string();
-                        self.host_text.clear();
-                    }
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr("Свой адрес:"));
-                let r = ui.add(egui::TextEdit::singleline(&mut self.host_text).desired_width(200.0));
-                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if ui.button("OK").clicked() || enter {
-                    match config::clean_host(&self.host_text) {
-                        Some(h) => {
-                            c.ping_host = h.clone();
-                            self.host_text = h;
-                            self.host_bad = false;
-                        }
-                        None => self.host_bad = true,
-                    }
-                }
-            });
-            if self.host_bad {
-                ui.label(
-                    RichText::new(tr("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).")).color(pal().hot),
-                );
-            }
-
-            heading(ui, &tr("Закрытие окна"));
-            ui.radio_value(
-                &mut c.close_quits,
-                false,
-                tr("Крестик закрывает только окно: виджет, значки в трее и мини-панель работают дальше"),
-            );
-            ui.radio_value(&mut c.close_quits, true, tr("Крестик полностью закрывает программу"));
-            hint(ui, &tr("Выйти совсем можно через «Выход» в меню значка в трее."));
-
-            heading(ui, &tr("Запуск"));
-            if let Some(st) = start {
-                let mut auto = st.autostart;
-                if ui.checkbox(&mut auto, tr("Запускать вместе с Windows")).changed() {
-                    action = Some(FromDashboard::SetAutostart(auto));
-                }
-                if st.helper {
-                    let mut admin = c.run_as_admin;
-                    if ui.checkbox(&mut admin, tr("Права администратора (температуры)")).changed() {
-                        c.run_as_admin = admin;
-                        // the widget asks UAC: its prompt may come up in front of this window
-                        allow_foreground();
-                        action = Some(FromDashboard::SetAdmin(admin));
-                    }
-                    hint(ui, &tr("Нужны для температур и напряжений CPU. Windows будет спрашивать разрешение при запуске, кроме автозапуска: он идёт без вопроса из копии в Program Files."));
-                    hint(
-                        ui,
-                        &tr(if st.admin {
-                            "Сейчас работает с правами администратора."
-                        } else {
-                            "Сейчас работает без прав администратора."
-                        }),
-                    );
-                }
-            }
-            heading(ui, &tr("Обновления"));
-            ui.checkbox(&mut c.check_updates, tr("Проверять обновления"));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("PC Monitor {}", crate::APP_VERSION)).color(pal().dim));
-                if ui.button(tr("Проверить сейчас")).clicked() {
-                    action = Some(FromDashboard::CheckUpdates);
-                }
-            });
-            if let Some(d) = data
-                && let Some(v) = &d.update
-            {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(trf("Вышла версия {v}", &[("v", v.clone())])).color(pal().text).strong());
-                    match &d.update_state {
-                        Some(UpdateState::Download(f)) => {
-                            let text = trf("скачиваю {p}%", &[("p", format!("{:.0}", f * 100.0))]);
-                            ui.add(egui::ProgressBar::new(*f).desired_width(220.0).fill(TEAL).text(text));
-                        }
-                        Some(UpdateState::Install) => {
-                            ui.label(tr("устанавливаю…"));
-                        }
-                        None => {
-                            let label = if d.update_auto { tr("Обновить") } else { tr("Открыть страницу загрузки") };
-                            if ui.button(label).clicked() {
-                                action = Some(FromDashboard::StartUpdate);
-                            }
-                        }
-                    }
-                });
-            }
-            ui.add_space(12.0);
+            ui.add_space(4.0);
         });
         if c != before {
             c.sanitize();
@@ -405,18 +435,120 @@ impl SettingsTab {
             send(&FromDashboard::SetConfig(Box::new(c.clone())));
         }
         self.edit = Some(c);
-        if let Some(a) = action {
+        if let Some(a) = env.action {
             send(&a);
         }
     }
-}
 
-impl SettingsTab {
+    /// The FPS panel: on or off, its look, rows, corner, size, background and a sample.
+    fn fps_panel(
+        &mut self,
+        ui: &mut Ui,
+        c: &mut Config,
+        fonts: &mut Fonts,
+        theme: Option<&Theme>,
+        key: &str,
+    ) {
+        card(
+            ui,
+            glyph::FPS,
+            &tr("FPS-панель"),
+            &tr("Поверх игры: FPS и что ещё выбрано"),
+            |ui| {
+                ui.add_enabled_ui(c.fps, |ui| {
+                    toggle(ui, &tr("Показывать FPS-панель (Ctrl+Alt+F)"), "", &mut c.fps_panel);
+                    ui.add_enabled_ui(c.fps_panel, |ui| {
+                        sep(ui);
+                        let looks = ["card", "classic", "line"];
+                        let at = looks.iter().position(|k| *k == c.fps_style);
+                        let items = strings(&["карточка", "как в 1.8", "строка"]);
+                        if let Some(i) = choice(ui, &tr("Вид панели"), "", &items, at, "fps-look") {
+                            c.fps_style = looks[i].to_string();
+                        }
+                        sep(ui);
+                        note(ui, &tr("Кроме FPS показывать:"), 10.0, 8.0);
+                        let pills: Vec<(String, bool, bool)> = FPS_ROWS
+                            .iter()
+                            .map(|(k, n)| (tr(n), c.fps_rows.iter().any(|r| r == k), true))
+                            .collect();
+                        if let Some(i) = chips(ui, &pills, "fps-rows") {
+                            flip(&mut c.fps_rows, FPS_ROWS[i].0);
+                        }
+                        ui.add_space(12.0);
+                        sep(ui);
+                        let corners = ["tl", "tr", "bl", "br"];
+                        let at = corners.iter().position(|k| *k == c.fps_corner);
+                        let items =
+                            strings(&["слева вверху", "справа вверху", "слева внизу", "справа внизу"]);
+                        if let Some(i) = choice(ui, &tr("Угол панели"), "", &items, at, "fps-corner")
+                        {
+                            c.fps_corner = corners[i].to_string();
+                        }
+                        sep(ui);
+                        let mut size = c.fps_size as f32;
+                        let range = config::FPS_SIZE_MIN as f32..=config::FPS_SIZE_MAX as f32;
+                        if slider(ui, &tr("Размер панели"), &mut size, range, 5.0, Some(100.0), "fps-size")
+                        {
+                            c.fps_size = size as u32;
+                        }
+                        sep(ui);
+                        let mut a = (c.fps_bg * 100.0).round();
+                        let range = (config::FPS_BG_MIN * 100.0)..=100.0;
+                        if slider(ui, &tr("Фон панели"), &mut a, range, 5.0, None, "fps-bg") {
+                            c.fps_bg = a / 100.0;
+                        }
+                        sep(ui);
+                        note(ui, &tr("Пример — так панель будет выглядеть поверх игры:"), 10.0, 8.0);
+                        self.show_preview(ui, c, fonts, theme, key);
+                        ui.add_space(10.0);
+                    });
+                });
+            },
+        );
+    }
+
+    /// Where the ping goes: a preset or an address of one's own.
+    fn ping(&mut self, ui: &mut Ui, c: &mut Config) {
+        card(ui, icon::NET, &tr("Пинг"), &tr("Куда отправлять пинг"), |ui| {
+            let items: Vec<String> = PING_PRESETS.iter().map(|(h, n)| format!("{h} ({n})")).collect();
+            let at = PING_PRESETS.iter().position(|(h, _)| *h == c.ping_host);
+            if let Some(i) = choice(ui, &tr("Сервер"), "", &items, at, "ping-preset") {
+                c.ping_host = PING_PRESETS[i].0.to_string();
+                self.host_text.clear();
+                self.host_bad = false;
+            }
+            sep(ui);
+            let (_, ctrl) = row(ui, &tr("Свой адрес:"), "", 260.0, Sense::hover());
+            let ok = place(ui, ctrl, "ping-host", |ui| {
+                let ok = small_button(ui, "OK", false, "ping-ok");
+                let edit =
+                    egui::TextEdit::singleline(&mut self.host_text).id_salt("ping-host").desired_width(190.0);
+                let r = ui.add(edit);
+                ok || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+            });
+            if ok {
+                match config::clean_host(&self.host_text) {
+                    Some(h) => {
+                        c.ping_host = h.clone();
+                        self.host_text = h;
+                        self.host_bad = false;
+                    }
+                    None => self.host_bad = true,
+                }
+            }
+            if self.host_bad {
+                let t = tr("Это не похоже на адрес (пример: eu.battle.net или 8.8.4.4).");
+                ui.add(egui::Label::new(RichText::new(t).font(text_font(12.0)).color(pal().hot)).wrap());
+                ui.add_space(10.0);
+            }
+        });
+    }
+
     /// The FPS panel as the settings stand, over a made-up game picture;
     /// drawn again only when something it shows changes.
     fn show_preview(
         &mut self,
-        ui: &mut egui::Ui,
+        ui: &mut Ui,
         c: &Config,
         fonts: &mut Fonts,
         theme: Option<&Theme>,
@@ -446,10 +578,336 @@ impl SettingsTab {
             self.preview_key = key;
         }
         if let Some(t) = &self.preview {
-            let size = t.size_vec2() / ppp;
+            let mut size = t.size_vec2() / ppp;
+            let room = ui.available_width();
+            if size.x > room {
+                size *= room / size.x;
+            }
             ui.add(egui::Image::new((t.id(), size)).corner_radius(8.0));
         }
     }
+}
+
+// ---- the cards ----------------------------------------------------------------------------
+
+/// The language and the colours of the values.
+fn general(ui: &mut Ui, c: &mut Config) {
+    card(ui, glyph::GLOBE, &tr("Общие"), &tr("Язык и цвета значений"), |ui| {
+        let mut codes = vec!["auto"];
+        let mut items = vec![tr("Как в Windows")];
+        for (code, name) in pcm_render::format::LANGS {
+            codes.push(code);
+            items.push(name.to_string());
+        }
+        let at = codes.iter().position(|k| *k == c.lang);
+        if let Some(i) = choice(ui, "Язык / Language", "", &items, at, "lang") {
+            c.lang = codes[i].to_string();
+        }
+        sep(ui);
+        let themes = ["heat", "neon", "ice", "custom"];
+        let at = themes.iter().position(|k| *k == c.theme);
+        let items = strings(&["Тепло", "Неон", "Лёд", "Свои"]);
+        if let Some(i) = choice(ui, &tr("Цвета"), "", &items, at, "colours") {
+            c.theme = themes[i].to_string();
+        }
+        if c.theme == "custom" {
+            for (i, label) in [tr("Малая нагрузка"), tr("Большая нагрузка")].iter().enumerate()
+            {
+                sep(ui);
+                let (_, ctrl) = row(ui, label, "", 60.0, Sense::hover());
+                place(ui, ctrl, &format!("colour-{i}"), |ui| {
+                    let mut rgb = rgb_of(&c.custom_colors[i]);
+                    if ui.color_edit_button_srgb(&mut rgb).changed() {
+                        c.custom_colors[i] = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+                    }
+                });
+            }
+        }
+    });
+}
+
+/// The widget: shown or not, its look, its place, size and opacity.
+fn widget(ui: &mut Ui, c: &mut Config, env: &mut Env) {
+    card(
+        ui,
+        glyph::WIDGET,
+        &tr("Виджет"),
+        &tr("Окно со значениями на рабочем столе"),
+        |ui| {
+            toggle(ui, &tr("Показывать виджет (Ctrl+Alt+W)"), "", &mut c.widget);
+            sep(ui);
+            let looks = ["cards", "classic"];
+            let at = looks.iter().position(|k| *k == c.widget_style);
+            let items = strings(&["Карточки", "Классический (как в 1.8)"]);
+            if let Some(i) = choice(ui, &tr("Вид"), "", &items, at, "widget-look") {
+                c.widget_style = looks[i].to_string();
+            }
+            sep(ui);
+            toggle(ui, &tr("Светлая тема (окно и виджет «Карточки»)"), "", &mut c.window_light);
+            sep(ui);
+            toggle(ui, &tr("Закрепить на рабочем столе"), "", &mut c.pinned);
+            sep(ui);
+            ui.add_enabled_ui(!c.pinned, |ui| toggle(ui, &tr("Поверх всех окон"), "", &mut c.topmost));
+            sep(ui);
+            toggle(ui, &tr("Компактный режим"), "", &mut c.compact);
+            sep(ui);
+            let mut size = c.size as f32;
+            let range = config::SIZE_MIN as f32..=config::SIZE_MAX as f32;
+            if slider(
+                ui,
+                &tr("Размер"),
+                &mut size,
+                range,
+                config::SIZE_STEP as f64,
+                Some(100.0),
+                "widget-size",
+            ) {
+                c.size = size as u32;
+            }
+            sep(ui);
+            let mut a = (c.alpha * 100.0).round();
+            if slider(ui, &tr("Непрозрачность"), &mut a, 30.0..=100.0, 5.0, None, "widget-alpha")
+            {
+                c.alpha = a / 100.0;
+            }
+            sep(ui);
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if small_button(ui, &tr("Обычная форма"), false, "shape") {
+                    env.action = Some(FromDashboard::ResetShape);
+                }
+                if small_button(ui, &tr("В правый верхний угол"), false, "corner") {
+                    env.action = Some(FromDashboard::ResetPosition);
+                }
+            });
+            note(
+                ui,
+                &tr(
+                    "Размер — ещё Ctrl + колёсико над виджетом. Форма — тяни виджет за правый или нижний край.",
+                ),
+                8.0,
+                10.0,
+            );
+        },
+    );
+}
+
+/// What the widget shows: a pill per section.
+fn sections(ui: &mut Ui, c: &mut Config) {
+    card(
+        ui,
+        glyph::EYE,
+        &tr("Показывать в виджете"),
+        &tr("Нажми, чтобы скрыть или показать"),
+        |ui| {
+            ui.add_space(4.0);
+            let pills: Vec<(String, bool, bool)> =
+                SECTIONS.iter().map(|(k, n)| (tr(n), !c.hidden.iter().any(|h| h == k), true)).collect();
+            if let Some(i) = chips(ui, &pills, "sections") {
+                flip(&mut c.hidden, SECTIONS[i].0);
+            }
+            ui.add_space(12.0);
+        },
+    );
+}
+
+/// The tray's icons (one to three) and the taskbar's mini panel.
+fn tray(ui: &mut Ui, c: &mut Config) {
+    card(
+        ui,
+        glyph::TRAY,
+        &tr("Трей и панель задач"),
+        &tr("Значки у часов и мини-панель"),
+        |ui| {
+            note(ui, &trf("Значки в трее (1–{n}):", &[("n", TRAY_MAX.to_string())]), 4.0, 8.0);
+            let pills: Vec<(String, bool, bool)> = TRAY_KINDS
+                .iter()
+                .map(|(k, n)| {
+                    let on = c.tray.iter().any(|t| t == k);
+                    // at most TRAY_MAX, at least one
+                    let can = if on { c.tray.len() > 1 } else { c.tray.len() < TRAY_MAX };
+                    (tr(n), on, can)
+                })
+                .collect();
+            if let Some(i) = chips(ui, &pills, "tray") {
+                flip(&mut c.tray, TRAY_KINDS[i].0);
+            }
+            ui.add_space(12.0);
+            sep(ui);
+            let mut panel = c.taskbar.unwrap_or_else(|| !pcm_win::system::is_windows_11());
+            if toggle(ui, &tr("Мини-панель на панели задач"), "", &mut panel) {
+                c.taskbar = Some(panel);
+            }
+        },
+    );
+}
+
+/// In games: what the widget does, counting FPS, the profile.
+fn games(ui: &mut Ui, c: &mut Config, env: &mut Env) {
+    card(
+        ui,
+        icon::GAME,
+        &tr("Игры"),
+        &tr("Что делать, когда запущена игра"),
+        |ui| {
+            let modes = ["hide", "dim", "off"];
+            let at = modes.iter().position(|k| *k == c.in_games);
+            let items = strings(&["прятать", "тускнеть", "ничего"]);
+            if let Some(i) =
+                choice(ui, &tr("В играх и видео на весь экран виджет:"), "", &items, at, "in-games")
+            {
+                c.in_games = modes[i].to_string();
+            }
+            sep(ui);
+            toggle(ui, &tr("Считать FPS (панель, запись сессий)"), "", &mut c.fps);
+            sep(ui);
+            let profiles = ["work", "game"];
+            let at = profiles.iter().position(|k| *k == c.profile);
+            let items = strings(&["Работа", "Игра"]);
+            let save = tr("Запомнить текущий вид");
+            let cw = seg_widths(ui, &items).1 + 8.0 + text_w(ui.painter(), &save, bold(12.0)) + 26.0;
+            let (_, ctrl) = row(ui, &tr("Профиль"), "", cw, Sense::hover());
+            place(ui, ctrl, "profile", |ui| {
+                if small_button(ui, &save, false, "save-profile") {
+                    env.action = Some(FromDashboard::SaveProfile);
+                }
+                if let Some(i) = seg(ui, &items, at, "profile") {
+                    c.profile = profiles[i].to_string();
+                }
+            });
+            sep(ui);
+            toggle(ui, &tr("Включать «Игру», когда запущена игра"), "", &mut c.auto_game);
+        },
+    );
+}
+
+/// The alerts and their limits.
+fn alerts(ui: &mut Ui, c: &mut Config) {
+    card(
+        ui,
+        glyph::ALERT,
+        &tr("Предупреждения"),
+        &tr("Когда предупредить"),
+        |ui| {
+            toggle(ui, &tr("Показывать предупреждения"), "", &mut c.alerts);
+            sep(ui);
+            toggle(ui, &tr("Во время игры — показать после неё"), "", &mut c.quiet_games);
+            ui.add_enabled_ui(c.alerts, |ui| {
+                let limits: [(String, &mut u32, [u32; 4], &str, &str); 4] = [
+                    (tr("Перегрев CPU от"), &mut c.alert_temp, [80, 85, 90, 95], "°", "alert-temp"),
+                    (tr("Память занята от"), &mut c.alert_ram, [80, 85, 90, 95], "%", "alert-ram"),
+                    (tr("Батарея ниже"), &mut c.alert_battery, [10, 15, 20, 30], "%", "alert-battery"),
+                    (
+                        tr("Свободно на диске C: меньше"),
+                        &mut c.alert_disk,
+                        [5, 10, 15, 20],
+                        "%",
+                        "alert-disk",
+                    ),
+                ];
+                for (title, value, options, unit, id) in limits {
+                    sep(ui);
+                    let items: Vec<String> = options.iter().map(|v| format!("{v}{unit}")).collect();
+                    let at = options.iter().position(|v| *v == *value);
+                    if let Some(i) = choice(ui, &title, "", &items, at, id) {
+                        *value = options[i];
+                    }
+                }
+            });
+        },
+    );
+}
+
+/// Starting with Windows, the administrator's rights, what the window's × does.
+fn startup(ui: &mut Ui, c: &mut Config, env: &mut Env) {
+    card(
+        ui,
+        glyph::START,
+        &tr("Запуск и закрытие"),
+        &tr("Автозапуск, права и крестик окна"),
+        |ui| {
+            if let Some(st) = env.start {
+                let mut auto = st.autostart;
+                if toggle(ui, &tr("Запускать вместе с Windows"), "", &mut auto) {
+                    env.action = Some(FromDashboard::SetAutostart(auto));
+                }
+                sep(ui);
+                if st.helper {
+                    let hint = format!(
+                        "{}\n{}",
+                        tr(
+                            "Нужны для температур и напряжений CPU. Windows будет спрашивать разрешение при запуске, кроме автозапуска: он идёт без вопроса из копии в Program Files."
+                        ),
+                        tr(if st.admin {
+                            "Сейчас работает с правами администратора."
+                        } else {
+                            "Сейчас работает без прав администратора."
+                        })
+                    );
+                    let mut admin = c.run_as_admin;
+                    if toggle(ui, &tr("Права администратора (температуры)"), &hint, &mut admin)
+                    {
+                        c.run_as_admin = admin;
+                        // the widget asks UAC: its prompt may come up in front of this window
+                        allow_foreground();
+                        env.action = Some(FromDashboard::SetAdmin(admin));
+                    }
+                    sep(ui);
+                }
+            }
+            let hint = if c.close_quits {
+                String::new()
+            } else {
+                format!(
+                    "{}\n{}",
+                    tr("Крестик закрывает только окно: виджет, значки в трее и мини-панель работают дальше"),
+                    tr("Выйти совсем можно через «Выход» в меню значка в трее.")
+                )
+            };
+            toggle(ui, &tr("Крестик полностью закрывает программу"), &hint, &mut c.close_quits);
+        },
+    );
+}
+
+/// Checking for updates, and a new version when there is one.
+fn updates(ui: &mut Ui, c: &mut Config, env: &mut Env) {
+    let version = format!("PC Monitor {}", crate::APP_VERSION);
+    card(ui, glyph::UPDATE, &tr("Обновления"), &version, |ui| {
+        toggle(ui, &tr("Проверять обновления"), "", &mut c.check_updates);
+        sep(ui);
+        ui.add_space(10.0);
+        if small_button(ui, &tr("Проверить сейчас"), false, "check-now") {
+            env.action = Some(FromDashboard::CheckUpdates);
+        }
+        ui.add_space(10.0);
+        if let Some(d) = env.data
+            && let Some(v) = &d.update
+        {
+            sep(ui);
+            let label = trf("Вышла версия {v}", &[("v", v.clone())]);
+            let (_, ctrl) = row(ui, &label, "", 240.0, Sense::hover());
+            place(ui, ctrl, "update", |ui| match &d.update_state {
+                Some(UpdateState::Download(f)) => {
+                    let text = trf("скачиваю {p}%", &[("p", format!("{:.0}", f * 100.0))]);
+                    ui.add(egui::ProgressBar::new(*f).desired_width(220.0).fill(pal().accent).text(text));
+                }
+                Some(UpdateState::Install) => {
+                    ui.label(RichText::new(tr("устанавливаю…")).font(text_font(13.0)).color(pal().dim));
+                }
+                None => {
+                    let label = if d.update_auto {
+                        tr("Обновить")
+                    } else {
+                        tr("Открыть страницу загрузки")
+                    };
+                    if small_button(ui, &label, true, "update-now") {
+                        env.action = Some(FromDashboard::StartUpdate);
+                    }
+                }
+            });
+        }
+        ui.add_space(4.0);
+    });
 }
 
 /// Any process may take the foreground from us now (the widget's UAC prompt).
