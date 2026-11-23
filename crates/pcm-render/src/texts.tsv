@@ -519,3 +519,4 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 Открыть историю	Open History	Відкрити історію	Verlauf öffnen
 Открыть отчёт	Open the report	Відкрити звіт	Bericht öffnen
 {name}: {time}, в среднем {fps} FPS, 1% low {low}.	{name}: {time}, {fps} FPS on average, 1% low {low}.	{name}: {time}, у середньому {fps} FPS, 1% low {low}.	{name}: {time}, im Schnitt {fps} FPS, 1% Low {low}.
+Найти настройку (Ctrl+F)	Find a setting (Ctrl+F)	Знайти налаштування (Ctrl+F)	Einstellung suchen (Strg+F)

@@ -284,7 +284,10 @@ impl Dashboard {
         if step > 0 {
             self.tab = (self.tab + step) % TABS.len();
         }
-        if find {
+        // Ctrl+F: the settings' search on Settings, else the programs'
+        if find && self.tab == TAB_SETTINGS {
+            self.settings.focus_search = true;
+        } else if find {
             self.tab = TAB_PROCS;
             self.procs.focus_search = true;
         }
@@ -989,6 +992,10 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
             // test runs: the home page in its edit mode (PCM_HOME_EDIT=1)
             if std::env::var_os("PCM_HOME_EDIT").is_some() {
                 d.home.start_editing();
+            }
+            // and the settings searched (PCM_SETTINGS_SEARCH=text)
+            if let Ok(q) = std::env::var("PCM_SETTINGS_SEARCH") {
+                d.settings.search_for(q);
             }
             d.quit_on_close = !offscreen && screenshot.is_none();
             d.shot = screenshot.map(|p| (p, None));

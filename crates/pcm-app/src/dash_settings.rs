@@ -60,6 +60,10 @@ pub struct SettingsTab {
     host_bad: bool,
     /// `--scroll N` (screenshots of the lower sections): start scrolled down.
     pub start_offset: Option<f32>,
+    /// "Найти настройку".
+    search: String,
+    /// Ctrl+F: the search gets the keyboard on the next frame.
+    pub focus_search: bool,
     /// The FPS panel over a made-up game, and what it was drawn for.
     preview: Option<egui::TextureHandle>,
     preview_key: String,
@@ -81,7 +85,95 @@ fn rgb_of(hex: &str) -> [u8; 3] {
 /// How long a card that was jumped to stays outlined.
 const JUMP_GLOW: Duration = Duration::from_millis(1600);
 
+/// The cards, as the page lays them out, and what each holds (untranslated):
+/// the contents line and the search look here.
+const INDEX: &[(&str, &[&str])] = &[
+    (
+        "Общие",
+        &["Язык", "Language", "Цвета", "Малая нагрузка", "Большая нагрузка", "Тепло", "Неон", "Лёд", "Свои"],
+    ),
+    (
+        "Виджет",
+        &[
+            "Показывать виджет (Ctrl+Alt+W)",
+            "Вид",
+            "Карточки",
+            "Светлая тема (окно и виджет «Карточки»)",
+            "Масштаб окна",
+            "Закрепить на рабочем столе",
+            "Поверх всех окон",
+            "Компактный режим",
+            "Размер",
+            "Непрозрачность",
+        ],
+    ),
+    (
+        "Показывать в виджете",
+        &[
+            "Ядра",
+            "Память",
+            "Видеокарта",
+            "Диски",
+            "Температура",
+            "Сеть",
+            "График сети",
+            "Пинг",
+            "Чтение и запись диска",
+            "Износ батареи",
+            "Здоровье SSD",
+            "Вентиляторы",
+            "Время без перезагрузки",
+        ],
+    ),
+    ("Трей и панель задач", &["Значки у часов и мини-панель", "Мини-панель на панели задач"]),
+    (
+        "Запуск и закрытие",
+        &[
+            "Запускать вместе с Windows",
+            "Права администратора (температуры)",
+            "Крестик полностью закрывает программу",
+        ],
+    ),
+    (
+        "Игры",
+        &[
+            "В играх и видео на весь экран виджет:",
+            "Считать FPS (панель, запись сессий)",
+            "Профиль",
+            "Включать «Игру», когда запущена игра",
+            "Игровой режим",
+        ],
+    ),
+    (
+        "FPS-панель",
+        &[
+            "Показывать FPS-панель (Ctrl+Alt+F)",
+            "Вид панели",
+            "Кроме FPS показывать:",
+            "Угол панели",
+            "Размер панели",
+            "Фон панели",
+        ],
+    ),
+    (
+        "Предупреждения",
+        &[
+            "Показывать предупреждения",
+            "Во время игры — показать после неё",
+            "Итоги недели",
+            "Перегрев CPU от",
+            "Память занята от",
+            "Батарея ниже",
+            "Свободно на диске C: меньше",
+        ],
+    ),
+    ("Пинг", &["Куда отправлять пинг", "Сервер", "Свой адрес:"]),
+    ("Обновления", &["Проверять обновления", "Проверить сейчас"]),
+];
+
 thread_local! {
+    /// What the search asks for, lower case ("" shows every card).
+    static SEARCH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     /// The card to bring into view (its title), when that was asked, and
     /// whether it has been scrolled to.
     static JUMP: std::cell::RefCell<Option<(String, Instant, bool)>> = const { std::cell::RefCell::new(None) };
@@ -93,8 +185,23 @@ pub fn jump_to(title: String) {
     JUMP.with(|j| *j.borrow_mut() = Some((title, Instant::now(), false)));
 }
 
+/// Does the search find the card titled `title` (translated) or one of its
+/// rows? Russian words match in any language.
+fn found(title: &str) -> bool {
+    let q = SEARCH.with(|s| s.borrow().clone());
+    if q.is_empty() {
+        return true;
+    }
+    let hit = |t: &str| t.to_lowercase().contains(&q) || tr(t).to_lowercase().contains(&q);
+    title.to_lowercase().contains(&q)
+        || INDEX.iter().filter(|(k, _)| tr(k) == title).any(|(k, rows)| hit(k) || rows.iter().any(|r| hit(r)))
+}
+
 /// A card: the icon in its box, the title and a line under it, then the rows.
 fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
+    if !found(title) {
+        return;
+    }
     let shown = egui::Frame::new()
         .fill(pal().card)
         .stroke(Stroke::new(1.0, pal().border))
@@ -433,6 +540,37 @@ impl SettingsTab {
         };
         let before = c.clone();
         let mut env = Env { start, data, action: None };
+        // the search, and the cards as a line of pills that jump to them
+        ui.horizontal(|ui| {
+            let field = ui.add_sized(
+                vec2(280.0, 30.0),
+                egui::TextEdit::singleline(&mut self.search)
+                    .hint_text(tr("Найти настройку (Ctrl+F)"))
+                    .margin(vec2(10.0, 7.0)),
+            );
+            if std::mem::take(&mut self.focus_search) {
+                field.request_focus();
+            }
+            if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.search.clear();
+            }
+            if !self.search.is_empty() && ui.button("✕").clicked() {
+                self.search.clear();
+            }
+        });
+        let query = self.search.trim().to_lowercase();
+        SEARCH.with(|s| *s.borrow_mut() = query.clone());
+        if query.is_empty() {
+            ui.add_space(4.0);
+            let pills: Vec<(String, bool, bool)> = INDEX.iter().map(|(t, _)| (tr(t), false, true)).collect();
+            if let Some(i) = chips(ui, &pills, "settings-toc") {
+                jump_to(tr(INDEX[i].0));
+            }
+        } else if !INDEX.iter().any(|(t, _)| found(&tr(t))) {
+            ui.add_space(12.0);
+            ui.label(RichText::new(tr("Ничего не найдено")).color(pal().dim));
+        }
+        ui.add_space(GAP / 2.0);
         let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         if let Some(o) = self.start_offset.take() {
             area = area.vertical_scroll_offset(o);
@@ -479,6 +617,11 @@ impl SettingsTab {
         if let Some(a) = env.action {
             send(&a);
         }
+    }
+
+    /// Start with `text` in the search (test runs' screenshots).
+    pub fn search_for(&mut self, text: String) {
+        self.search = text;
     }
 
     /// The FPS panel: on or off, its look, rows, corner, size, background and a sample.
