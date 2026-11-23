@@ -71,6 +71,25 @@ struct Stats {
     cpu_t_peak: Option<f32>,
     /// Seconds the time axis covers.
     span: f32,
+    /// Seconds the processor was held back (throttle.rs), and when: from,
+    /// to (s), heat (else power).
+    throttle: pcm_core::throttle::Totals,
+    throttle_runs: Vec<(f32, f32, bool)>,
+}
+
+/// The stretches of throttling, a second's gap closing one.
+fn throttle_runs(samples: &[pcm_core::session::Sample]) -> Vec<(f32, f32, bool)> {
+    use pcm_core::throttle::{Cause, check};
+    let mut runs: Vec<(f32, f32, bool)> = Vec::new();
+    for x in samples {
+        let Some(th) = check(x.limit, x.cpu_t, x.cpu) else { continue };
+        let heat = th.cause == Cause::Heat;
+        match runs.last_mut() {
+            Some(r) if r.2 == heat && x.t - r.1 <= 1.5 => r.1 = x.t,
+            _ => runs.push((x.t - 1.0, x.t, heat)),
+        }
+    }
+    runs
 }
 
 fn quartiles(mut v: Vec<f32>) -> Option<(f32, f32)> {
@@ -129,13 +148,17 @@ fn stats(s: &Session) -> Stats {
         gpu_t_peak: peak(pick(|x| x.gpu_t)),
         cpu_t_peak: peak(pick(|x| x.cpu_t)),
         span,
+        throttle: pcm_core::throttle::totals(&info.samples),
+        throttle_runs: throttle_runs(&info.samples),
     }
 }
 
-/// "23 мин 17 с", "1 ч 05 мин"
+/// "31 с", "23 мин 17 с", "1 ч 05 мин"
 fn long_time(s: f64) -> String {
     let s = s.max(0.0) as u64;
-    if s >= 3600 {
+    if s < 60 {
+        trf("{v} с", &[("v", s.to_string())])
+    } else if s >= 3600 {
         trf("{h} ч {m} мин", &[("h", (s / 3600).to_string()), ("m", format!("{:02}", s / 60 % 60))])
     } else {
         trf("{m} мин {s} с", &[("m", (s / 60).to_string()), ("s", (s % 60).to_string())])
@@ -186,6 +209,8 @@ pub struct ReportPage {
     delete_armed: Option<Instant>,
     /// Came from the home page: "← Главная".
     pub from_home: bool,
+    /// Test runs' screenshots of the lower part (PCM_REPORT_SCROLL=px).
+    start_offset: Option<f32>,
 }
 
 impl ReportPage {
@@ -202,6 +227,7 @@ impl ReportPage {
             compare: None,
             delete_armed: None,
             from_home: false,
+            start_offset: std::env::var("PCM_REPORT_SCROLL").ok().and_then(|v| v.parse().ok()),
         })
     }
 
@@ -223,7 +249,11 @@ impl ReportPage {
             self.delete_armed = None;
         }
         let mut action = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        if let Some(o) = self.start_offset.take() {
+            area = area.vertical_scroll_offset(o);
+        }
+        area.show(ui, |ui| {
             let w = ui.available_width();
             if let Some(a) = self.header(ui, w, others) {
                 action = Some(a);
@@ -613,7 +643,20 @@ impl ReportPage {
                 "°C",
             ),
         ] {
-            frame(&p, rects[k], &title, &tr("сплошная — видеокарта, пунктир — процессор"));
+            let note = if k == 3 && !self.stats.throttle_runs.is_empty() {
+                tr("сплошная — видеокарта, пунктир — процессор, полосы — троттлинг")
+            } else {
+                tr("сплошная — видеокарта, пунктир — процессор")
+            };
+            frame(&p, rects[k], &title, &note);
+            if k == 3 {
+                // throttling: red from heat, yellow from the power plan
+                for &(t0, t1, heat) in &self.stats.throttle_runs {
+                    let (x0, x1) = (at(t0, &plots[k]), at(t1, &plots[k]).max(at(t0, &plots[k]) + 2.0));
+                    let col = if heat { alpha(pal().hot, 56) } else { alpha(pal().warn, 44) };
+                    p.rect_filled(Rect::from_x_y_ranges(x0..=x1, plots[k].y_range()), 0.0, col);
+                }
+            }
             grid(
                 &p,
                 plots[k],
@@ -728,7 +771,14 @@ impl ReportPage {
         // what limits the FPS
         let (verdict, bars) = self.verdict(&info);
         let text_g = p.layout(verdict, text_font(12.5), pal().text, inner);
-        let stut = self.stutter_line();
+        let stut = match (self.stutter_line(), self.throttle_line()) {
+            (Some(a), Some(b)) => Some(format!(
+                "{a}
+
+{b}"
+            )),
+            (a, b) => a.or(b),
+        };
         let stut_g = stut.as_ref().map(|t| p.layout(t.clone(), text_font(12.5), pal().text, inner));
         let h1 = 50.0
             + bars.len() as f32 * 44.0
@@ -873,6 +923,29 @@ impl ReportPage {
             )
         };
         (text, bars)
+    }
+
+    /// "Процессор перегревался и сбрасывал частоту: 3 мин 20 с, Windows урезала его до 70%."
+    fn throttle_line(&self) -> Option<String> {
+        let t = self.stats.throttle;
+        let mut out = Vec::new();
+        if t.heat_s > 0 {
+            let time = long_time(t.heat_s as f64);
+            out.push(match t.heat_limit {
+                Some(l) => trf(
+                    "Процессор перегревался и сбрасывал частоту: {time}, Windows урезала его до {l}%.",
+                    &[("time", time), ("l", format!("{l:.0}"))],
+                ),
+                None => trf("Процессор перегревался и сбрасывал частоту: {time}.", &[("time", time)]),
+            });
+        }
+        if t.power_s > 0 {
+            out.push(trf(
+                "Режим питания ограничивал процессор: {time} (батарея или экономия энергии).",
+                &[("time", long_time(t.power_s as f64))],
+            ));
+        }
+        (!out.is_empty()).then(|| out.join(" "))
     }
 
     /// "12 подтормаживаний длиннее 25 мс, 9 из них — в первые 2 минуты."

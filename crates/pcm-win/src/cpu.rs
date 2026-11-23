@@ -1,5 +1,8 @@
 //! CPU load per core and the current clock, as Task Manager shows them:
 //! "% Processor Utility" and "% Processor Performance" x "Processor Frequency".
+//! Also "% Performance Limit": how much of its nominal performance Windows
+//! lets the processor give (below 100 when overheating, a power budget or
+//! the power plan holds it back).
 
 use crate::pdh::{Counter, Query};
 
@@ -9,6 +12,7 @@ pub struct CpuReader {
     cores: Counter,
     performance: Option<Counter>,
     frequency: Option<Counter>,
+    limit: Option<Counter>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -16,6 +20,8 @@ pub struct CpuLoad {
     pub load: Option<f32>,
     pub per_core: Vec<f32>,
     pub clock_mhz: Option<f32>,
+    /// "% Performance Limit": 100 = not held back.
+    pub limit: Option<f32>,
 }
 
 /// "0,11" -> (0, 11); "_Total" and "0,_Total" -> None.
@@ -35,8 +41,9 @@ impl CpuReader {
         })?;
         let performance = query.add(r"\Processor Information(_Total)\% Processor Performance");
         let frequency = query.add(r"\Processor Information(_Total)\Processor Frequency");
+        let limit = query.add(r"\Processor Information(_Total)\% Performance Limit");
         query.collect();
-        Some(CpuReader { query, total, cores, performance, frequency })
+        Some(CpuReader { query, total, cores, performance, frequency, limit })
     }
 
     /// Load since the last call (or since new()).
@@ -59,6 +66,7 @@ impl CpuReader {
             load: self.total.value().map(|v| v.clamp(0.0, 100.0) as f32),
             per_core: cores.into_iter().map(|(_, v)| v).collect(),
             clock_mhz: clock,
+            limit: self.limit.and_then(|c| c.value()).filter(|v| *v > 0.0).map(|v| v.min(100.0) as f32),
         }
     }
 }

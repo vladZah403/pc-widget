@@ -77,6 +77,8 @@ pub struct Data {
     pub cores: Vec<f32>,
     pub cpu_name: String,
     pub cpu_clock_ghz: Option<f32>,
+    /// Windows' "% Performance Limit" of the processor (100: not held back).
+    pub cpu_limit: Option<f32>,
     pub cpu_power_w: Option<f32>,
     pub ram_pct: f32,
     pub ram_used: u64,

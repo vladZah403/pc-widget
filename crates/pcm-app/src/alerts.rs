@@ -100,6 +100,23 @@ impl Alerts {
                 hot: true,
             }));
         }
+        // throttling from heat (a power-plan limit on battery is no news)
+        let th = pcm_core::throttle::check(d.cpu_limit, d.temp_cpu, Some(d.cpu));
+        let heat = th.is_some_and(|t| t.cause == pcm_core::throttle::Cause::Heat);
+        fired.extend(self.rule(now, "throttle", heat, th.is_none(), pcm_core::throttle::HOLD_S, || {
+            let t = d.temp_cpu.map_or("?".into(), |t| format!("{t:.0}"));
+            let body = match th.and_then(|t| t.limit) {
+                Some(l) => trf(
+                    "Перегрев ({t}°): Windows урезала процессор до {l}%. Проверь, не забиты ли решётки, поставь ноутбук на твёрдую поверхность.",
+                    &[("t", t), ("l", format!("{l:.0}"))],
+                ),
+                None => trf(
+                    "Процессор у предела температуры ({t}°) и сбрасывает частоту. Проверь, не забиты ли решётки, поставь ноутбук на твёрдую поверхность.",
+                    &[("t", t)],
+                ),
+            };
+            Alert { title: tr("Процессор сбрасывает частоту"), body, hot: true }
+        }));
         if let Some(t) = d.temp_gpu {
             let body =
                 trf("GPU {t}°. Понизь настройки графики или ограничь FPS.", &[("t", format!("{t:.0}"))]);
@@ -223,6 +240,22 @@ mod tests {
         a.check(720.0, &data(80.0), &LIMITS, "C:", false, none);
         a.check(721.0, &data(95.0), &LIMITS, "C:", false, none);
         assert!(a.check(726.0, &data(95.0), &LIMITS, "C:", false, none).is_some());
+    }
+
+    #[test]
+    fn throttling_from_heat_not_from_the_power_plan() {
+        let mut a = Alerts::default();
+        // busy and held back to 70% at 88° (under the 90° overheating alert): after 10 s
+        let hot = Data { cpu: 80.0, cpu_limit: Some(70.0), temp_cpu: Some(88.0), ..Data::default() };
+        assert!(a.check(0.0, &hot, &LIMITS, "C:", false, || None).is_none());
+        let al = a.check(10.0, &hot, &LIMITS, "C:", false, || None).unwrap();
+        assert_eq!(al.title, "Процессор сбрасывает частоту");
+        assert!(al.body.contains("88°") && al.body.contains("70%"), "{}", al.body);
+        // the power plan on battery holds it back while it is cool: no alert
+        let mut a = Alerts::default();
+        let saver = Data { cpu: 80.0, cpu_limit: Some(60.0), temp_cpu: Some(55.0), ..Data::default() };
+        a.check(0.0, &saver, &LIMITS, "C:", false, || None);
+        assert!(a.check(30.0, &saver, &LIMITS, "C:", false, || None).is_none());
     }
 
     #[test]

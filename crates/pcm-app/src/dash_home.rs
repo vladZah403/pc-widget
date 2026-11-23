@@ -488,6 +488,15 @@ impl HomeTab {
             let approx = if d.temp_cpu_approx { "≈" } else { "" };
             line.push((format!("{approx}{t:.0}°C"), rgb(sc.heat(t))));
         }
+        // held back right now: from heat red, by the power plan yellow
+        if let Some(th) = pcm_core::throttle::check(d.cpu_limit, d.temp_cpu, Some(d.cpu)) {
+            let col = if th.cause == pcm_core::throttle::Cause::Heat { pal().hot } else { pal().warn };
+            let text = match th.limit {
+                Some(l) => trf("урезан до {l}%", &[("l", format!("{l:.0}"))]),
+                None => tr("сбрасывает частоту"),
+            };
+            line.push((text, col));
+        }
         cards.push(Card {
             icon: icon::CPU,
             title: tr("Процессор"),

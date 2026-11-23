@@ -173,6 +173,7 @@ impl Recorder {
             cpu_t: d.temp_cpu,
             gpu_t: d.temp_gpu,
             ram: Some(d.ram_pct),
+            limit: d.cpu_limit.filter(|l| *l < 99.5),
         });
     }
 

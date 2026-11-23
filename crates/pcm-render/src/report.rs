@@ -420,6 +420,7 @@ pub fn sample_session() -> Session {
                 cpu_t: Some(58.0 + f / 12.0),
                 gpu_t: Some(55.0 + f / 10.0),
                 ram: Some(52.0),
+                limit: None,
             }
         })
         .collect();

@@ -57,6 +57,8 @@ pub struct Cpu {
     pub load: Option<f32>,
     pub per_core: Vec<f32>,
     pub clock_mhz: Option<f32>,
+    /// Windows' "% Performance Limit" (100: not held back).
+    pub limit: Option<f32>,
     pub temp: Option<Temp>,
     pub power_w: Option<f32>,
     pub voltage_v: Option<f32>,

@@ -29,6 +29,10 @@ pub struct Sample {
     pub cpu_t: Option<f32>,
     pub gpu_t: Option<f32>,
     pub ram: Option<f32>,
+    /// Windows' "% Performance Limit" of the processor, only when it held
+    /// it back (below 99.5): see throttle.rs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

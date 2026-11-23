@@ -124,6 +124,7 @@ fn run(shared: Arc<Shared>) {
             s.cpu.load = l.load;
             s.cpu.per_core = l.per_core;
             s.cpu.clock_mhz = l.clock_mhz;
+            s.cpu.limit = l.limit;
         }
         s.cpu.temp = zones.as_ref().and_then(|z| z.read());
         s.memory = memory::read();
@@ -226,6 +227,7 @@ fn run(shared: Arc<Shared>) {
             cores: s.cpu.per_core.clone(),
             cpu_name: cpu_name.clone(),
             cpu_clock_ghz: s.cpu.clock_mhz.map(|m| m / 1000.0),
+            cpu_limit: s.cpu.limit,
             cpu_power_w: s.cpu.power_w,
             ram_pct: s.memory.map_or(0.0, |m| m.percent()),
             ram_used: s.memory.map_or(0, |m| m.used),
