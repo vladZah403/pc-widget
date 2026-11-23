@@ -1848,6 +1848,20 @@ impl App {
             ("bl", tr("Слева снизу")),
             ("br", tr("Справа снизу")),
         ];
+        // the menu in the window's colours, with an icon beside each command
+        // and submenu (the switches keep their check marks)
+        pcm_win::menus::set_dark(!self.cfg.window_light);
+        let icon_px = unsafe {
+            let dpi = windows_sys::Win32::UI::HiDpi::GetDpiForWindow(self.hwnd).max(96);
+            windows_sys::Win32::UI::HiDpi::GetSystemMetricsForDpi(SM_CXSMICON, dpi)
+        };
+        let ink = if self.cfg.window_light { (70, 72, 78) } else { (205, 208, 214) };
+        let mut bitmaps = Vec::new();
+        let mut icon = |menu: HMENU, glyph: &str| {
+            let b = pcm_win::menus::glyph_bitmap(glyph, icon_px, ink);
+            pcm_win::menus::icon_on_last(menu as isize, b);
+            bitmaps.extend(b);
+        };
         unsafe {
             let m = CreatePopupMenu();
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
@@ -1857,7 +1871,9 @@ impl App {
                 tr("Показать виджет (Ctrl+Alt+W)")
             };
             AppendMenuW(m, MF_STRING | MF_DEFAULT, DASHBOARD, wide(&tr("Открыть PC Monitor")).as_ptr());
+            icon(m, "\u{E8A7}");
             AppendMenuW(m, MF_STRING, WIDGET, wide(&widget_text).as_ptr());
+            icon(m, "\u{E8A9}");
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(
                 m,
@@ -1872,6 +1888,7 @@ impl App {
                 AppendMenuW(tm, MF_STRING | check(self.cfg.theme == *key), THEME + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, tm as usize, wide(&tr("Цвета")).as_ptr());
+            icon(m, "\u{E790}");
             let sm = CreatePopupMenu();
             for (i, s) in sizes.iter().enumerate() {
                 AppendMenuW(
@@ -1882,6 +1899,7 @@ impl App {
                 );
             }
             AppendMenuW(m, MF_POPUP, sm as usize, wide(&tr("Размер")).as_ptr());
+            icon(m, "\u{E740}");
             let am = CreatePopupMenu();
             let alpha_now = (self.cfg.alpha * 100.0).round() as u32;
             for (i, a) in alphas.iter().enumerate() {
@@ -1889,17 +1907,20 @@ impl App {
                 AppendMenuW(am, MF_STRING | on, ALPHA + i, wide(&format!("{a}%")).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, am as usize, wide(&tr("Непрозрачность")).as_ptr());
+            icon(m, "\u{E706}");
             let rm = CreatePopupMenu();
             for (i, (key, name)) in config::SECTIONS.iter().enumerate() {
                 let on = check(!self.cfg.hidden.iter().any(|h| h == key));
                 AppendMenuW(rm, MF_STRING | on, ROWS + i, wide(&tr(name)).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, rm as usize, wide(&tr("Показывать")).as_ptr());
+            icon(m, "\u{E890}");
             let gm = CreatePopupMenu();
             for (i, (key, name)) in games.iter().enumerate() {
                 AppendMenuW(gm, MF_STRING | check(self.cfg.in_games == *key), GAMES + i, wide(name).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, gm as usize, wide(&tr("В играх и видео на весь экран")).as_ptr());
+            icon(m, "\u{E7FC}");
             let pm = CreatePopupMenu();
             for (i, (key, name)) in [("work", tr("Работа")), ("game", tr("Игра"))].iter().enumerate()
             {
@@ -1914,6 +1935,7 @@ impl App {
             let auto_text = wide(&tr("Включать «Игру», когда запущена игра"));
             AppendMenuW(pm, MF_STRING | check(self.cfg.auto_game), AUTO_GAME, auto_text.as_ptr());
             AppendMenuW(m, MF_POPUP, pm as usize, wide(&tr("Профиль")).as_ptr());
+            icon(m, "\u{E77B}");
             let fm = CreatePopupMenu();
             if let Some(game) = self.recorder.game() {
                 // which game is being recorded (a line to read, not a command)
@@ -1949,6 +1971,7 @@ impl App {
                 );
             }
             AppendMenuW(m, MF_POPUP, fm as usize, wide(&tr("FPS в играх")).as_ptr());
+            icon(m, "\u{E9D2}");
             let trm = CreatePopupMenu();
             for (i, (key, name)) in tray::KINDS.iter().enumerate() {
                 let on = self.cfg.tray.iter().any(|k| k == key);
@@ -1959,6 +1982,7 @@ impl App {
                 AppendMenuW(trm, flags, TRAY + i, wide(&tr(name)).as_ptr());
             }
             AppendMenuW(m, MF_POPUP, trm as usize, wide(&tr("Значки в трее")).as_ptr());
+            icon(m, "\u{E7C4}");
             AppendMenuW(m, MF_STRING | check(self.cfg.alerts), ALERTS, wide(&tr("Предупреждения")).as_ptr());
             AppendMenuW(
                 m,
@@ -1968,12 +1992,16 @@ impl App {
             );
             AppendMenuW(m, MF_SEPARATOR, 0, null());
             AppendMenuW(m, MF_STRING, CLOSE, wide(&tr("Выход")).as_ptr());
+            icon(m, "\u{E7E8}");
             let mut pt = POINT::default();
             GetCursorPos(&mut pt);
             SetForegroundWindow(self.hwnd);
             let cmd =
                 TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, self.hwnd, null()) as usize;
             DestroyMenu(m);
+            for b in bitmaps {
+                windows_sys::Win32::Graphics::Gdi::DeleteObject(b);
+            }
             match cmd {
                 COMPACT => self.cfg.compact = !self.cfg.compact,
                 FPS => {
