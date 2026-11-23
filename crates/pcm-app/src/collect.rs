@@ -208,8 +208,9 @@ fn run(shared: Arc<Shared>) {
                 want_procs.then(|| list.iter().take(5).map(|g| (g.name.clone(), g.cpu, g.memory)).collect());
             proc_count = want_all.then(|| list.iter().map(|g| g.pids.len() as u32).sum());
             let all: Option<Vec<ProcRow>> = want_all.then(|| {
+                // the 80 busiest, and any other program that uses the network
+                // (a download can take little CPU)
                 list.iter()
-                    .take(80)
                     .map(|g| ProcRow {
                         name: g.name.clone(),
                         cpu: g.cpu,
@@ -220,6 +221,9 @@ fn run(shared: Arc<Shared>) {
                             bytes as f64 / net_dt
                         }),
                     })
+                    .enumerate()
+                    .filter(|(i, r)| *i < 80 || r.net.is_some_and(|n| n >= 1024.0))
+                    .map(|(_, r)| r)
                     .collect()
             });
             (top, all)
