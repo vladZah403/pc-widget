@@ -421,11 +421,12 @@ impl ReportPage {
                 if list.is_empty() {
                     ui.label(egui::RichText::new(tr("Других сессий пока нет")).color(pal().dim));
                 }
-                for (_, i) in list.iter().take(15) {
+                for (q, i) in list.iter().take(15) {
                     let n = if i.title.trim().is_empty() { &i.game } else { &i.title };
                     let t = format!("{} · {} · {:.0} FPS", short_when(&i.started), n, i.summary.avg_fps);
                     if ui.selectable_label(false, t).clicked() {
-                        chosen = Some(i.clone());
+                        // the list keeps a thinned header: the comparison wants every second
+                        chosen = Some(Session::load_info(q).unwrap_or_else(|_| i.clone()));
                     }
                 }
             });

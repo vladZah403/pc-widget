@@ -17,6 +17,8 @@ use pcm_render::theme::Theme;
 use pcm_render::format::{tr, trf};
 
 const RELOAD: Duration = Duration::from_secs(10);
+/// Samples a listed session keeps (its sparkline; the report reads them all).
+const LIST_SAMPLES: usize = 160;
 
 #[derive(Default)]
 pub struct SessionsTab {
@@ -85,7 +87,8 @@ impl SessionsTab {
             if let Some(found) = old.iter().find(|(q, _)| *q == p) {
                 self.list.push(found.clone());
             } else if let Ok(info) = Session::load_info(&p) {
-                self.list.push((p, info));
+                // a list needs only a sparkline's worth of samples
+                self.list.push((p, pcm_core::session::thinned(info, LIST_SAMPLES)));
             }
         }
         self.listed = Some(Instant::now());

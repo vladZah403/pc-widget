@@ -249,6 +249,34 @@ impl Session {
     }
 }
 
+/// The header for a list: the samples cut to `keep` (each the average FPS
+/// of its stretch, the rest left out), enough for a sparkline. A 3-hour
+/// session has ~11 000 samples; a list of hundreds of sessions would keep
+/// them all in memory otherwise.
+pub fn thinned(mut info: SessionInfo, keep: usize) -> SessionInfo {
+    let n = info.samples.len();
+    if n <= keep {
+        return info;
+    }
+    if keep == 0 {
+        info.samples = Vec::new();
+        return info;
+    }
+    let all = std::mem::take(&mut info.samples);
+    info.samples = (0..keep)
+        .map(|i| {
+            let part = &all[i * n / keep..((i + 1) * n / keep).max(i * n / keep + 1)];
+            let fps: Vec<f32> = part.iter().filter_map(|s| s.fps).collect();
+            Sample {
+                t: part[part.len() - 1].t,
+                fps: (!fps.is_empty()).then(|| fps.iter().sum::<f32>() / fps.len() as f32),
+                ..Sample::default()
+            }
+        })
+        .collect();
+    info
+}
+
 /// Frames longer than this are stutters in the report: twice the median,
 /// at least 25 ms (at 200 FPS a 10 ms frame is no stutter one can see).
 pub fn stutter_ms(median_ms: f64) -> f32 {
@@ -381,6 +409,22 @@ mod tests {
         let bytes = s.encode().unwrap();
         assert!(bytes.len() < 2_000_000, "{} bytes", bytes.len());
         assert_eq!(Session::decode(&bytes).unwrap().frame_ms.len(), 518_399);
+    }
+
+    #[test]
+    fn thinned_for_lists() {
+        let info = SessionInfo {
+            samples: (1..=1000)
+                .map(|i| Sample { t: i as f32, fps: Some((i % 2) as f32 * 100.0), ..Default::default() })
+                .collect(),
+            ..Default::default()
+        };
+        let t = thinned(info.clone(), 100);
+        assert_eq!(t.samples.len(), 100);
+        assert_eq!(t.samples[0].fps, Some(50.0), "the average of its stretch");
+        assert_eq!(t.samples[99].t, 1000.0);
+        assert!(thinned(info.clone(), 0).samples.is_empty());
+        assert_eq!(thinned(info, 5000).samples.len(), 1000, "short ones stay");
     }
 
     #[test]

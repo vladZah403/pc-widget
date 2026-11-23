@@ -111,8 +111,12 @@ impl HistoryTab {
         files.retain(|p| p.extension().is_some_and(|e| e == ext));
         files.sort();
         if files != self.session_files {
-            self.sessions =
-                files.iter().filter_map(|p| pcm_core::session::Session::load_info(p).ok()).collect();
+            // only the summaries are needed here
+            self.sessions = files
+                .iter()
+                .filter_map(|p| pcm_core::session::Session::load_info(p).ok())
+                .map(|i| pcm_core::session::thinned(i, 0))
+                .collect();
             self.session_files = files;
         }
     }
