@@ -539,3 +539,4 @@ FPS-панель	FPS panel	FPS-панель	FPS-Panel
 FPS как обычно	FPS as usual	FPS як зазвичай	FPS wie üblich
 FPS выше обычного на {v}%	FPS {v}% above usual	FPS вище звичайного на {v}%	FPS {v} % über dem Üblichen
 FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче звичайного на {v}%	FPS {v} % unter dem Üblichen
+Трафик программ Windows даёт только с правами администратора: Настройки → Запуск и закрытие	Windows gives programs' traffic only with admin rights: Settings → Startup and closing	Трафік програм Windows дає лише з правами адміністратора: Налаштування → Запуск і закриття	Den Datenverkehr der Programme gibt Windows nur mit Administratorrechten heraus: Einstellungen → Start und Beenden

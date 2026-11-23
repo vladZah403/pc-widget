@@ -16,6 +16,7 @@ pub mod icons;
 pub mod memory;
 pub mod menus;
 pub mod net;
+pub mod nettraffic;
 pub mod nvme;
 pub mod pdh;
 pub mod ping;

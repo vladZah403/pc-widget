@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui::{Align2, CursorIcon, Rect, RichText, Sense, Stroke, pos2, vec2};
 use pcm_core::processes::can_close;
-use pcm_render::format::{dec, fmt_mem, tr};
+use pcm_render::format::{dec, fmt_mem, fmt_speed, tr};
 use pcm_render::theme::Scale;
 use pcm_render::widget::ProcRow;
 
@@ -27,6 +27,7 @@ enum Sort {
     #[default]
     Cpu,
     Memory,
+    Net,
     Count,
     Name,
 }
@@ -63,6 +64,7 @@ impl ProcsTab {
         match self.sort {
             Sort::Cpu => rows.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory))),
             Sort::Memory => rows.sort_by_key(|r| std::cmp::Reverse(r.memory)),
+            Sort::Net => rows.sort_by(|a, b| b.net.unwrap_or(0.0).total_cmp(&a.net.unwrap_or(0.0))),
             Sort::Count => rows.sort_by_key(|r| std::cmp::Reverse(r.count)),
             Sort::Name => rows.sort_by_key(|r| r.name.to_lowercase()),
         }
@@ -120,15 +122,25 @@ impl ProcsTab {
             let right = card.right() - 18.0;
             let btn_w = 128.0;
             let count_x = right - btn_w - 20.0; // right edge of "Процессов"
-            let mem_x = count_x - 250.0; // left edge of the memory column
+            // the network column when there's room for it
+            let show_net = card.width() >= 860.0;
+            let net_x = count_x - 200.0; // left edge of the network column
+            let mem_x = if show_net { net_x - 190.0 } else { count_x - 250.0 }; // left edge of the memory column
             let cpu_x = mem_x - 180.0; // left edge of the CPU column
+            // traffic needs admin rights: without them the column says how to get it
+            let net_known = rows.iter().any(|r| r.net.is_some());
+            let max_net = rows.iter().filter_map(|r| r.net).fold(64.0 * 1024.0, f64::max);
             let head_y = card.top() + 16.0;
             for (text, sort, x, align) in [
                 (tr("Программа"), Sort::Name, left, Align2::LEFT_TOP),
                 ("CPU".to_string(), Sort::Cpu, cpu_x, Align2::LEFT_TOP),
                 (tr("Память"), Sort::Memory, mem_x, Align2::LEFT_TOP),
+                (tr("Сеть"), Sort::Net, net_x, Align2::LEFT_TOP),
                 (tr("Процессов"), Sort::Count, count_x, Align2::RIGHT_TOP),
             ] {
+                if sort == Sort::Net && !show_net {
+                    continue;
+                }
                 let on = self.sort == sort;
                 let label = if on { format!("{text} ▾") } else { text };
                 let font = if on { bold(12.5) } else { text_font(12.5) };
@@ -138,6 +150,13 @@ impl ProcsTab {
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                 }
+                let resp = if sort == Sort::Net && !net_known {
+                    resp.on_hover_text(tr(
+                        "Трафик программ Windows даёт только с правами администратора: Настройки → Запуск и закрытие",
+                    ))
+                } else {
+                    resp
+                };
                 if resp.clicked() {
                     self.sort = sort;
                 }
@@ -188,6 +207,23 @@ impl ProcsTab {
                     r.memory as f32 / max_mem as f32,
                     pal().gpu_line,
                 );
+                // network: received + sent, against the busiest program
+                match r.net.filter(|_| show_net) {
+                    Some(bps) => {
+                        let col = if bps < 1024.0 { pal().faint } else { pal().text };
+                        p.text(pos2(net_x, cy), Align2::LEFT_CENTER, fmt_speed(bps), text_font(13.0), col);
+                        bar(
+                            &p,
+                            Rect::from_min_size(pos2(net_x + 84.0, cy - 2.5), vec2(80.0, 5.0)),
+                            (bps / max_net) as f32,
+                            pal().cpu_line,
+                        );
+                    }
+                    None if show_net => {
+                        p.text(pos2(net_x, cy), Align2::LEFT_CENTER, "—", text_font(13.0), pal().faint);
+                    }
+                    None => {}
+                }
                 p.text(
                     pos2(count_x, cy),
                     Align2::RIGHT_CENTER,

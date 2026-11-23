@@ -90,6 +90,11 @@ fn run(shared: Arc<Shared>) {
     let zones = thermal::ThermalZones::new();
     let mut procs = processes::ProcessReader::default();
     let mut tracker = Tracker::default();
+    // each program's traffic while the process list is wanted (an ETW
+    // session: admin rights); tried once each time the list is opened
+    let mut traffic_session: Option<pcm_win::nettraffic::NetTraffic> = None;
+    let mut net_tried = false;
+    let mut net_at = now_s();
     let threads = system::threads();
     let cpu_name = system::cpu_name().map(|n| short_cpu_name(&n)).unwrap_or_default();
     let helper =
@@ -181,6 +186,17 @@ fn run(shared: Arc<Shared>) {
         let want_all =
             shared.want_procs_all.load(Ordering::Relaxed) || shared.want_top.load(Ordering::Relaxed);
         let mut proc_count = None;
+        if want_all && traffic_session.is_none() && !net_tried {
+            net_tried = true;
+            traffic_session = pcm_win::nettraffic::NetTraffic::start().ok();
+            net_at = now_s();
+        } else if !want_all {
+            traffic_session = None; // stops the session
+            net_tried = false;
+        }
+        let traffic = traffic_session.as_ref().map(|n| n.take());
+        let net_dt = (now_s() - net_at).max(0.5);
+        net_at = now_s();
         let (procs_list, procs_all) = if want_procs || want_all {
             let own = shared.pids.lock().map(|p| p.clone()).unwrap_or_default();
             let list: Vec<_> = tracker
@@ -199,6 +215,10 @@ fn run(shared: Arc<Shared>) {
                         cpu: g.cpu,
                         memory: g.memory,
                         count: g.pids.len() as u32,
+                        net: traffic.as_ref().map(|t| {
+                            let bytes: u64 = g.pids.iter().filter_map(|p| t.get(p)).map(|(r, s)| r + s).sum();
+                            bytes as f64 / net_dt
+                        }),
                     })
                     .collect()
             });

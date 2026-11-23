@@ -59,6 +59,9 @@ pub struct ProcRow {
     pub memory: u64,
     /// How many processes it has.
     pub count: u32,
+    /// Bytes per second it sends and receives (None: unknown, no admin rights).
+    #[serde(default)]
+    pub net: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
