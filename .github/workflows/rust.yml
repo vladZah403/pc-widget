@@ -1,4 +1,4 @@
-# PC Monitor 2.0 (Rust): checks every push to the v2 branch and pull requests.
+# PC Monitor 2.0 (Rust): checks every push to main and v2, and pull requests.
 # fmt, clippy and the tests, then a release build of PC-Monitor.exe and the
 # sensor helper, and `PC-Monitor.exe --diag` on GitHub's Windows machine.
 # A pushed tag v2.* does the same, then publishes a PRE-release with the zip
@@ -9,7 +9,7 @@ name: Rust
 
 on:
   push:
-    branches: [v2]
+    branches: [main, v2]
     tags: ["v2.*"]
   pull_request:
 

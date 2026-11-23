@@ -1,13 +1,12 @@
 # Builds PC-Monitor.zip on GitHub's Windows machines.
-# - every push to main: build + quick start check, zip kept as a run artifact
+# (main is 2.0 since 2.0.0: only 1.x tags are built here)
 # - a pushed tag v*: the same, then a GitHub Release with the zip attached
 #   (notes from docs/releases/<tag>.md, or generated from commits if it's missing)
 name: Build
 
 on:
   push:
-    branches: [main]
-    # 1.x only: 2.0's tags (v2.*) are built by rust.yml
+    # 1.x only: 2.0 (main, v2, tags v2.*) is built by rust.yml
     tags: ["v1.*"]
 
 permissions:
