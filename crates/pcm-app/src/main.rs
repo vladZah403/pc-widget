@@ -45,7 +45,7 @@ pub fn apply_language(setting: &str) {
     pcm_render::format::set_language(code);
 }
 
-/// The version of this build, "2.0.2".
+/// The version of this build, "2.0.3".
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Print to the console that started us (cmd, PowerShell), when there is one
