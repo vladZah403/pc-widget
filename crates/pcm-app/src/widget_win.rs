@@ -1408,6 +1408,7 @@ impl App {
         c.close_quits = new.close_quits;
         c.window_light = new.window_light;
         c.window_zoom = new.window_zoom;
+        c.window_nav_small = new.window_nav_small;
         c.widget_style = new.widget_style;
         c.check_updates = new.check_updates;
         c.weekly = new.weekly;

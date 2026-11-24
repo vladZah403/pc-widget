@@ -104,6 +104,7 @@ const SESSIONS_RELOAD: Duration = Duration::from_secs(15);
 /// Icons from Segoe MDL2 Assets (the "icons" font family).
 pub mod icon {
     pub const HOME: &str = "\u{E80F}";
+    pub const MENU: &str = "\u{E700}";
     pub const HISTORY: &str = "\u{E81C}";
     pub const GAME: &str = "\u{E7FC}";
     pub const LIST: &str = "\u{E8FD}";
@@ -851,7 +852,8 @@ impl HomeTab {
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                 }
-                if self.focus == focus {
+                // the default (the load) stays as it was; another pick is outlined
+                if self.focus == focus && focus != Focus::Load {
                     ui.painter().rect_stroke(
                         cr,
                         12.0,

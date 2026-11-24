@@ -121,6 +121,8 @@ const TABS: [(&str, &str); 6] = [
     ("Настройки", icon::SETTINGS),
 ];
 const NAV_W: f32 = 200.0;
+/// The menu folded to its icons.
+const NAV_SMALL_W: f32 = 64.0;
 const BAR_H: f32 = 56.0;
 const STATUS_H: f32 = 30.0;
 
@@ -405,10 +407,24 @@ impl Dashboard {
     }
 
     /// The pages; at the bottom, which parts of PC Monitor are on.
-    fn nav(&mut self, ui: &mut egui::Ui) {
+    /// The menu: "☰" folds it to its icons (Task Manager's way), the pages,
+    /// then what runs besides the window and the light / dark switch.
+    fn nav(&mut self, ui: &mut egui::Ui, small: bool) {
         let r = ui.max_rect();
         let p = ui.painter().clone();
-        let mut y = r.top() + 16.0;
+        // "☰": fold or unfold
+        let fold = egui::Rect::from_min_size(pos2(r.left() + 12.0, r.top() + 12.0), vec2(40.0, 34.0));
+        let fresp = ui.interact(fold, ui.scope_id().with("nav-fold"), Sense::click());
+        if fresp.hovered() {
+            p.rect_filled(fold, 9.0, pal().card);
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        p.text(fold.center(), Align2::CENTER_CENTER, icon::MENU, icon_font(15.0), pal().dim);
+        let tip = if small { tr("Развернуть меню") } else { tr("Свернуть меню") };
+        if fresp.on_hover_text(tip).clicked() {
+            self.change_config(|c| c.window_nav_small = !small);
+        }
+        let mut y = r.top() + 56.0;
         for (i, (name, glyph)) in TABS.iter().enumerate() {
             let item = egui::Rect::from_min_size(pos2(r.left() + 12.0, y), vec2(r.width() - 24.0, 42.0));
             let resp = ui.interact(item, ui.scope_id().with(("nav", i)), Sense::click());
@@ -419,19 +435,20 @@ impl Dashboard {
                 p.rect_filled(item, 9.0, pal().card);
             }
             let col = if selected { pal().text } else { pal().dim };
-            p.text(
-                pos2(item.left() + 14.0, item.center().y),
-                Align2::LEFT_CENTER,
-                glyph,
-                icon_font(15.0),
-                col,
-            );
-            let font = if selected { bold(14.0) } else { text_font(14.0) };
-            p.text(pos2(item.left() + 42.0, item.center().y), Align2::LEFT_CENTER, tr(name), font, col);
+            let gx = if small { item.center().x } else { item.left() + 14.0 };
+            let ga = if small { Align2::CENTER_CENTER } else { Align2::LEFT_CENTER };
+            p.text(pos2(gx, item.center().y), ga, glyph, icon_font(15.0), col);
+            if !small {
+                let font = if selected { bold(14.0) } else { text_font(14.0) };
+                p.text(pos2(item.left() + 42.0, item.center().y), Align2::LEFT_CENTER, tr(name), font, col);
+            }
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             }
-            if resp.on_hover_text(format!("Ctrl+{}", i + 1)).clicked() {
+            // folded, the tooltip names the page
+            let tip =
+                if small { format!("{} (Ctrl+{})", tr(name), i + 1) } else { format!("Ctrl+{}", i + 1) };
+            if resp.on_hover_text(tip).clicked() {
                 self.tab = i;
             }
             y += 48.0;
@@ -472,24 +489,33 @@ impl Dashboard {
         } else {
             (icon::SUN, tr("Светлая тема"))
         };
-        p.text(
-            pos2(row.left() + 14.0, row.center().y),
-            Align2::LEFT_CENTER,
-            glyph,
-            icon_font(15.0),
-            pal().dim,
-        );
-        p.text(
-            pos2(row.left() + 42.0, row.center().y),
-            Align2::LEFT_CENTER,
-            name,
-            text_font(14.0),
-            pal().dim,
-        );
+        if small {
+            p.text(row.center(), Align2::CENTER_CENTER, glyph, icon_font(15.0), pal().dim);
+        } else {
+            p.text(
+                pos2(row.left() + 14.0, row.center().y),
+                Align2::LEFT_CENTER,
+                glyph,
+                icon_font(15.0),
+                pal().dim,
+            );
+            p.text(
+                pos2(row.left() + 42.0, row.center().y),
+                Align2::LEFT_CENTER,
+                &name,
+                text_font(14.0),
+                pal().dim,
+            );
+        }
+        let look = if small { look.on_hover_text(name) } else { look };
         if look.clicked() {
             self.change_config(|c| c.window_light = !light);
             let ctx = ui.ctx().clone();
             self.set_look(&ctx, !light);
+        }
+        // folded: no room for "Режимы"
+        if small {
+            return;
         }
         let b =
             egui::Rect::from_min_size(pos2(r.left() + 12.0, row.top() - 10.0 - h), vec2(r.width() - 24.0, h));
@@ -865,7 +891,14 @@ impl eframe::App for Dashboard {
             .resizable(false)
             .frame(chrome)
             .show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("nav").exact_size(NAV_W).resizable(false).frame(chrome).show(ui, |ui| self.nav(ui));
+        let small =
+            self.feed.lock().ok().and_then(|f| f.cfg.as_ref().map(|c| c.window_nav_small)).unwrap_or(false);
+        let nav_w = if small { NAV_SMALL_W } else { NAV_W };
+        egui::Panel::left("nav")
+            .exact_size(nav_w)
+            .resizable(false)
+            .frame(chrome)
+            .show(ui, |ui| self.nav(ui, small));
         egui::CentralPanel::no_frame().show(ui, |ui| {
             Frame::new()
                 .fill(pal().bg)

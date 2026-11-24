@@ -174,6 +174,8 @@ pub struct Config {
     pub window_light: bool,
     /// The PC Monitor window's zoom (1 = 100%; Ctrl+plus / Ctrl+minus).
     pub window_zoom: f32,
+    /// The PC Monitor window's menu folded to its icons.
+    pub window_nav_small: bool,
     /// Look for a new version every 6 hours.
     pub check_updates: bool,
     /// The newest version the user has been told about.
@@ -234,6 +236,7 @@ impl Default for Config {
             close_quits: false,
             window_light: false,
             window_zoom: 1.0,
+            window_nav_small: false,
             check_updates: true,
             update_seen: String::new(),
             weekly: true,
