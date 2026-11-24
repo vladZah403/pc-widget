@@ -833,6 +833,11 @@ fn widget(ui: &mut Ui, c: &mut Config, env: &mut Env) {
             sep(ui);
             toggle(ui, &tr("Светлая тема (окно и виджет «Карточки»)"), "", &mut c.window_light);
             sep(ui);
+            if crate::titlebar::mica_available() {
+                let hint = tr("Материал Mica Windows 11 за окном; включится при следующем открытии окна");
+                toggle(ui, &tr("Полупрозрачный фон окна (проба)"), &hint, &mut c.window_mica);
+                sep(ui);
+            }
             let zooms = [0.9f32, 1.0, 1.1, 1.25, 1.5];
             let at = zooms.iter().position(|z| (z - c.window_zoom).abs() < 0.01);
             let items: Vec<String> = zooms.iter().map(|z| format!("{:.0}%", z * 100.0)).collect();

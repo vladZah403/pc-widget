@@ -176,6 +176,9 @@ pub struct Config {
     pub window_zoom: f32,
     /// The PC Monitor window's menu folded to its icons.
     pub window_nav_small: bool,
+    /// The PC Monitor window on Windows 11's Mica material (a trial; the
+    /// window takes it when it opens).
+    pub window_mica: bool,
     /// Look for a new version every 6 hours.
     pub check_updates: bool,
     /// The newest version the user has been told about.
@@ -237,6 +240,7 @@ impl Default for Config {
             window_light: false,
             window_zoom: 1.0,
             window_nav_small: false,
+            window_mica: false,
             check_updates: true,
             update_seen: String::new(),
             weekly: true,

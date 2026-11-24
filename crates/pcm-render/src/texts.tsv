@@ -568,3 +568,5 @@ FPS ниже обычного на {v}%	FPS {v}% below usual	FPS нижче зв
 С запуска PC Monitor: мин {lo} · среднее {avg} · макс {hi}	Since PC Monitor started: min {lo} · average {avg} · max {hi}	З запуску PC Monitor: мін {lo} · середнє {avg} · макс {hi}	Seit dem Start von PC Monitor: min {lo} · Mittel {avg} · max {hi}
 Свернуть меню	Fold the menu	Згорнути меню	Menü einklappen
 Развернуть меню	Unfold the menu	Розгорнути меню	Menü ausklappen
+Полупрозрачный фон окна (проба)	See-through window background (trial)	Напівпрозоре тло вікна (проба)	Durchscheinender Fensterhintergrund (Test)
+Материал Mica Windows 11 за окном; включится при следующем открытии окна	Windows 11's Mica behind the window; it takes effect the next time the window opens	Матеріал Mica Windows 11 за вікном; увімкнеться під час наступного відкриття вікна	Das Mica-Material von Windows 11 hinter dem Fenster; wirkt beim nächsten Öffnen des Fensters

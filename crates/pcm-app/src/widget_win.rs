@@ -1426,6 +1426,7 @@ impl App {
         c.window_light = new.window_light;
         c.window_zoom = new.window_zoom;
         c.window_nav_small = new.window_nav_small;
+        c.window_mica = new.window_mica;
         c.widget_style = new.widget_style;
         c.check_updates = new.check_updates;
         c.weekly = new.weekly;

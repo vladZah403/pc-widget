@@ -205,6 +205,8 @@ struct Dashboard {
     look: Option<bool>,
     /// The logo is on the window (title bar, taskbar).
     icon: bool,
+    /// Windows 11's Mica shows through the window's background and chrome.
+    mica: bool,
     /// The zoom last applied or saved (Ctrl+plus / Ctrl+minus change it).
     zoom: Option<f32>,
     /// The logo in the top bar, drawn for the screen's scale (scale, texture).
@@ -232,6 +234,7 @@ impl Dashboard {
             own_read: (0, None, None),
             look: None,
             icon: false,
+            mica: false,
             logo: None,
             zoom: None,
             quit_on_close: false,
@@ -839,6 +842,16 @@ impl eframe::App for Dashboard {
         }
     }
 
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        // eframe's own otherwise (unseen: every page paints its background)
+        let _ = visuals;
+        if self.mica {
+            [0.0; 4]
+        } else {
+            egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // the look from the settings ("Светлая тема"), the title bar with it
@@ -848,6 +861,9 @@ impl eframe::App for Dashboard {
         }
         if !self.icon {
             crate::icon::set_on_this_thread();
+            if self.mica {
+                crate::titlebar::set_mica();
+            }
             self.icon = true;
         }
         self.keys(&ctx);
@@ -879,8 +895,15 @@ impl eframe::App for Dashboard {
         }
         // the home page lists the busiest programs too
         self.procs.visible(self.tab == TAB_PROCS || self.tab == TAB_HOME);
-        ui.painter().rect_filled(ui.max_rect(), 0.0, pal().bg);
-        let chrome = Frame::new().fill(pal().chrome);
+        // with Mica the material is the background: the page and its chrome
+        // get a light veil of their colours, the cards stay solid
+        let (bg, chrome_fill) = if self.mica {
+            (pal().bg.gamma_multiply(0.35), pal().chrome.gamma_multiply(0.5))
+        } else {
+            (pal().bg, pal().chrome)
+        };
+        ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
+        let chrome = Frame::new().fill(chrome_fill);
         egui::Panel::top("bar")
             .exact_size(BAR_H)
             .resizable(false)
@@ -1011,6 +1034,13 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
     if offscreen {
         viewport = viewport.with_position([-6000.0, -6000.0]).with_active(false);
     }
+    // Mica (Windows 11, "Полупрозрачный фон"): the window must let it through
+    let mica = !offscreen
+        && crate::titlebar::mica_available()
+        && pcm_core::config::Config::load(&crate::widget_win::data_dir().join("config-2.toml")).window_mica;
+    if mica {
+        viewport = viewport.with_transparent(true);
+    }
     let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Glow, ..Default::default() };
     let result = eframe::run_native(
         "PC Monitor",
@@ -1020,6 +1050,7 @@ pub fn run(tab: usize, offscreen: bool, screenshot: Option<String>, scroll: Opti
                 *c = Some(cc.egui_ctx.clone());
             }
             let mut d = Dashboard::new(cc, feed);
+            d.mica = mica;
             d.tab = tab.min(TABS.len() - 1);
             // test runs: open a session's report (PCM_DASH_SESSION=FILE)
             if let Ok(path) = std::env::var("PCM_DASH_SESSION") {

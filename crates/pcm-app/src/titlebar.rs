@@ -6,9 +6,11 @@
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
-    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DwmSetWindowAttribute,
+    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_TEXT_COLOR,
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+use windows_sys::Win32::UI::Controls::MARGINS;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumThreadWindows, GW_OWNER, GetWindow, GetWindowTextLengthW,
 };
@@ -40,6 +42,31 @@ pub fn set_colors(caption: (u8, u8, u8), text: (u8, u8, u8), border: (u8, u8, u8
     }
     unsafe {
         EnumThreadWindows(GetCurrentThreadId(), Some(each), &colors as *const _ as LPARAM);
+    }
+}
+
+/// Windows 11 22H2 and later draw the Mica material behind a window.
+pub fn mica_available() -> bool {
+    pcm_win::system::windows_build().is_some_and(|b| b >= 22621)
+}
+
+/// Mica behind this thread's titled windows: the material through the
+/// whole window (the frame extended over it), DWMSBT_MAINWINDOW.
+pub fn set_mica() {
+    unsafe extern "system" fn each(hwnd: HWND, _: LPARAM) -> i32 {
+        unsafe {
+            if GetWindowTextLengthW(hwnd) > 0 && GetWindow(hwnd, GW_OWNER).is_null() {
+                let margins =
+                    MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
+                DwmExtendFrameIntoClientArea(hwnd, &margins);
+                let mica: u32 = 2; // DWMSBT_MAINWINDOW
+                DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE as u32, &mica as *const u32 as _, 4);
+            }
+        }
+        1
+    }
+    unsafe {
+        EnumThreadWindows(GetCurrentThreadId(), Some(each), 0);
     }
 }
 
