@@ -400,9 +400,28 @@ pub fn hover_card(
     hint: &str,
     light: bool,
 ) -> Option<Pixmap> {
+    hover_card_with(fonts, scale, title, rows, hint, light, None)
+}
+
+/// Height of the hover card's graph of the last minute.
+const HOVER_GRAPH_H: f32 = 40.0;
+
+/// The hover card with the last minute under its lines (iStat Menus' way):
+/// `graph` = the values (0..100, oldest first) and their colour.
+pub fn hover_card_with(
+    fonts: &mut Fonts,
+    scale: f32,
+    title: &str,
+    rows: &[(String, String, Rgb)],
+    hint: &str,
+    light: bool,
+    graph: Option<(&[f32], Rgb)>,
+) -> Option<Pixmap> {
     let ink = if light { LIGHT_INK } else { DARK_INK };
     let row_h = 24.0;
-    let h = 46.0 + rows.len() as f32 * row_h + if hint.is_empty() { 6.0 } else { 30.0 };
+    let graph = graph.filter(|(v, _)| v.len() >= 2);
+    let graph_h = if graph.is_some() { HOVER_GRAPH_H + 10.0 } else { 0.0 };
+    let h = 46.0 + rows.len() as f32 * row_h + graph_h + if hint.is_empty() { 6.0 } else { 30.0 };
     let w = HOVER_W;
     let mut c = Canvas::new((w * scale).round() as u32, (h * scale).round() as u32, scale)?;
     c.rrect(0.0, 0.0, w, h, 12.0, ink.border);
@@ -415,6 +434,27 @@ pub fn hover_card(
         c.text(fonts, PAD, y, &label, Style::Regular, 12.5, ink.dim);
         c.rich(fonts, w - PAD, y, &[part(value.clone(), Style::SemiBold, 12.5, *color)], Align::Right);
         y += row_h;
+    }
+    if let Some((values, col)) = graph {
+        // the last minute: a filled line on a soft track, 0..100
+        let (x0, x1) = (PAD, w - PAD);
+        let (top, bottom) = (y - 6.0, y - 6.0 + HOVER_GRAPH_H);
+        c.rrect(x0, top, x1, bottom, 6.0, ink.track);
+        let n = values.len();
+        let pts: Vec<(f32, f32)> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let x = x0 + 3.0 + (x1 - x0 - 6.0) * i as f32 / (n - 1) as f32;
+                (x, bottom - 3.0 - (bottom - top - 6.0) * (v / 100.0).clamp(0.0, 1.0))
+            })
+            .collect();
+        let mut area = pts.clone();
+        area.push((pts[n - 1].0, bottom - 3.0));
+        area.push((pts[0].0, bottom - 3.0));
+        c.polygon(&area, lerp(ink.track, col, 0.35));
+        c.line(&pts, 1.5, col);
+        y += HOVER_GRAPH_H + 10.0;
     }
     if !hint.is_empty() {
         c.text(fonts, PAD, y + 6.0, hint, Style::Regular, 11.5, ink.faint);

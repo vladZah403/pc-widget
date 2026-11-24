@@ -12,7 +12,7 @@ use crate::text::{Fonts, Style};
 use crate::theme::*;
 
 mod cards_look;
-pub use cards_look::{CARDS_W, COMPACT_W, HOVER_W, hover_card, tray_icon_filled};
+pub use cards_look::{CARDS_W, COMPACT_W, HOVER_W, hover_card, hover_card_with, tray_icon_filled};
 
 pub const PAD: f32 = 16.0;
 pub const WIDTH_STD: f32 = 264.0;

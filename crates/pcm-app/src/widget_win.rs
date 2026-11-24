@@ -16,7 +16,7 @@ use pcm_render::text::Fonts;
 use pcm_render::theme::{DARK_INK, LIGHT_INK, Rgb, Theme, hex};
 use pcm_render::widget::{
     BoxPx, Boxes, Data, Edge, GRIP, Renderer, TAB_H, TAB_W, UpdateState, View, WidgetLook, alert_card_with,
-    hover_card, side_tab,
+    hover_card_with, side_tab,
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -1201,7 +1201,24 @@ impl App {
         }
         let scale = self.tab_scale();
         let light = self.cfg.window_light;
-        let Some(pm) = hover_card(&mut self.fonts, scale, &title, &rows, &hint, light) else { return };
+        // the last minute of what the card is about
+        let graph = self.data.as_ref().map(|d| {
+            let sc = self.theme().scale_dark();
+            let sc = if light { sc.on_light() } else { sc };
+            let kind = match &of {
+                HoverOf::Tray(k, _) => k.as_str(),
+                HoverOf::Panel => "cpu",
+            };
+            match kind {
+                "gpu" | "gpu_temp" => (d.gpu_hist.clone(), sc.at(d.gpu_load.unwrap_or(0.0) / 100.0)),
+                "ram" => (d.ram_hist.clone(), sc.at(d.ram_pct / 100.0)),
+                _ => (d.cpu_hist.clone(), sc.at(d.cpu / 100.0)),
+            }
+        });
+        let graph_ref = graph.as_ref().map(|(v, c)| (v.as_slice(), *c));
+        let Some(pm) = hover_card_with(&mut self.fonts, scale, &title, &rows, &hint, light, graph_ref) else {
+            return;
+        };
         let pos = if place {
             let anchor = match &of {
                 HoverOf::Tray(_, p) => *p,

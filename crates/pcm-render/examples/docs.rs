@@ -7,7 +7,7 @@ use pcm_render::format::{dec, set_language, tr, trf};
 use pcm_render::overlay::{Look, preview, sample_game};
 use pcm_render::text::Fonts;
 use pcm_render::theme::{DARK_INK, LIGHT_INK, Theme};
-use pcm_render::widget::{Renderer, View, WidgetLook, hover_card, sample_data, tray_icon_filled};
+use pcm_render::widget::{Renderer, View, WidgetLook, hover_card_with, sample_data, tray_icon_filled};
 use tiny_skia::{Color, Pixmap, PixmapPaint, Transform};
 
 const BG: (u8, u8, u8) = (17, 20, 27);
@@ -85,8 +85,16 @@ fn main() {
             (tr("Больше всего"), format!("chrome · {}%", dec("1.6".to_string())), text),
         ];
         pics.push(
-            hover_card(&mut fonts, s, &tr("Процессор"), &rows, &tr("Клик — открыть PC Monitor"), light)
-                .unwrap(),
+            hover_card_with(
+                &mut fonts,
+                s,
+                &tr("Процессор"),
+                &rows,
+                &tr("Клик — открыть PC Monitor"),
+                light,
+                Some((&d.cpu_hist, sc.at(0.37))),
+            )
+            .unwrap(),
         );
     }
     let sc = Theme::Heat.scale_dark();
